@@ -10,10 +10,47 @@ use std::fmt;
 use curve25519_dalek::{MontgomeryPoint, scalar};
 use rand::{CryptoRng, Rng};
 use subtle::ConstantTimeEq;
+// === PQC: Dilithium constants (correct values from pqcrypto-dilithium) ===
+pub const DILITHIUM_PUBLIC_KEY_LENGTH: usize = 1312; // For Dilithium2
+pub const DILITHIUM_PRIVATE_KEY_LENGTH: usize = 2560; // For Dilithium2 (corrected)
+pub const DILITHIUM_SIGNATURE_LENGTH: usize = 2420; // For Dilithium2
+
+// For storing both public and private keys together
+pub const DILITHIUM_KEYPAIR_LENGTH: usize = DILITHIUM_PUBLIC_KEY_LENGTH + DILITHIUM_PRIVATE_KEY_LENGTH;
+
+// --- Add imports for Dilithium2 ---
+use pqcrypto_dilithium::dilithium2::{
+    keypair as dilithium2_keypair,
+    detached_sign as dilithium2_detached_sign,
+    verify_detached_signature as dilithium2_verify,
+    PublicKey as Dilithium2PublicKey,
+    SecretKey as Dilithium2SecretKey,
+    DetachedSignature as Dilithium2Signature,
+};
+use pqcrypto_traits::sign::{
+    PublicKey as PqPublicKey,
+    SecretKey as PqSecretKey,
+    DetachedSignature as PqDetachedSignature,
+};
+
+// Define Dilithium2 keypair structure
+#[derive(Clone)]
+pub struct Dilithium2Keypair {
+    pub public: Dilithium2PublicKey,
+    pub secret: Dilithium2SecretKey,
+}
+
+impl Dilithium2Keypair {
+    pub fn generate(_rng: Option<&mut dyn rand::RngCore>) -> Self {
+        let (public, secret) = dilithium2_keypair();
+        Dilithium2Keypair { public, secret }
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeyType {
     Djb,
+    Dilithium2, // PQC
 }
 
 impl fmt::Display for KeyType {
@@ -26,6 +63,7 @@ impl KeyType {
     fn value(&self) -> u8 {
         match &self {
             KeyType::Djb => 0x05u8,
+            KeyType::Dilithium2 => 0x20u8, // Arbitrary, must be unique
         }
     }
 }
@@ -50,6 +88,7 @@ impl TryFrom<u8> for KeyType {
     fn try_from(x: u8) -> Result<Self, CurveError> {
         match x {
             0x05u8 => Ok(KeyType::Djb),
+            0x20u8 => Ok(KeyType::Dilithium2),
             t => Err(CurveError::BadKeyType(t)),
         }
     }
@@ -58,6 +97,7 @@ impl TryFrom<u8> for KeyType {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PublicKeyData {
     DjbPublicKey([u8; curve25519::PUBLIC_KEY_LENGTH]),
+    DilithiumPublicKey([u8; DILITHIUM_PUBLIC_KEY_LENGTH]), // PQC
 }
 
 #[derive(Clone, Copy, Eq, derive_more::From)]
@@ -89,8 +129,6 @@ impl PublicKey {
                 let (key, tail): (&[u8; curve25519::PUBLIC_KEY_LENGTH], _) = value
                     .split_first_chunk()
                     .ok_or(CurveError::BadKeyLength(KeyType::Djb, value.len() + 1))?;
-                // We currently allow trailing data after the public key.
-                // TODO: once this is known to not be seen in practice, make this a hard error.
                 if !tail.is_empty() {
                     log::warn!(
                         "ECPublicKey deserialized with {} trailing bytes",
@@ -101,33 +139,38 @@ impl PublicKey {
                     key: PublicKeyData::DjbPublicKey(*key),
                 })
             }
+            KeyType::Dilithium2 => {
+                let (key, tail): (&[u8; DILITHIUM_PUBLIC_KEY_LENGTH], _) = value
+                    .split_first_chunk()
+                    .ok_or(CurveError::BadKeyLength(KeyType::Dilithium2, value.len() + 1))?;
+                if !tail.is_empty() {
+                    log::warn!(
+                        "DilithiumPublicKey deserialized with {} trailing bytes",
+                        tail.len()
+                    );
+                }
+                Ok(PublicKey {
+                    key: PublicKeyData::DilithiumPublicKey(*key),
+                })
+            }
         }
     }
 
     pub fn public_key_bytes(&self) -> &[u8] {
         match &self.key {
             PublicKeyData::DjbPublicKey(v) => v,
-        }
-    }
-
-    pub fn from_djb_public_key_bytes(bytes: &[u8]) -> Result<Self, CurveError> {
-        match <[u8; curve25519::PUBLIC_KEY_LENGTH]>::try_from(bytes) {
-            Err(_) => Err(CurveError::BadKeyLength(KeyType::Djb, bytes.len())),
-            Ok(key) => Ok(PublicKey {
-                key: PublicKeyData::DjbPublicKey(key),
-            }),
+            PublicKeyData::DilithiumPublicKey(v) => v,
         }
     }
 
     pub fn serialize(&self) -> Box<[u8]> {
-        let value_len = match &self.key {
-            PublicKeyData::DjbPublicKey(v) => v.len(),
+        let (type_byte, value) = match &self.key {
+            PublicKeyData::DjbPublicKey(v) => (KeyType::Djb.value(), &v[..]),
+            PublicKeyData::DilithiumPublicKey(v) => (KeyType::Dilithium2.value(), &v[..]),
         };
-        let mut result = Vec::with_capacity(1 + value_len);
-        result.push(self.key_type().value());
-        match &self.key {
-            PublicKeyData::DjbPublicKey(v) => result.extend_from_slice(v),
-        }
+        let mut result = Vec::with_capacity(1 + value.len());
+        result.push(type_byte);
+        result.extend_from_slice(value);
         result.into_boxed_slice()
     }
 
@@ -147,18 +190,32 @@ impl PublicKey {
                 };
                 curve25519::PrivateKey::verify_signature(pub_key, message, signature)
             }
+            PublicKeyData::DilithiumPublicKey(ref pk_bytes) => {
+                let pk: Dilithium2PublicKey = match PqPublicKey::from_bytes(pk_bytes) {
+                    Ok(pk) => pk,
+                    Err(_) => return false,
+                };
+                let msg = message.concat();
+                let sig: Dilithium2Signature = match PqDetachedSignature::from_bytes(signature) {
+                    Ok(sig) => sig,
+                    Err(_) => return false,
+                };
+                dilithium2_verify(&sig, &msg, &pk).is_ok()
+            }
         }
     }
 
     fn key_data(&self) -> &[u8] {
         match &self.key {
-            PublicKeyData::DjbPublicKey(k) => k.as_ref(),
+            PublicKeyData::DjbPublicKey(ref k) => k.as_ref(),
+            PublicKeyData::DilithiumPublicKey(ref k) => k.as_ref(),
         }
     }
 
     pub fn key_type(&self) -> KeyType {
         match &self.key {
             PublicKeyData::DjbPublicKey(_) => KeyType::Djb,
+            PublicKeyData::DilithiumPublicKey(_) => KeyType::Dilithium2,
         }
     }
 
@@ -231,6 +288,10 @@ impl fmt::Debug for PublicKey {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PrivateKeyData {
     DjbPrivateKey([u8; curve25519::PRIVATE_KEY_LENGTH]),
+    DilithiumKeypair {
+        public_key: [u8; DILITHIUM_PUBLIC_KEY_LENGTH],
+        secret_key: [u8; DILITHIUM_PRIVATE_KEY_LENGTH],
+    }, // PQC
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, derive_more::From)]
@@ -240,20 +301,59 @@ pub struct PrivateKey {
 
 impl PrivateKey {
     pub fn deserialize(value: &[u8]) -> Result<Self, CurveError> {
-        let mut key: [u8; curve25519::PRIVATE_KEY_LENGTH] = value
-            .try_into()
-            .map_err(|_| CurveError::BadKeyLength(KeyType::Djb, value.len()))?;
-        // Clamping is not necessary but is kept for backward compatibility
-        key = scalar::clamp_integer(key);
-        Ok(Self {
-            key: PrivateKeyData::DjbPrivateKey(key),
-        })
+        // For Djb, no type byte; for Dilithium, expect type byte
+        if value.len() == curve25519::PRIVATE_KEY_LENGTH {
+            // Legacy Djb
+            let mut key: [u8; curve25519::PRIVATE_KEY_LENGTH] = value
+                .try_into()
+                .map_err(|_| CurveError::BadKeyLength(KeyType::Djb, value.len()))?;
+            key = scalar::clamp_integer(key);
+            Ok(Self {
+                key: PrivateKeyData::DjbPrivateKey(key),
+            })
+        } else if value.len() == 1 + DILITHIUM_KEYPAIR_LENGTH && value[0] == KeyType::Dilithium2.value() {
+            let keypair_bytes = &value[1..];
+            let public_key: [u8; DILITHIUM_PUBLIC_KEY_LENGTH] = keypair_bytes[..DILITHIUM_PUBLIC_KEY_LENGTH]
+                .try_into()
+                .map_err(|_| CurveError::BadKeyLength(KeyType::Dilithium2, value.len()))?;
+            let secret_key: [u8; DILITHIUM_PRIVATE_KEY_LENGTH] = keypair_bytes[DILITHIUM_PUBLIC_KEY_LENGTH..]
+                .try_into()
+                .map_err(|_| CurveError::BadKeyLength(KeyType::Dilithium2, value.len()))?;
+            Ok(Self {
+                key: PrivateKeyData::DilithiumKeypair { public_key, secret_key },
+            })
+        } else {
+            Err(CurveError::BadKeyLength(KeyType::Djb, value.len()))
+        }
     }
 
     pub fn serialize(&self) -> Vec<u8> {
         match &self.key {
             PrivateKeyData::DjbPrivateKey(v) => v.to_vec(),
+            PrivateKeyData::DilithiumKeypair { public_key, secret_key } => {
+                let mut result = Vec::with_capacity(1 + DILITHIUM_KEYPAIR_LENGTH);
+                result.push(KeyType::Dilithium2.value());
+                result.extend_from_slice(public_key);
+                result.extend_from_slice(secret_key);
+                result
+            }
         }
+    }
+
+    pub fn generate_dilithium2() -> Result<Self, CurveError> {
+        let keypair = Dilithium2Keypair::generate(None);
+        let sk_bytes = keypair.secret.as_bytes();
+        let pk_bytes = keypair.public.as_bytes();
+        
+        let mut secret_key = [0u8; DILITHIUM_PRIVATE_KEY_LENGTH];
+        let mut public_key = [0u8; DILITHIUM_PUBLIC_KEY_LENGTH];
+        
+        secret_key.copy_from_slice(sk_bytes);
+        public_key.copy_from_slice(pk_bytes);
+        
+        Ok(PrivateKey {
+            key: PrivateKeyData::DilithiumKeypair { public_key, secret_key },
+        })
     }
 
     pub fn public_key(&self) -> Result<PublicKey, CurveError> {
@@ -263,12 +363,16 @@ impl PrivateKey {
                     curve25519::PrivateKey::from(*private_key).derive_public_key_bytes();
                 Ok(PublicKey::new(PublicKeyData::DjbPublicKey(public_key)))
             }
+            PrivateKeyData::DilithiumKeypair { public_key, .. } => {
+                Ok(PublicKey::new(PublicKeyData::DilithiumPublicKey(*public_key)))
+            }
         }
     }
 
     pub fn key_type(&self) -> KeyType {
         match &self.key {
             PrivateKeyData::DjbPrivateKey(_) => KeyType::Djb,
+            PrivateKeyData::DilithiumKeypair { .. } => KeyType::Dilithium2,
         }
     }
 
@@ -283,12 +387,19 @@ impl PrivateKey {
     pub fn calculate_signature_for_multipart_message<R: CryptoRng + Rng + ?Sized>(
         &self,
         message: &[&[u8]],
-        csprng: &mut R,
+        _csprng: &mut R,
     ) -> Result<Box<[u8]>, CurveError> {
         match self.key {
             PrivateKeyData::DjbPrivateKey(k) => {
                 let private_key = curve25519::PrivateKey::from(k);
-                Ok(Box::new(private_key.calculate_signature(csprng, message)))
+                Ok(Box::new(private_key.calculate_signature(_csprng, message)))
+            }
+            PrivateKeyData::DilithiumKeypair { secret_key, .. } => {
+                let sk: Dilithium2SecretKey = PqSecretKey::from_bytes(&secret_key)
+                    .map_err(|_| CurveError::BadKeyType(KeyType::Dilithium2.value()))?;
+                let msg = message.concat();
+                let signature = dilithium2_detached_sign(&msg, &sk);
+                Ok(signature.as_bytes().to_vec().into_boxed_slice())
             }
         }
     }
@@ -305,6 +416,8 @@ impl PrivateKey {
                 }
                 Ok(Box::new(shared))
             }
+            // No agreement for Dilithium
+            _ => Err(CurveError::BadKeyType(KeyType::Dilithium2.value())),
         }
     }
 }
@@ -392,6 +505,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_generate_dilithium_keys() -> Result<(), CurveError> {
+        // Test Dilithium key generation and signature
+        let private_key = PrivateKey::generate_dilithium2()?;
+        let public_key = private_key.public_key()?;
+        
+        let msg = b"test message";
+        let mut csprng = OsRng.unwrap_err();
+        let sig = private_key.calculate_signature_for_multipart_message(&[msg.as_ref()], &mut csprng)?;
+        assert!(public_key.verify_signature_for_multipart_message(&[msg.as_ref()], &sig));
+        
+        Ok(())
+    }
+
+    #[test]
     fn test_large_signatures() -> Result<(), CurveError> {
         let mut csprng = OsRng.unwrap_err();
         let key_pair = KeyPair::generate(&mut csprng);
@@ -454,6 +581,36 @@ mod tests {
 
         assert_eq!(&serialized_public[..], &just_right.serialize()[..]);
         assert_eq!(&serialized_public[..], &extra_space_decode?.serialize()[..]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_dilithium_key_serialization() -> Result<(), CurveError> {
+        // Test Dilithium key serialization and deserialization
+        let private_key = PrivateKey::generate_dilithium2()?;
+        let public_key = private_key.public_key()?;
+        
+        // Test private key serialization
+        let private_serialized = private_key.serialize();
+        let private_deserialized = PrivateKey::try_from(&private_serialized[..])?;
+        
+        // Test public key serialization
+        let public_serialized = public_key.serialize();
+        let public_deserialized = PublicKey::try_from(&public_serialized[..])?;
+        
+        // Verify the keys work the same after deserialization
+        let msg = b"test serialization message";
+        let mut csprng = OsRng.unwrap_err();
+        
+        let sig1 = private_key.calculate_signature(&msg[..], &mut csprng)?;
+        let sig2 = private_deserialized.calculate_signature(&msg[..], &mut csprng)?;
+        
+        // Both original and deserialized keys should be able to verify signatures
+        assert!(public_key.verify_signature(&msg[..], &sig1));
+        assert!(public_key.verify_signature(&msg[..], &sig2));
+        assert!(public_deserialized.verify_signature(&msg[..], &sig1));
+        assert!(public_deserialized.verify_signature(&msg[..], &sig2));
+        
         Ok(())
     }
 

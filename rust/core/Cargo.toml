@@ -27,6 +27,8 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 x25519-dalek = { workspace = true, features = ["static_secrets"] }
 zerocopy = { workspace = true, features = ["derive"] }
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
 
 [dev-dependencies]
 assert_matches = { workspace = true }

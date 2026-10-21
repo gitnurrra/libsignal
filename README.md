@@ -38,6 +38,169 @@ increases to the minimum supported tools versions.
 [iOS]: https://github.com/signalapp/Signal-iOS
 [Desktop]: https://github.com/signalapp/Signal-Desktop
 
+## Mermaid diagram
+
+```mermaid
+flowchart TB
+    %% Core Rust Components
+    subgraph "Core Rust Components"
+        direction TB
+        protocol["protocol crate"]:::rust
+        crypto["crypto crate"]:::rust
+        media["media crate"]:::rust
+        attest["attest crate"]:::rust
+        zkgroup["zkgroup crate"]:::rust
+        zkcredential["zkcredential crate"]:::rust
+        poksho["poksho crate"]:::rust
+        account_keys["account-keys crate"]:::rust
+        usernames["usernames crate"]:::rust
+        device_transfer["device-transfer crate"]:::rust
+    end
+
+    %% Bridge Adapters
+    subgraph "Bridge Adapters"
+        direction TB
+        shared["shared FFI utils"]:::bridge
+        jni["JNI bridge crate"]:::bridge
+        node_bridge["Node-API bridge crate"]:::bridge
+        ffi["C-API bridge crate"]:::bridge
+    end
+
+    %% Language Packages
+    subgraph "Language Packages"
+        direction TB
+        java_client["java/client"]:::lang
+        java_android["java/android"]:::lang
+        node_pkg["node package"]:::lang
+        signalffi["SignalFfi (C headers)"]:::lang
+        swift_client["LibSignalClient"]:::lang
+    end
+
+    %% Consumers
+    subgraph "Consumers"
+        direction TB
+        android["Signal-Android"]:::consumer
+        ios["Signal-iOS"]:::consumer
+        desktop["Signal-Desktop"]:::consumer
+        server["Server Apps"]:::consumer
+    end
+
+    %% Tooling & CI
+    subgraph "Tooling & CI"
+        direction TB
+        ci["CI Workflows"]:::tool
+        scripts["Build Scripts"]:::tool
+        cargo_build["cargo build"]:::tool
+        cbindgen["cbindgen"]:::tool
+        gradle["Gradle"]:::tool
+        node_gyp["node-gyp"]:::tool
+        swiftpm["SwiftPM"]:::tool
+    end
+
+    %% Core to Bridge Dependencies
+    protocol --> jni
+    crypto --> jni
+    media --> jni
+
+    protocol --> node_bridge
+    crypto --> node_bridge
+
+    protocol --> ffi
+    crypto --> ffi
+    media --> ffi
+
+    shared --> jni
+    shared --> node_bridge
+    shared --> ffi
+
+    %% Bridge to Language
+    jni --> java_client
+    jni --> java_android
+
+    node_bridge --> node_pkg
+
+    ffi --> signalffi
+    ffi --> swift_client
+
+    signalffi --> swift_client
+
+    %% Language to Consumers
+    java_client --> android
+    java_android --> android
+
+    java_client --> server
+    node_pkg --> desktop
+    node_pkg --> server
+
+    swift_client --> ios
+
+    %% Build Tools Flow
+    ci --> cargo_build
+    ci --> gradle
+    ci --> node_gyp
+    ci --> swiftpm
+
+    scripts --> cargo_build
+    scripts --> gradle
+    scripts --> node_gyp
+    scripts --> swiftpm
+
+    cargo_build --> protocol
+    cargo_build --> crypto
+    cargo_build --> media
+    cargo_build --> attest
+    cargo_build --> zkgroup
+    cargo_build --> zkcredential
+    cargo_build --> poksho
+    cargo_build --> account_keys
+    cargo_build --> usernames
+    cargo_build --> device_transfer
+    cargo_build --> jni
+    cargo_build --> node_bridge
+    cargo_build --> ffi
+    cargo_build --> shared
+
+    cbindgen --> ffi
+    cbindgen --> signalffi
+
+    gradle --> java_client
+    gradle --> java_android
+
+    node_gyp --> node_pkg
+
+    swiftpm --> swift_client
+
+    %% Click Events
+    click protocol "https://github.com/signalapp/libsignal/tree/main/rust/protocol"
+    click crypto "https://github.com/signalapp/libsignal/tree/main/rust/crypto"
+    click media "https://github.com/signalapp/libsignal/tree/main/rust/media"
+    click attest "https://github.com/signalapp/libsignal/tree/main/rust/attest"
+    click zkgroup "https://github.com/signalapp/libsignal/tree/main/rust/zkgroup"
+    click zkcredential "https://github.com/signalapp/libsignal/tree/main/rust/zkcredential"
+    click poksho "https://github.com/signalapp/libsignal/tree/main/rust/poksho"
+    click account_keys "https://github.com/signalapp/libsignal/tree/main/rust/account-keys"
+    click usernames "https://github.com/signalapp/libsignal/tree/main/rust/usernames"
+    click device_transfer "https://github.com/signalapp/libsignal/tree/main/rust/device-transfer"
+    click jni "https://github.com/signalapp/libsignal/tree/main/rust/bridge/jni"
+    click node_bridge "https://github.com/signalapp/libsignal/tree/main/rust/bridge/node"
+    click ffi "https://github.com/signalapp/libsignal/tree/main/rust/bridge/ffi"
+    click shared "https://github.com/signalapp/libsignal/tree/main/rust/bridge/shared"
+    click java_client "https://github.com/signalapp/libsignal/tree/main/java/"
+    click java_android "https://github.com/signalapp/libsignal/tree/main/java/"
+    click node_pkg "https://github.com/signalapp/libsignal/tree/main/node/"
+    click signalffi "https://github.com/signalapp/libsignal/tree/main/swift/Sources/SignalFfi"
+    click swift_client "https://github.com/signalapp/libsignal/tree/main/swift/Sources/LibSignalClient"
+    click ci "https://github.com/signalapp/libsignal/tree/main/.github/workflows"
+    click scripts "https://github.com/signalapp/libsignal/tree/main/bin/"
+
+    %% Styles
+    classDef rust fill:#CFE2FF,stroke:#0366D6,color:#0366D6;
+    classDef bridge fill:#D1E7DD,stroke:#0F5132,color:#0F5132,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef lang fill:#FFF3CD,stroke:#664D03,color:#664D03;
+    classDef consumer fill:#E5E5E5,stroke:#6C757D,color:#6C757D,shape:cloud;
+    classDef tool fill:#E2DDFB,stroke:#5B2C6F,color:#5B2C7;
+
+```
 
 # Building
 

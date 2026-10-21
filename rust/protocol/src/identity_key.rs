@@ -122,7 +122,9 @@ impl IdentityKeyPair {
         }
     }
 
-    /// Generate a random new identity from randomness in `csprng`.
+    /// Generate a random new EC identity from randomness in `csprng`.
+    ///
+    /// TODO: This only generates EC (Curve25519) keys. Use `generate_dilithium` for PQC.
     pub fn generate<R: CryptoRng + Rng>(csprng: &mut R) -> Self {
         let keypair = KeyPair::generate(csprng);
 
@@ -130,6 +132,14 @@ impl IdentityKeyPair {
             identity_key: keypair.public_key.into(),
             private_key: keypair.private_key,
         }
+    }
+
+    /// Generate a random new Dilithium identity from randomness in `csprng`.
+    ///
+    /// NOTE: This is a stub. Actual Dilithium key generation must be implemented.
+    pub fn generate_dilithium<R: CryptoRng + Rng>(_csprng: &mut R) -> Self {
+        // TODO: Implement Dilithium key generation
+        unimplemented!("Dilithium identity key generation not implemented yet");
     }
 
     /// Return the public identity of this user.
@@ -249,6 +259,13 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn test_generate_dilithium_identity_key_pair() {
+        // This test will fail until Dilithium key generation is implemented
+        let _dilithium_identity = IdentityKeyPair::generate_dilithium(&mut OsRng.unwrap_err());
     }
 
     #[test]
