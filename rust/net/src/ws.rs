@@ -6,8 +6,9 @@
 use std::fmt::Display;
 
 use http::HeaderName;
-use libsignal_net_infra::errors::{LogSafeDisplay, TransportConnectError};
-use libsignal_net_infra::ws::WebSocketConnectError;
+use libsignal_core::LogSafeDisplay;
+use libsignal_net_infra::errors::TransportConnectError;
+use libsignal_net_infra::ws::{WebSocketConnectError, WebSocketError};
 use tokio::time::Instant;
 
 #[derive(Debug, thiserror::Error)]
@@ -17,7 +18,7 @@ pub enum WebSocketServiceConnectError {
     ///
     /// See [`ConnectionParams::connection_confirmation_header`](crate::infra::ConnectionParams::connection_confirmation_header).
     RejectedByServer {
-        response: http::Response<Option<Vec<u8>>>,
+        response: Box<http::Response<Option<Vec<u8>>>>,
         received_at: Instant,
     },
     /// A connection error that wasn't caused by a server rejection.
@@ -35,7 +36,7 @@ impl WebSocketServiceConnectError {
         received_at: Instant,
     ) -> Self {
         match error {
-            WebSocketConnectError::WebSocketError(tungstenite::Error::Http(response))
+            WebSocketConnectError::WebSocketError(WebSocketError::Http(response))
                 if confirmation_header
                     .map(|header| response.headers().contains_key(header))
                     .unwrap_or(true) =>
@@ -55,24 +56,6 @@ impl WebSocketServiceConnectError {
                 },
             ),
         }
-    }
-
-    pub fn timeout() -> Self {
-        Self::Connect(
-            WebSocketConnectError::Timeout,
-            NotRejectedByServer {
-                _limit_construction: (),
-            },
-        )
-    }
-
-    pub fn invalid_proxy_configuration() -> Self {
-        Self::Connect(
-            WebSocketConnectError::Transport(TransportConnectError::InvalidConfiguration),
-            NotRejectedByServer {
-                _limit_construction: (),
-            },
-        )
     }
 }
 
@@ -94,6 +77,17 @@ impl Display for WebSocketServiceConnectError {
                 _not_rejected_by_server,
             ) => web_socket_connect_error.fmt(f),
         }
+    }
+}
+
+impl From<TransportConnectError> for WebSocketServiceConnectError {
+    fn from(error: TransportConnectError) -> Self {
+        Self::Connect(
+            error.into(),
+            NotRejectedByServer {
+                _limit_construction: (),
+            },
+        )
     }
 }
 
@@ -133,7 +127,7 @@ mod test {
             non_http_error,
             WebSocketServiceConnectError::Connect(
                 libsignal_net_infra::ws::WebSocketConnectError::WebSocketError(
-                    tungstenite::Error::Io(_),
+                    libsignal_net_infra::ws::WebSocketError::Io(_),
                 ),
                 _
             )
@@ -143,7 +137,7 @@ mod test {
         *response_4xx.status_mut() = http::StatusCode::BAD_REQUEST;
 
         let http_4xx_error = WebSocketServiceConnectError::from_websocket_error(
-            tungstenite::Error::Http(response_4xx.clone()).into(),
+            tungstenite::Error::Http(response_4xx.clone().into()).into(),
             confirmation_header.as_ref(),
             now,
         );
@@ -152,7 +146,7 @@ mod test {
                 http_4xx_error,
                 WebSocketServiceConnectError::Connect(
                     libsignal_net_infra::ws::WebSocketConnectError::WebSocketError(
-                        tungstenite::Error::Http(_)
+                        libsignal_net_infra::ws::WebSocketError::Http(_)
                     ),
                     _
                 )
@@ -170,9 +164,9 @@ mod test {
                 .append(header, http::HeaderValue::from_static("1"));
 
             let error_with_header = WebSocketServiceConnectError::from_websocket_error(
-                WebSocketConnectError::WebSocketError(tungstenite::Error::Http(
-                    response_4xx.clone(),
-                )),
+                WebSocketConnectError::WebSocketError(
+                    libsignal_net_infra::ws::WebSocketError::Http(Box::new(response_4xx.clone())),
+                ),
                 confirmation_header.as_ref(),
                 now,
             );

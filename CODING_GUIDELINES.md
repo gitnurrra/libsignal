@@ -9,7 +9,7 @@ These should usually be prioritized in that order, but adjust the trade-off as n
 
 # General
 
-- **The bridging layer is not API.** As noted in the [readme](README.md), the primary purpose of this library is to provide good Java, Swift, and TypeScript APIs. We also try to make the non-bridge crates have a nice API, both for our own maintainence, testing, and internal use; and for external users who want to use or fork our crate. However, the Rust APIs in rust/bridge/ and the raw C symbols / JNI entry points / Node module we build are not considered public-facing at all. Use that to keep everything else nice!
+- **The bridging layer is not API.** As noted in the [readme](README.md), the primary purpose of this library is to provide good Java, Swift, and TypeScript APIs. We also try to make the non-bridge crates have a nice API, both for our own maintenance, testing, and internal use; and for external users who want to use or fork our crate. However, the Rust APIs in rust/bridge/ and the raw C symbols / JNI entry points / Node module we build are not considered public-facing at all. Use that to keep everything else nice!
 
     (Not that you should be sloppy in the bridging layer. Maintainability is still a priority!)
 
@@ -21,6 +21,9 @@ These should usually be prioritized in that order, but adjust the trade-off as n
 
 - **Every change should have tests** or be covered by existing tests. There are sometimes exceptions to this, but a lot of times the act of justifying the exception can suggest how to write the tests instead.
 
+
+## Logging
+
 - **Logs should not contain user data**, including the default stringification for errors (Rust's Display, Java and TypeScript's `toString()`, Swift's `description`). "Debug" and "verbose" log levels are an exception to this, since they are turned off at compile time in our client library release builds. Note that this isn't "any information that can uniquely distinguish one user from another" (an ephemeral public key can do that, and there are legitimate reasons to log those; use your best judgment), but it is "any information that includes user input" (such as unencrypted usernames), "any information that can be linked back to a Signal account" (such as identity keys), and of course "any passwords or private keys".
 
     One place where this is particularly subtle is when working with types that come from dependencies, especially errors. If the dependency has access to any such potentially-sensitive information, it's best to assume it could make it into arbitrary output, including error messages. The libsignal-net crate is particularly sensitive to this and constrains its errors with a custom LogSafeDisplay trait, but this isn't perfect.
@@ -31,6 +34,8 @@ These should usually be prioritized in that order, but adjust the trade-off as n
 
     As with the previous rule, this does not apply to the "debug" and "verbose" log levels, which are turned off at compile time in our client library release builds.
 
+- **Only use "error"-level logs for bugs**. The apps and our log-processing tools may highlight "error"-level logs specially (e.g. asking the user to submit a debug log), so something bad that can happen for benign reasons like "a network connection dropped" should only be a "warning", not an "error". This doesn't have to be perfect, e.g. an incoming message might not be decryptable because the local user has restored their desktop OS from a snapshot. Instead, take it as "in the absence of other information, would we investigate this event alone as a possible bug?"
+
 
 # Rust
 
@@ -40,13 +45,17 @@ These should usually be prioritized in that order, but adjust the trade-off as n
 
 - **Prefer `expect()` to `unwrap()`.** As noted, we don't have a no-panics policy, but `expect()` forces you to write down why you believe something should *never* happen except for programmer errors. In particular, untrusted input that fails to validate should *not* panic.
 
-    (Yes, there's a Clippy lint for this, but we also have a lot of code that predates this guideline.)
+    As an exception, it's okay to use `unwrap()` in tests, though `expect()` is still preferred if it's for the thing you're actively testing.
 
 - You don't have to write doc comments on everything, but **if you do write a comment, make it a doc comment**, because they show up more nicely in IDEs.
 
-- We build with a pinned nightly toolchain, but **we also support stable**. The specific minimum supported version of stable is checked in CI (specifically, at the top of [build_and_test.yml](.github/workflows/build_and_test.yml)). We permit ourselves to bump this as needed, but try not to do so capriciously because we know external people might be in non-rustup scenarios where getting a new stable is tricky. If you need to bump the minimum supported version of stable, make sure the next release has a "breaking" version number.
+- We build with a pinned stable toolchain. This is the default version of Rust that we build libsignal with. However, it's not the _only_ version of Rust libsignal will build with. The Minimum Supported Rust Version (MSRV) libsignal will build with is listed in our top-level Cargo.toml and checked in CI. We permit ourselves to bump this as needed, but try not to do so capriciously because we know external people might be in non-rustup scenarios where getting a new stable is tricky; in practice we often end up following tokio's "six months back" policy. If you need to bump the minimum supported version of stable, make sure the next release has a "breaking" version number.
 
-- **We do not have a changelog file**; we rely on [GitHub displaying all our releases](https://github.com/signalapp/libsignal/releases).
+    A few of our internal tests require a nightly toolchain. That toolchain is pinned in `.nightly-rust-version`. When you bump the pinned stable toolchain, you should also bump the nightly pinned toolchain (to a recent nightly toolchain), as well.
+
+    - Crate-level Cargo.tomls don't usually inherit the workspace `rust-version`, because many crates are relatively stable and may continue working for external folks using earlier versions of Rust even though we no longer test for them; picking up the top-level MSRV update would therefore be unnecessarily breaking. Instead, they have a `rust-version` that indicates a known minimum at some point in the past; it may be too low, but it will never be overly high. The exceptions are the `bridge` crates, which are not intended to be used for anything but the app language libraries.
+
+- **We do not have a changelog file**; we rely on [GitHub displaying all our releases](https://github.com/signalapp/libsignal/releases). Unreleased changes are collected in [RELEASE_NOTES.md][], which is reset after each release.
 
 - **Avoid `cargo add`**, or fix up the Cargo.toml afterwards. Some of our dependency lists are organized and `cargo add` doesn't respect that.
 
@@ -57,6 +66,10 @@ These should usually be prioritized in that order, but adjust the trade-off as n
         RUSTFLAGS="--cfg aes_armv8 ${RUSTFLAGS:-}"
 
     These are automatically detected on x86_64, but will require an opt-in for aarch64 until we can update to `aes 0.9` or newer (not out yet at the time of this writing). All our app library build scripts set this themselves, but doing a manual `cargo build --release` will not.
+
+- Our bridging logic uses code generation tools for the app-language interface files (C header for Swift, wrapper APIs for Java/Kotlin and TypeScript). These tools, or the macros used with them, depend on how types are written in `#[bridge_fn]` and other bridged APIs. Therefore, **use qualified names for non-std, non-libsignal types** in bridged signatures, so that they can be matched specifically and without ambiguity.
+
+    (There is one exception: `uuid::Uuid` has been `Uuid` for a long time, and is sufficiently unique to justify leaving it that way.)
 
 
 ## Async
@@ -74,7 +87,7 @@ These should usually be prioritized in that order, but adjust the trade-off as n
 
 # Java
 
-- Many of our APIs are shared between Android and Server, and we also run the client tests on desktop machines, so **stick to Java 8** unless you've verified that something newer is available on Android (back to our earliest supported version, API level 21, at the time of this writing), and don't use Android-specific APIs unless you're actually in Android-specific code. (This *should* be checked in CI but things have slipped through before, and it'll save you time to know whether you're allowed to use something.)
+- Many of our APIs are shared between Android and Server, and we also run the client tests on desktop machines, so **stick to Java 8** unless you've verified that something newer is available on Android (back to our earliest supported version, API level 23, at the time of this update), and don't use Android-specific APIs unless you're actually in Android-specific code. (This *should* be checked in CI but things have slipped through before, and it'll save you time to know whether you're allowed to use something.)
 
 - **Put server-specific APIs in the server/ folder if they're not needed to test client features**, so they don't add code size for Android.
 

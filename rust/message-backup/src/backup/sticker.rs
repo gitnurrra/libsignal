@@ -5,10 +5,10 @@
 
 use derive_where::derive_where;
 
+use crate::backup::TryIntoWith;
 use crate::backup::file::{FilePointer, FilePointerError};
 use crate::backup::method::Method;
 use crate::backup::time::ReportUnusualTimestamp;
-use crate::backup::TryIntoWith;
 use crate::proto::backup as proto;
 
 /// Validated version of [`proto::StickerPack`].
@@ -145,7 +145,7 @@ mod test {
         const TEST_ID_BYTES: [u8; 16] = [0x22; 16];
         const TEST_KEY: [u8; 32] = [0x11; 32];
 
-        fn test_data() -> Self {
+        pub(crate) fn test_data() -> Self {
             Self {
                 packId: Self::TEST_ID_BYTES.into(),
                 packKey: Self::TEST_KEY.into(),

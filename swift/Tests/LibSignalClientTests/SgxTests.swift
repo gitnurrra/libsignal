@@ -6,6 +6,8 @@
 import LibSignalClient
 import XCTest
 
+#if !os(iOS) || targetEnvironment(simulator)
+
 class SgxTests: TestCaseBase {
     enum ServiceType {
         case svr2, cds2
@@ -14,15 +16,23 @@ class SgxTests: TestCaseBase {
     let testCases = [
         (
             ServiceType.cds2,
-            [UInt8](fromHexString: "39d78f17f8aa9a8e9cdaf16595947a057bac21f014d1abfd6a99b2dfd4e18d1d")!,
-            readResource(forName: "cds2handshakestart.data"),
-            Date(timeIntervalSince1970: 1_655_857_680)
+            [UInt8](readResource(forName: "cdsi.mrenclave")),
+            readResource(forName: "cdsi.handshakestart"),
+            Date(
+                timeIntervalSince1970: readResource(forName: "cdsi.timestamp").withUnsafeBytes {
+                    Double($0.load(as: UInt64.self).bigEndian)
+                }
+            )
         ),
         (
             ServiceType.svr2,
-            [UInt8](fromHexString: "38e01eff4fe357dc0b0e8ef7a44b4abc5489fbccba3a78780f3872c277f62bf3")!,
-            readResource(forName: "svr2handshakestart.data"),
-            Date(timeIntervalSince1970: 1_741_649_483)
+            [UInt8](readResource(forName: "svr2.mrenclave")),
+            readResource(forName: "svr2.handshakestart"),
+            Date(
+                timeIntervalSince1970: readResource(forName: "svr2.timestamp").withUnsafeBytes {
+                    Double($0.load(as: UInt64.self).bigEndian)
+                }
+            )
         ),
     ]
 
@@ -57,7 +67,7 @@ class SgxTests: TestCaseBase {
                 currentDate: currentDate
             )
             let initialMessage = client.initialRequest()
-            XCTAssertEqual(serviceType == .svr2 ? 48 : 1632, initialMessage.count, String(describing: serviceType))
+            XCTAssertEqual(1632, initialMessage.count, String(describing: serviceType))
         }
     }
 
@@ -117,3 +127,5 @@ class SgxTests: TestCaseBase {
         }
     }
 }
+
+#endif

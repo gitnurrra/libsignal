@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import * as Native from '../Native';
+import type { Bytes } from '@signalapp/types';
 
-export function toJSONString(buffer: Uint8Array): string {
+import * as Native from './Native.js';
+
+export function toJSONString(buffer: Bytes): string {
   return Native.MinidumpToJSONString(buffer);
 }

@@ -27,13 +27,14 @@ public class IdentityKeyPair {
     this.privateKey = privateKey;
   }
 
-  public IdentityKeyPair(byte[] serialized) {
-    long[] tuple = Native.IdentityKeyPair_Deserialize(serialized);
-    long publicKeyHandle = tuple[0];
-    long privateKeyHandle = tuple[1];
-
-    this.publicKey = new IdentityKey(publicKeyHandle);
-    this.privateKey = new ECPrivateKey(privateKeyHandle);
+  public IdentityKeyPair(byte[] serialized) throws InvalidKeyException {
+    try {
+      var pair = Native.IdentityKeyPair_Deserialize(serialized);
+      this.publicKey = new IdentityKey(pair.getFirst());
+      this.privateKey = new ECPrivateKey(pair.getSecond());
+    } catch (Exception e) {
+      throw new InvalidKeyException(e);
+    }
   }
 
   public static IdentityKeyPair generate() {

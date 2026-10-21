@@ -1,0 +1,223 @@
+//
+// Copyright 2024 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+#![warn(clippy::unwrap_used)]
+
+pub mod proto {
+    // Mirror the protobuf package structure so relative references work correctly.
+    // We'll export org::signal::chat for a more flat interface elsewhere.
+    mod org {
+        pub(super) mod signal {
+            // The comments in proto files shouldn't be held to strict rustdoc standards.
+            #[allow(rustdoc::bare_urls)]
+            pub mod chat {
+                pub mod common {
+                    tonic::include_proto!("org.signal.chat.common");
+                }
+                pub mod errors {
+                    tonic::include_proto!("org.signal.chat.errors");
+                }
+                pub mod account {
+                    tonic::include_proto!("org.signal.chat.account");
+                }
+                pub mod attachments {
+                    tonic::include_proto!("org.signal.chat.attachments");
+                }
+                pub mod backup {
+                    tonic::include_proto!("org.signal.chat.backup");
+                }
+                pub mod call_quality {
+                    tonic::include_proto!("org.signal.chat.calling.quality");
+                }
+                pub mod credentials {
+                    tonic::include_proto!("org.signal.chat.credentials");
+                }
+                pub mod device {
+                    tonic::include_proto!("org.signal.chat.device");
+                }
+                pub mod donations {
+                    tonic::include_proto!("org.signal.chat.donations");
+                }
+                pub mod keys {
+                    tonic::include_proto!("org.signal.chat.keys");
+                }
+                pub mod messages {
+                    tonic::include_proto!("org.signal.chat.messages");
+                }
+                pub mod payments {
+                    tonic::include_proto!("org.signal.chat.payments");
+                }
+                pub mod profile {
+                    tonic::include_proto!("org.signal.chat.profile");
+                }
+                pub mod purchase {
+                    tonic::include_proto!("org.signal.chat.purchase");
+                }
+
+                // Not actually a proto, we just make sure to generate our helper file in the same place.
+                pub mod services {
+                    tonic::include_proto!("service_methods");
+                }
+            }
+        }
+    }
+
+    pub use org::signal::chat;
+
+    // Key transparency is served by chat, but its protos are in their own top-level
+    // package rather than under org.signal.chat.
+    //
+    // The doc comments in this proto use bulleted lists that aren't valid Markdown.
+    #[expect(clippy::doc_lazy_continuation)]
+    pub mod kt_query {
+        tonic::include_proto!("kt_query");
+    }
+
+    pub mod textsecure {
+        tonic::include_proto!("textsecure");
+    }
+
+    // These protos come directly from Google and their doc comments aren't necessarily valid Markdown.
+    #[allow(
+        clippy::doc_overindented_list_items,
+        rustdoc::bare_urls,
+        rustdoc::broken_intra_doc_links,
+        rustdoc::invalid_html_tags
+    )]
+    pub mod google {
+        pub mod rpc {
+            tonic::include_proto!("google.rpc");
+        }
+    }
+}
+
+impl From<libsignal_core::ServiceId> for proto::chat::common::ServiceIdentifier {
+    fn from(value: libsignal_core::ServiceId) -> Self {
+        let kind = match value.kind() {
+            libsignal_core::ServiceIdKind::Aci => proto::chat::common::IdentityType::Aci,
+            libsignal_core::ServiceIdKind::Pni => proto::chat::common::IdentityType::Pni,
+        };
+        let uuid = value.raw_uuid();
+        Self {
+            identity_type: kind.into(),
+            uuid: uuid.into_bytes().into(),
+        }
+    }
+}
+
+impl From<libsignal_core::Aci> for proto::chat::common::ServiceIdentifier {
+    fn from(value: libsignal_core::Aci) -> Self {
+        libsignal_core::ServiceId::from(value).into()
+    }
+}
+
+impl From<libsignal_core::Pni> for proto::chat::common::ServiceIdentifier {
+    fn from(value: libsignal_core::Pni) -> Self {
+        libsignal_core::ServiceId::from(value).into()
+    }
+}
+
+impl proto::chat::common::ServiceIdentifier {
+    pub fn try_as_service_id(&self) -> Option<libsignal_core::ServiceId> {
+        let Self {
+            identity_type,
+            uuid,
+        } = self;
+        Some(match (*identity_type).try_into().ok()? {
+            proto::chat::common::IdentityType::Aci => {
+                libsignal_core::Aci::from_uuid_bytes(uuid.as_slice().try_into().ok()?).into()
+            }
+            proto::chat::common::IdentityType::Pni => {
+                libsignal_core::Pni::from_uuid_bytes(uuid.as_slice().try_into().ok()?).into()
+            }
+            proto::chat::common::IdentityType::Unspecified => return None,
+        })
+    }
+}
+
+// We only need Name support for these few types, so we just do it here instead of adding it during
+// the build step using `prost_build::Config::enable_type_names`.
+impl prost::Name for proto::google::rpc::ErrorInfo {
+    const NAME: &'static str = "ErrorInfo";
+    const PACKAGE: &'static str = "google.rpc";
+
+    fn type_url() -> String {
+        const_str::concat!(
+            "type.googleapis.com/",
+            proto::google::rpc::ErrorInfo::PACKAGE,
+            ".",
+            proto::google::rpc::ErrorInfo::NAME
+        )
+        .to_owned()
+    }
+}
+
+impl prost::Name for proto::google::rpc::BadRequest {
+    const NAME: &'static str = "BadRequest";
+    const PACKAGE: &'static str = "google.rpc";
+
+    fn type_url() -> String {
+        const_str::concat!(
+            "type.googleapis.com/",
+            proto::google::rpc::BadRequest::PACKAGE,
+            ".",
+            proto::google::rpc::BadRequest::NAME
+        )
+        .to_owned()
+    }
+}
+
+impl prost::Name for proto::google::rpc::RetryInfo {
+    const NAME: &'static str = "RetryInfo";
+    const PACKAGE: &'static str = "google.rpc";
+
+    fn type_url() -> String {
+        const_str::concat!(
+            "type.googleapis.com/",
+            proto::google::rpc::RetryInfo::PACKAGE,
+            ".",
+            proto::google::rpc::RetryInfo::NAME
+        )
+        .to_owned()
+    }
+}
+
+impl prost::Name for proto::chat::backup::BackupStreamClosed {
+    const NAME: &'static str = "BackupStreamClosed";
+    const PACKAGE: &'static str = "org.signal.chat.backup";
+
+    // Even though this is not a Google protobuf, the server-side library we use still uses
+    // "type.googleapis.com" as a prefix.
+    // See <https://github.com/protocolbuffers/protobuf/blob/bd34c349cd28d262a7b2f7c4ec9a6c6d59730d31/src/google/protobuf/any.proto#L85>.
+    fn type_url() -> String {
+        const_str::concat!(
+            "type.googleapis.com/",
+            proto::chat::backup::BackupStreamClosed::PACKAGE,
+            ".",
+            proto::chat::backup::BackupStreamClosed::NAME
+        )
+        .to_owned()
+    }
+}
+
+/// Manual implementation of the gRPC framing format (Length-Prefixed-Message).
+///
+/// tonic normally takes care of this for us on the Rust side, but app-level tests (using e.g.
+/// `FakeChatRemote`) have to deal with the raw HTTP bodies.
+///
+/// See <https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md>.
+pub fn expect_next_grpc_message_for_testing(input: &[u8]) -> &[u8] {
+    const HEADER_LEN: usize = 5;
+    assert!(input.len() >= HEADER_LEN, "unexpected EOF");
+    assert_eq!(input[0], 0, "compression not supported");
+    let message_length =
+        u32::from_be_bytes(*input[1..].first_chunk().expect("already checked length"));
+    let message_length = usize::try_from(message_length).expect("at least 32-bit usize");
+    assert!(
+        message_length + HEADER_LEN <= input.len(),
+        "message length exceeds remaining input"
+    );
+    &input[HEADER_LEN..][..message_length]
+}

@@ -6,16 +6,17 @@
 /**
  * Cryptographic hashing, randomness generation, etc. related to SVR/Backup Keys.
  *
- * Currently only the Account Entropy Pool is exposed, because no other functionality is used on Desktop.
- *
  * @module AccountKeys
  */
 
 import * as crypto from 'node:crypto';
-import * as Native from '../Native';
-import ByteArray from './zkgroup/internal/ByteArray';
-import { Aci } from './Address';
-import { PrivateKey } from './EcKeys';
+import type { Bytes } from '@signalapp/types';
+
+import * as Native from './Native.js';
+import * as NativeNice from './NativeNice.js';
+import ByteArray from './zkgroup/internal/ByteArray.js';
+import { Aci } from './Address.js';
+import { PrivateKey } from './EcKeys.js';
 
 /**
  * The randomly-generated user-memorized entropy used to derive the backup key,
@@ -49,7 +50,7 @@ export class AccountEntropyPool {
    * `accountEntropyPool` must be a **validated** account entropy pool;
    * passing an arbitrary string here is considered a programmer error.
    */
-  public static deriveSvrKey(accountEntropyPool: string): Uint8Array {
+  public static deriveSvrKey(accountEntropyPool: string): Bytes {
     return Native.AccountEntropyPool_DeriveSvrKey(accountEntropyPool);
   }
 
@@ -69,6 +70,50 @@ export class AccountEntropyPool {
 }
 
 /**
+ * An account's SVR key: the 32-byte root from which account-related secrets are derived.
+ *
+ * This is the same key that {@link AccountEntropyPool.deriveSvrKey} produces. Signal clients
+ * historically call these bytes the "master key"; libsignal calls it the SVR key. The two names
+ * refer to the same value.
+ */
+export class SvrKey extends ByteArray {
+  private readonly __type?: never;
+  static SIZE = 32;
+
+  constructor(contents: Bytes) {
+    super(contents, SvrKey.checkLength(SvrKey.SIZE));
+  }
+
+  /** Derives the raw 32-byte token used to enable registration lock. */
+  deriveRegistrationLock(): Bytes {
+    return NativeNice.SvrKey_DeriveRegistrationLock({
+      svrKey: this.getContents(),
+    });
+  }
+
+  /** Derives the raw 32-byte password used to recover an account without SMS verification. */
+  deriveRegistrationRecoveryPassword(): Bytes {
+    return NativeNice.SvrKey_DeriveRegistrationRecoveryPassword({
+      svrKey: this.getContents(),
+    });
+  }
+
+  /** Derives the raw 32-byte root key used to encrypt data in Storage Service. */
+  deriveStorageServiceKey(): Bytes {
+    return NativeNice.SvrKey_DeriveStorageServiceKey({
+      svrKey: this.getContents(),
+    });
+  }
+
+  /** Derives the raw 32-byte key used to obscure sensitive identifiers in logs. */
+  deriveLoggingKey(): Bytes {
+    return NativeNice.SvrKey_DeriveLoggingKey({
+      svrKey: this.getContents(),
+    });
+  }
+}
+
+/**
  * A key used for many aspects of backups.
  *
  * Clients are typically concerned with two long-lived keys: a "messages" key (sometimes called "the
@@ -79,7 +124,7 @@ export class BackupKey extends ByteArray {
   private readonly __type?: never;
   static SIZE = 32;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, BackupKey.checkLength(BackupKey.SIZE));
   }
 
@@ -100,7 +145,7 @@ export class BackupKey extends ByteArray {
    *
    * Used for both message and media backups.
    */
-  public deriveBackupId(aci: Aci): Uint8Array {
+  public deriveBackupId(aci: Aci): Bytes {
     return Native.BackupKey_DeriveBackupId(
       this.contents,
       aci.getServiceIdFixedWidthBinary()
@@ -126,7 +171,7 @@ export class BackupKey extends ByteArray {
    *
    * Only relevant for message backup keys.
    */
-  public deriveLocalBackupMetadataKey(): Uint8Array {
+  public deriveLocalBackupMetadataKey(): Bytes {
     return Native.BackupKey_DeriveLocalBackupMetadataKey(this.contents);
   }
 
@@ -135,7 +180,7 @@ export class BackupKey extends ByteArray {
    *
    * Only relevant for media backup keys.
    */
-  public deriveMediaId(mediaName: string): Uint8Array {
+  public deriveMediaId(mediaName: string): Bytes {
     return Native.BackupKey_DeriveMediaId(this.contents, mediaName);
   }
 
@@ -146,7 +191,7 @@ export class BackupKey extends ByteArray {
    *
    * Only relevant for media backup keys.
    */
-  public deriveMediaEncryptionKey(mediaId: Uint8Array): Uint8Array {
+  public deriveMediaEncryptionKey(mediaId: Bytes): Bytes {
     return Native.BackupKey_DeriveMediaEncryptionKey(this.contents, mediaId);
   }
 
@@ -158,13 +203,100 @@ export class BackupKey extends ByteArray {
    *
    * Only relevant for media backup keys.
    */
-  public deriveThumbnailTransitEncryptionKey(mediaId: Uint8Array): Uint8Array {
+  public deriveThumbnailTransitEncryptionKey(mediaId: Bytes): Bytes {
     return Native.BackupKey_DeriveThumbnailTransitEncryptionKey(
       this.contents,
       mediaId
     );
   }
 }
+
+/**
+ * A hash of the pin that can be used to interact with a Secure Value Recovery service.
+ *
+ * Holds an opaque native handle. Use {@link PinHash.fromSalt} or
+ * {@link PinHash.fromUsernameMrenclave} to construct.
+ */
+export class PinHash {
+  readonly _nativeHandle: Native.PinHash;
+
+  private constructor(nativeHandle: Native.PinHash) {
+    this._nativeHandle = nativeHandle;
+  }
+
+  /**
+   * Hash a pin using an explicit salt.
+   *
+   * @param normalizedPin A normalized, UTF-8 encoded byte representation of the pin
+   * @param salt A 32 byte salt
+   */
+  static fromSalt(normalizedPin: Bytes, salt: Bytes): PinHash {
+    return new PinHash(Native.PinHash_FromSalt(normalizedPin, salt));
+  }
+
+  /**
+   * Hash a pin for use with SVR2, deriving the salt from the username and mrenclave.
+   *
+   * @param normalizedPin A normalized, UTF-8 encoded byte representation of the pin
+   * @param username The Basic Auth username used to authenticate with SVR2
+   * @param mrenclave The mrenclave where the hashed pin will be stored
+   */
+  static fromUsernameMrenclave(
+    normalizedPin: Bytes,
+    username: string,
+    mrenclave: Bytes
+  ): PinHash {
+    return new PinHash(
+      Native.PinHash_FromUsernameMrenclave(normalizedPin, username, mrenclave)
+    );
+  }
+
+  /** A 32 byte encryption key that can be used to encrypt or decrypt values before uploading them to a secure store. */
+  get encryptionKey(): Bytes {
+    return Native.PinHash_EncryptionKey(this);
+  }
+
+  /** A 32 byte secret that can be used to access a value in a secure store. */
+  get accessKey(): Bytes {
+    return Native.PinHash_AccessKey(this);
+  }
+}
+
+/**
+ * Supports operations on pins for Secure Value Recovery.
+ *
+ * Provides hashing pins for local verification and for use with the remote SVR
+ * service. In either case, all pins are UTF-8 encoded bytes that must be
+ * normalized *before* being provided. Normalizing a string pin requires the
+ * following steps:
+ *
+ *  1. The string should be trimmed for leading and trailing whitespace.
+ *  2. If the whole string consists of digits, then non-arabic digits must be replaced with their
+ *     arabic 0-9 equivalents.
+ *  3. The string must then be NKFD normalized.
+ */
+export const Pin = {
+  /**
+   * Create an encoded password hash string for local pin verification only.
+   *
+   * @param normalizedPin A normalized, UTF-8 encoded byte representation of the pin
+   * @returns A hashed pin string that can be verified later
+   */
+  localHash(normalizedPin: Bytes): string {
+    return Native.Pin_LocalHash(normalizedPin);
+  },
+
+  /**
+   * Verify an encoded password hash against a pin.
+   *
+   * @param encodedHash An encoded string of the hash, as returned by {@link Pin.localHash}
+   * @param normalizedPin A normalized, UTF-8 encoded byte representation of the pin to verify
+   * @returns true if the pin matches the hash, false otherwise
+   */
+  verifyLocalHash(encodedHash: string, normalizedPin: Bytes): boolean {
+    return Native.Pin_VerifyLocalHash(encodedHash, normalizedPin);
+  },
+};
 
 /**
  * A forward secrecy token used for deriving message backup keys.
@@ -176,7 +308,7 @@ export class BackupForwardSecrecyToken extends ByteArray {
   private readonly __type?: never;
   static SIZE = 32;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(
       contents,
       BackupForwardSecrecyToken.checkLength(BackupForwardSecrecyToken.SIZE)

@@ -26,8 +26,8 @@ use std::sync::Arc;
 
 use clap::Parser;
 use either::Either;
-use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use libsignal_net::infra::certs::RootCertificates;
 use libsignal_net::infra::dns::DnsResolver;
 use libsignal_net::infra::host::Host;
@@ -35,8 +35,8 @@ use libsignal_net_infra::route::{
     ConnectorExt as _, HttpProxyAuth, HttpProxyRouteFragment, HttpsProxyRoute, ProxyTarget,
     TcpRoute, TlsRoute, TlsRouteFragment, UnresolvedHost,
 };
-use libsignal_net_infra::testutil::no_network_change_events;
-use libsignal_net_infra::Alpn;
+use libsignal_net_infra::utils::no_network_change_events;
+use libsignal_net_infra::{Alpn, OverrideNagleAlgorithm};
 use tokio::time::Duration;
 use url::Url;
 
@@ -87,6 +87,7 @@ async fn main() {
     let tcp_to_proxy = TcpRoute {
         address: proxy_host.clone().map_domain(UnresolvedHost::from),
         port: proxy_port,
+        override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
     };
     let inner = match proxy_url.scheme() {
         "http" => Either::Right(tcp_to_proxy),

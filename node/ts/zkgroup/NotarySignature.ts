@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import ByteArray from './internal/ByteArray';
+import type { Bytes } from '@signalapp/types';
+
+import ByteArray from './internal/ByteArray.js';
 
 export default class NotarySignature extends ByteArray {
   private readonly __type?: never;
   static SIZE = 64;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, NotarySignature.checkLength(NotarySignature.SIZE));
   }
 }

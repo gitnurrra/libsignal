@@ -7,6 +7,7 @@ package org.signal.libsignal.sgxsession;
 
 import static org.junit.Assert.assertEquals;
 
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
@@ -17,7 +18,6 @@ import org.junit.runners.Parameterized.Parameters;
 import org.signal.libsignal.attest.AttestationDataException;
 import org.signal.libsignal.attest.AttestationFailedException;
 import org.signal.libsignal.cds2.Cds2Client;
-import org.signal.libsignal.protocol.util.Hex;
 import org.signal.libsignal.svr2.Svr2Client;
 import org.signal.libsignal.util.ResourceReader;
 
@@ -51,26 +51,32 @@ public class SgxClientTest {
   @Parameters(name = "{3}")
   public static Collection<Object[]> data() throws Exception {
     byte[] cds2Handshake =
-        ResourceReader.readAll(SgxClientTest.class.getResourceAsStream("cds2handshakestart.data"));
+        ResourceReader.readAll(SgxClientTest.class.getResourceAsStream("cdsi.handshakestart"));
     byte[] svr2Handshake =
-        ResourceReader.readAll(SgxClientTest.class.getResourceAsStream("svr2handshakestart.data"));
+        ResourceReader.readAll(SgxClientTest.class.getResourceAsStream("svr2.handshakestart"));
     return Arrays.asList(
         new Object[][] {
           {
-            Hex.fromStringCondensed(
-                "39d78f17f8aa9a8e9cdaf16595947a057bac21f014d1abfd6a99b2dfd4e18d1d"),
+            ResourceReader.readAll(SgxClientTest.class.getResourceAsStream("cdsi.mrenclave")),
             cds2Handshake,
-            Instant.ofEpochMilli(1655857680000L),
+            Instant.ofEpochSecond(
+                ByteBuffer.wrap(
+                        ResourceReader.readAll(
+                            SgxClientTest.class.getResourceAsStream("cdsi.timestamp")))
+                    .getLong()),
             ServiceType.CDS2,
             1632
           },
           {
-            Hex.fromStringCondensed(
-                "38e01eff4fe357dc0b0e8ef7a44b4abc5489fbccba3a78780f3872c277f62bf3"),
+            ResourceReader.readAll(SgxClientTest.class.getResourceAsStream("svr2.mrenclave")),
             svr2Handshake,
-            Instant.ofEpochSecond(1741649483),
+            Instant.ofEpochSecond(
+                ByteBuffer.wrap(
+                        ResourceReader.readAll(
+                            SgxClientTest.class.getResourceAsStream("svr2.timestamp")))
+                    .getLong()),
             ServiceType.SVR2,
-            48
+            1632
           }
         });
   }

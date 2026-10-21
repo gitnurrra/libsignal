@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+import SignalFfi
 import XCTest
 
 @testable import LibSignalClient
+
+let SECONDS_PER_DAY: UInt64 = 24 * 60 * 60
 
 class BadStore: InMemorySignalProtocolStore {
     enum Error: Swift.Error {
@@ -61,6 +64,24 @@ extension RangeReplaceableCollection where Element == UInt8 {
     }
 }
 
+extension Randomness {
+    internal init?(fromHexString hex: String) {
+        guard let array = [UInt8](fromHexString: hex) else {
+            return nil
+        }
+        var bytes: SignalRandomnessBytes = (
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        )
+        if array.count != MemoryLayout.size(ofValue: bytes) {
+            return nil
+        }
+        withUnsafeMutableBytes(of: &bytes) {
+            $0.copyBytes(from: array)
+        }
+        self.init(bytes)
+    }
+}
+
 // Helper for async error assertions until XCTest supports async autoclosures
 // Adapted from https://arturgruchala.com/testing-async-await-exceptions/
 func assertThrowsErrorAsync<T>(
@@ -75,6 +96,21 @@ func assertThrowsErrorAsync<T>(
         XCTFail(message().isEmpty ? "Expected error to be thrown" : message(), file: file, line: line)
     } catch {
         errorHandler(error)
+    }
+}
+
+extension AsyncSequence {
+    func collectUntilError() async -> ([Element], Error?) {
+        var received: [Element] = []
+        var maybeError: Error?
+        do {
+            for try await next in self {
+                received.append(next)
+            }
+        } catch {
+            maybeError = error
+        }
+        return (received, maybeError)
     }
 }
 

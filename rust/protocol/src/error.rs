@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::fmt::{Display, Formatter};
 use std::panic::UnwindSafe;
 
 use displaydoc::Display;
@@ -33,17 +34,15 @@ pub enum SignalProtocolError {
     /// unrecognized message version <{0}>
     UnrecognizedMessageVersion(u32),
 
-    /// fingerprint version number mismatch them {0} us {1}
-    FingerprintVersionMismatch(u32, u32),
-    /// fingerprint parsing error
-    FingerprintParsingError,
-
     /// no key type identifier
     NoKeyTypeIdentifier,
     /// bad key type <{0:#04x}>
     BadKeyType(u8),
     /// bad key length <{1}> for key with type <{0}>
     BadKeyLength(KeyType, usize),
+
+    /// invalid key agreement
+    InvalidKeyAgreement,
 
     /// invalid signature detected
     SignatureValidationFailed,
@@ -66,8 +65,8 @@ pub enum SignalProtocolError {
 
     /// protocol address is invalid: {name}.{device_id}
     InvalidProtocolAddress { name: String, device_id: u32 },
-    /// session with {0} not found
-    SessionNotFound(crate::ProtocolAddress),
+    /// {0}
+    SessionNotFound(SessionNotFound),
     /// invalid session: {0}
     InvalidSessionStructure(&'static str),
     /// invalid sender key session with distribution ID {distribution_id}
@@ -78,7 +77,7 @@ pub enum SignalProtocolError {
     /// message with old counter {0} / {1}
     DuplicatedMessage(u32, u32),
     /// invalid {0:?} message: {1}
-    InvalidMessage(crate::CiphertextMessageType, &'static str),
+    InvalidMessage(crate::CiphertextMessageType, String),
 
     /// error while invoking an ffi callback: {0}
     FfiBindingError(String),
@@ -94,6 +93,8 @@ pub enum SignalProtocolError {
     UnknownSealedSenderVersion(u8),
     /// self send of a sealed sender message
     SealedSenderSelfSend,
+    /// unknown server certificate ID: {0}
+    UnknownSealedSenderServerCertificateId(u32),
 
     /// bad KEM key type <{0:#04x}>
     BadKEMKeyType(u8),
@@ -103,6 +104,35 @@ pub enum SignalProtocolError {
     BadKEMKeyLength(kem::KeyType, usize),
     /// bad KEM ciphertext length <{1}> for key with type <{0}>
     BadKEMCiphertextLength(kem::KeyType, usize),
+}
+
+#[derive(Debug)]
+pub struct SessionNotFound {
+    pub address: Option<crate::ProtocolAddress>,
+    pub op: &'static str,
+}
+
+impl SessionNotFound {
+    pub const fn without_address(op: &'static str) -> Self {
+        Self { address: None, op }
+    }
+
+    pub const fn new(address: crate::ProtocolAddress, op: &'static str) -> Self {
+        Self {
+            address: Some(address),
+            op,
+        }
+    }
+}
+
+impl Display for SessionNotFound {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "session")?;
+        if let Some(address) = &self.address {
+            write!(f, " with {address}")?;
+        }
+        write!(f, " not found: {}", self.op)
+    }
 }
 
 impl SignalProtocolError {
@@ -121,6 +151,7 @@ impl From<CurveError> for SignalProtocolError {
             CurveError::NoKeyTypeIdentifier => Self::NoKeyTypeIdentifier,
             CurveError::BadKeyType(raw) => Self::BadKeyType(raw),
             CurveError::BadKeyLength(key_type, len) => Self::BadKeyLength(key_type, len),
+            CurveError::InvalidKeyAgreement => Self::InvalidKeyAgreement,
         }
     }
 }

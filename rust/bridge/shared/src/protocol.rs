@@ -128,12 +128,26 @@ fn PublicKey_Deserialize(data: &[u8]) -> Result<PublicKey> {
     Ok(PublicKey::deserialize(data)?)
 }
 
+/// Returns `data[offset..][..length]`, or an `InvalidArgument` error if that range is out of bounds.
+#[cfg(feature = "jni")]
+fn slice_at_offset_with_length(data: &[u8], offset: u32, length: u32) -> Result<&[u8]> {
+    let offset = offset as usize;
+    let length = length as usize;
+    data.get(offset..)
+        .and_then(|rest| rest.get(..length))
+        .ok_or_else(|| {
+            SignalProtocolError::InvalidArgument(format!(
+                "offset {offset} and length {length} out of bounds for {} bytes",
+                data.len()
+            ))
+        })
+}
+
 // Alternate implementation to deserialize from an offset and length.
 #[bridge_fn(ffi = false, node = false)]
 fn ECPublicKey_Deserialize(data: &[u8], offset: u32, length: u32) -> Result<PublicKey> {
-    let offset = offset as usize;
-    let length = length as usize;
-    Ok(PublicKey::deserialize(&data[offset..][..length])?)
+    let data = slice_at_offset_with_length(data, offset, length)?;
+    Ok(PublicKey::deserialize(data)?)
 }
 
 bridge_get!(
@@ -160,15 +174,6 @@ fn ProtocolAddress_Name(obj: &ProtocolAddress) -> &str {
 #[bridge_fn(ffi = "publickey_equals", node = "PublicKey_Equals")]
 fn ECPublicKey_Equals(lhs: &PublicKey, rhs: &PublicKey) -> bool {
     lhs == rhs
-}
-
-#[bridge_fn(ffi = "publickey_compare", node = "PublicKey_Compare")]
-fn ECPublicKey_Compare(key1: &PublicKey, key2: &PublicKey) -> i32 {
-    match key1.cmp(key2) {
-        std::cmp::Ordering::Less => -1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 1,
-    }
 }
 
 #[bridge_fn(ffi = "publickey_verify", node = "PublicKey_Verify")]
@@ -226,9 +231,8 @@ fn KyberPublicKey_DeserializeWithOffsetLength(
     offset: u32,
     length: u32,
 ) -> Result<KyberPublicKey> {
-    let offset = offset as usize;
-    let length = length as usize;
-    KyberPublicKey::deserialize(&data[offset..][..length])
+    let data = slice_at_offset_with_length(data, offset, length)?;
+    KyberPublicKey::deserialize(data)
 }
 
 bridge_get!(
@@ -268,6 +272,12 @@ fn IdentityKeyPair_Serialize(public_key: &PublicKey, private_key: &PrivateKey) -
     identity_key_pair.serialize().into_vec()
 }
 
+#[bridge_fn(ffi = "identitykeypair_deserialize")]
+fn IdentityKeyPair_Deserialize(input: &[u8]) -> Result<(PublicKey, PrivateKey)> {
+    let key_pair = IdentityKeyPair::try_from(input)?;
+    Ok((*key_pair.public_key(), *key_pair.private_key()))
+}
+
 #[bridge_fn(ffi = "identitykeypair_sign_alternate_identity")]
 fn IdentityKeyPair_SignAlternateIdentity(
     public_key: &PublicKey,
@@ -293,7 +303,7 @@ fn IdentityKey_VerifyAlternateIdentity(
     identity.verify_alternate_identity(&other_identity, signature)
 }
 
-#[bridge_fn(jni = false)]
+#[bridge_fn(jni = "NumericFingerprintGenerator_1New")]
 fn Fingerprint_New(
     iterations: u32,
     version: u32,
@@ -301,7 +311,7 @@ fn Fingerprint_New(
     local_key: &PublicKey,
     remote_identifier: &[u8],
     remote_key: &PublicKey,
-) -> Result<Fingerprint> {
+) -> std::result::Result<Fingerprint, FingerprintError> {
     Fingerprint::new(
         version,
         iterations,
@@ -312,41 +322,23 @@ fn Fingerprint_New(
     )
 }
 
-// Alternate implementation that takes untyped buffers.
-#[bridge_fn(ffi = false, node = false)]
-fn NumericFingerprintGenerator_New(
-    iterations: u32,
-    version: u32,
-    local_identifier: &[u8],
-    local_key: &[u8],
-    remote_identifier: &[u8],
-    remote_key: &[u8],
-) -> Result<Fingerprint> {
-    let local_key = IdentityKey::decode(local_key)?;
-    let remote_key = IdentityKey::decode(remote_key)?;
-
-    Fingerprint::new(
-        version,
-        iterations,
-        local_identifier,
-        &local_key,
-        remote_identifier,
-        &remote_key,
-    )
-}
-
 #[bridge_fn(jni = "NumericFingerprintGenerator_1GetScannableEncoding")]
-fn Fingerprint_ScannableEncoding(obj: &Fingerprint) -> Result<Vec<u8>> {
+fn Fingerprint_ScannableEncoding(
+    obj: &Fingerprint,
+) -> std::result::Result<Vec<u8>, FingerprintError> {
     obj.scannable.serialize()
 }
 
-bridge_get!(
-    Fingerprint::display_string as DisplayString -> String,
-    jni = "NumericFingerprintGenerator_1GetDisplayString"
-);
+#[bridge_fn(jni = "NumericFingerprintGenerator_1GetDisplayString")]
+fn Fingerprint_DisplayString(obj: &Fingerprint) -> std::result::Result<String, FingerprintError> {
+    obj.display_string()
+}
 
 #[bridge_fn(ffi = "fingerprint_compare")]
-fn ScannableFingerprint_Compare(fprint1: &[u8], fprint2: &[u8]) -> Result<bool> {
+fn ScannableFingerprint_Compare(
+    fprint1: &[u8],
+    fprint2: &[u8],
+) -> std::result::Result<bool, FingerprintError> {
     ScannableFingerprint::deserialize(fprint1)?.compare(fprint2)
 }
 
@@ -382,6 +374,7 @@ fn SignalMessage_New(
     SignalMessage::new(
         message_version,
         mac_key,
+        None,
         *sender_ratchet_key,
         counter,
         previous_counter,
@@ -389,20 +382,6 @@ fn SignalMessage_New(
         &IdentityKey::new(*sender_identity_key),
         &IdentityKey::new(*receiver_identity_key),
         pq_ratchet,
-    )
-}
-
-#[bridge_fn(ffi = "message_verify_mac")]
-fn SignalMessage_VerifyMac(
-    msg: &SignalMessage,
-    sender_identity_key: &PublicKey,
-    receiver_identity_key: &PublicKey,
-    mac_key: &[u8],
-) -> Result<bool> {
-    msg.verify_mac(
-        &IdentityKey::new(*sender_identity_key),
-        &IdentityKey::new(*receiver_identity_key),
-        mac_key,
     )
 }
 
@@ -753,10 +732,16 @@ bridge_get!(SenderCertificate::key -> PublicKey);
 #[bridge_fn]
 fn SenderCertificate_Validate(
     cert: &SenderCertificate,
-    key: &PublicKey,
+    trust_roots: &[&PublicKey],
     time: Timestamp,
-) -> Result<bool> {
-    cert.validate(key, time)
+) -> bool {
+    cert.validate_with_trust_roots(trust_roots, time)
+        .inspect_err(|e| {
+            // Not all of the apps bother to inspect an Err failure before just saying "validate
+            // failed", so we log it here to be sure it won't be lost.
+            log::warn!("unable to validate certificate: {e}");
+        })
+        .unwrap_or(false)
 }
 
 #[bridge_fn]
@@ -915,7 +900,7 @@ fn UnidentifiedSenderMessageContentNew(
     node = false
 )]
 fn UnidentifiedSenderMessageContent_New_Java(
-    message: jni::CiphertextMessageRef,
+    message: jni::CiphertextMessageRef<'_>,
     sender: &SenderCertificate,
     content_hint: u32,
     group_id: Option<&[u8]>,
@@ -977,7 +962,8 @@ fn SessionRecord_NewFresh() -> SessionRecord {
 fn SessionRecord_GetSessionVersion(s: &SessionRecord) -> Result<u32> {
     match s.session_version() {
         Ok(v) => Ok(v),
-        Err(SignalProtocolError::InvalidState(_, _)) => Ok(0),
+        Err(SignalProtocolError::InvalidState(_, _))
+        | Err(SignalProtocolError::SessionNotFound(_)) => Ok(0),
         Err(e) => Err(e),
     }
 }
@@ -989,7 +975,12 @@ fn SessionRecord_ArchiveCurrentState(session_record: &mut SessionRecord) -> Resu
 
 #[bridge_fn]
 fn SessionRecord_HasUsableSenderChain(s: &SessionRecord, now: Timestamp) -> Result<bool> {
-    s.has_usable_sender_chain(now.into(), SessionUsabilityRequirements::NotStale)
+    s.has_usable_sender_chain(
+        now.into(),
+        SessionUsabilityRequirements::NotStale
+            | SessionUsabilityRequirements::EstablishedWithPqxdh
+            | SessionUsabilityRequirements::Spqr,
+    )
 }
 
 #[bridge_fn]
@@ -1025,20 +1016,20 @@ bridge_get!(
 async fn SessionBuilder_ProcessPreKeyBundle(
     bundle: &PreKeyBundle,
     protocol_address: &ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_store: &mut dyn SessionStore,
     identity_key_store: &mut dyn IdentityKeyStore,
     now: Timestamp,
-    use_pq_ratchet: bool,
 ) -> Result<()> {
     let mut csprng = rand::rngs::OsRng.unwrap_err();
     process_prekey_bundle(
         protocol_address,
+        local_address,
         session_store,
         identity_key_store,
         bundle,
         now.into(),
         &mut csprng,
-        UsePQRatchet::from(use_pq_ratchet),
     )
     .await
 }
@@ -1047,6 +1038,7 @@ async fn SessionBuilder_ProcessPreKeyBundle(
 async fn SessionCipher_EncryptMessage(
     ptext: &[u8],
     protocol_address: &ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_store: &mut dyn SessionStore,
     identity_key_store: &mut dyn IdentityKeyStore,
     now: Timestamp,
@@ -1055,6 +1047,7 @@ async fn SessionCipher_EncryptMessage(
     message_encrypt(
         ptext,
         protocol_address,
+        local_address,
         session_store,
         identity_key_store,
         now.into(),
@@ -1067,6 +1060,7 @@ async fn SessionCipher_EncryptMessage(
 async fn SessionCipher_DecryptSignalMessage(
     message: &SignalMessage,
     protocol_address: &ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_store: &mut dyn SessionStore,
     identity_key_store: &mut dyn IdentityKeyStore,
 ) -> Result<Vec<u8>> {
@@ -1074,6 +1068,7 @@ async fn SessionCipher_DecryptSignalMessage(
     message_decrypt_signal(
         message,
         protocol_address,
+        local_address,
         session_store,
         identity_key_store,
         &mut csprng,
@@ -1085,24 +1080,24 @@ async fn SessionCipher_DecryptSignalMessage(
 async fn SessionCipher_DecryptPreKeySignalMessage(
     message: &PreKeySignalMessage,
     protocol_address: &ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_store: &mut dyn SessionStore,
     identity_key_store: &mut dyn IdentityKeyStore,
     prekey_store: &mut dyn PreKeyStore,
     signed_prekey_store: &mut dyn SignedPreKeyStore,
     kyber_prekey_store: &mut dyn KyberPreKeyStore,
-    use_pq_ratchet: bool,
 ) -> Result<Vec<u8>> {
     let mut csprng = rand::rngs::OsRng.unwrap_err();
     message_decrypt_prekey(
         message,
         protocol_address,
+        local_address,
         session_store,
         identity_key_store,
         prekey_store,
         signed_prekey_store,
         kyber_prekey_store,
         &mut csprng,
-        UsePQRatchet::from(use_pq_ratchet),
     )
     .await
 }
@@ -1197,7 +1192,6 @@ async fn SealedSender_DecryptMessage(
     prekey_store: &mut dyn PreKeyStore,
     signed_prekey_store: &mut dyn SignedPreKeyStore,
     kyber_prekey_store: &mut dyn KyberPreKeyStore,
-    use_pq_ratchet: bool,
 ) -> Result<SealedSenderDecryptionResult> {
     let local_device_id = local_device_id
         .try_into()
@@ -1215,7 +1209,6 @@ async fn SealedSender_DecryptMessage(
         prekey_store,
         signed_prekey_store,
         kyber_prekey_store,
-        UsePQRatchet::from(use_pq_ratchet),
     )
     .await
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use hmac::Mac;
+use hmac::{KeyInit as _, Mac as _};
 use prost::Message;
 use rand::{CryptoRng, Rng};
 use signal_crypto::{aes_256_cbc_decrypt, aes_256_cbc_encrypt};
@@ -14,7 +14,7 @@ use crate::constants::{
     USERNAME_LINK_KEY_SIZE, USERNAME_LINK_LABEL_AUTHENTICATION_KEY,
     USERNAME_LINK_LABEL_ENCRYPTION_KEY,
 };
-use crate::{proto, UsernameLinkError};
+use crate::{UsernameLinkError, proto};
 
 /// Generates the encrypted buffer used for a username link, decryptable by [`decrypt_username`].
 ///
@@ -63,16 +63,17 @@ pub fn decrypt_username(
     }
 
     let mac_key = hkdf(entropy, USERNAME_LINK_LABEL_AUTHENTICATION_KEY);
-    let (iv_and_ctext, expected_hash) = encrypted_username.split_at(len - USERNAME_LINK_HMAC_LEN);
+    let (iv_and_ctext, expected_hash) = encrypted_username
+        .split_last_chunk::<USERNAME_LINK_HMAC_LEN>()
+        .expect("length already checked");
     let actual_hash = hmac(&mac_key, iv_and_ctext);
 
     if !bool::from(expected_hash.ct_eq(&actual_hash)) {
         return Err(UsernameLinkError::HmacMismatch);
     }
 
-    let ctext = &encrypted_username[USERNAME_LINK_IV_SIZE..len - USERNAME_LINK_HMAC_LEN];
+    let (iv, ctext) = iv_and_ctext.split_at(USERNAME_LINK_IV_SIZE);
     let aes_key = hkdf(entropy, USERNAME_LINK_LABEL_ENCRYPTION_KEY);
-    let iv = &encrypted_username[..USERNAME_LINK_IV_SIZE];
     let ptext =
         aes_256_cbc_decrypt(ctext, &aes_key, iv).map_err(|_| UsernameLinkError::BadCiphertext)?;
 
@@ -106,8 +107,8 @@ fn random_bytes<const SIZE: usize, R: Rng + CryptoRng>(rng: &mut R) -> [u8; SIZE
 
 #[cfg(test)]
 mod test {
-    use rand::rngs::OsRng;
     use rand::TryRngCore as _;
+    use rand::rngs::OsRng;
 
     use super::*;
     use crate::constants::{DISCRIMINATOR_RANGES, MAX_NICKNAME_LENGTH};

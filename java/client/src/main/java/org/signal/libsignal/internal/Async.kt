@@ -5,7 +5,15 @@
 
 package org.signal.libsignal.internal
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -19,22 +27,70 @@ import kotlin.coroutines.resumeWithException
  * @throws Exception if the CompletableFuture completed exceptionally
  * @throws CancellationException if the coroutine was cancelled
  */
-public suspend fun <T> CompletableFuture<T>.await(): T = suspendCancellableCoroutine { c ->
-  // From https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-cancellable-continuation/
-  val future = this
-  future.whenComplete { result, throwable ->
-    if (throwable != null) {
-      // Resume continuation with an exception if an external source failed
-      c.resumeWithException(throwable)
-    } else {
-      // Resume continuation with a value if it was computed
-      c.resume(result)
+public suspend fun <T> CompletableFuture<T>.await(): T =
+  suspendCancellableCoroutine { c ->
+    // From https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-cancellable-continuation/
+    val future = this
+    future.whenComplete { result, throwable ->
+      if (throwable != null) {
+        // Resume continuation with an exception if an external source failed
+        c.resumeWithException(throwable)
+      } else {
+        // Resume continuation with a value if it was computed
+        c.resume(result)
+      }
+    }
+    // Cancel the computation if the continuation itself was cancelled because a caller of 'await' is cancelled
+    c.invokeOnCancellation {
+      future.cancel(true)
     }
   }
-  // Cancel the computation if the continuation itself was cancelled because a caller of 'await' is cancelled
-  c.invokeOnCancellation {
-    future.cancel(true)
+
+/**
+ * Transforms a CompletableFuture<T> into a CompletableFuture<R> with proper bidirectional cancellation.
+ *
+ * This helper wraps a native future and transforms its result, while ensuring that:
+ * - Success values are transformed using the provided mapper
+ * - CancellationExceptions propagate as cancellations (not completions)
+ * - Other exceptions are transformed using the error mapper
+ * - Cancellation of the outer future cancels the inner future
+ *
+ * @param onSuccess Function to transform success values from T to R
+ * @param onError Function to transform non-cancellation exceptions to R
+ * @return A new CompletableFuture<R> with bidirectional cancellation support
+ */
+public fun <T, R> CompletableFuture<T>.mapWithCancellation(
+  onSuccess: (T) -> R,
+  onError: (Throwable) -> R,
+): CompletableFuture<R> {
+  val outer = CompletableFuture<R>()
+
+  this.whenComplete { value, err ->
+    when (err) {
+      null ->
+        try {
+          outer.complete(onSuccess(value))
+        } catch (e: Exception) {
+          outer.completeExceptionally(e)
+        }
+
+      is CancellationException -> outer.cancel(true)
+      else ->
+        try {
+          outer.complete(onError(err))
+        } catch (e: Exception) {
+          outer.completeExceptionally(e)
+        }
+    }
   }
+
+  outer.whenComplete { _, t ->
+    if (t is CancellationException) {
+      this.cancel(true)
+    }
+  }
+
+  return outer
 }
 
 /**
@@ -48,12 +104,60 @@ public suspend fun <T> CompletableFuture<T>.await(): T = suspendCancellableCorou
  *
  * @return A new CompletableFuture that completes with `Result.success(value)` or `Result.failure(exception)`
  */
-public fun <T> CompletableFuture<T>.toResultFuture(): CompletableFuture<Result<T>> {
-  return this.handle { value, throwable ->
+public fun <T> CompletableFuture<T>.toResultFuture(): CompletableFuture<Result<T>> =
+  this.handle { value, throwable ->
     if (throwable == null) {
       Result.success(value)
     } else {
       Result.failure(throwable)
+    }
+  }
+
+/** Helper to forward any synchronous exceptions to the future. */
+internal inline fun <T> liftExceptions(block: () -> CompletableFuture<T>): CompletableFuture<T> =
+  try {
+    block()
+  } catch (e: Throwable) {
+    CompletableFuture.failedFuture(e)
+  }
+
+/**
+ * Produces a `Flow` from a bulk-pull stream implementation.
+ *
+ * Not intended to be called outside of libsignal.
+ *
+ * The resulting `Flow` can only be collected once; trying to collect it multiple times will throw
+ * [IllegalStateException]. Runs `cancel` if the flow is cancelled or produces an exception during
+ * collection.
+ */
+public fun <T, S, RawItem> wrapStream(
+  asyncContext: TokioAsyncContext,
+  stream: S,
+  pull: (TokioAsyncContext, S) -> CompletableFuture<Pair<List<RawItem>, Any?>>,
+  convertItem: (RawItem) -> T,
+  cancel: (S) -> Unit,
+): Flow<T> {
+  var consumed = AtomicBoolean(false)
+  return flow {
+    // Based on Kotlin's ReceiveChannel<T>.consumeAsFlow
+    // https://github.com/Kotlin/kotlinx.coroutines/blob/165c6cb5859b5365dec193abc75dee9f49ce1389/kotlinx-coroutines-core/common/src/flow/Channels.kt#L104
+    if (consumed.getAndSet(true)) {
+      throw IllegalStateException("cannot consume libsignal flow multiple times")
+    }
+    while (true) {
+      val (nextChunk, termination) = pull(asyncContext, stream).await()
+      emitAll(nextChunk.asFlow().map(convertItem))
+      if (termination != null) {
+        when (termination) {
+          is Unit -> break
+          is Throwable -> throw termination
+          else -> throw AssertionError("bad stream termination: $termination")
+        }
+      }
+    }
+  }.onCompletion {
+    if (it != null) {
+      cancel(stream)
     }
   }
 }

@@ -13,7 +13,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-
 from typing import List, Optional
 
 sys.path.append(os.path.join(
@@ -30,10 +29,17 @@ def check_for_debug_level_logs(src_path: str) -> None:
                 raise AssertionError('debug-level logs found in build that should not have them!')
 
 
+def check_for_attest_testutil(src_path: str) -> None:
+    with open(src_path, 'rb') as f:
+        with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as m:
+            if m.find(b'ATTEST TEST-UTIL IS ENABLED') != -1:
+                raise AssertionError('attest library included with test-util enabled!')
+
+
 def maybe_dump_debug_symbols(*, src_path: str, src_checksum_path: str, dst_path: str, dst_checksum_path: str) -> None:
     dump_syms = shutil.which('dump_syms')
     if not dump_syms:
-        print("note: dump_syms not installed; skipping debug info processing")
+        print('note: dump_syms not installed; skipping debug info processing')
         return
 
     with open(src_checksum_path, 'rb') as f:
@@ -47,13 +53,13 @@ def maybe_dump_debug_symbols(*, src_path: str, src_checksum_path: str, dst_path:
     if os.path.exists(dst_checksum_path):
         with open(dst_checksum_path, 'r') as f:
             if f.read() == checksum:
-                print("Debug info did not change")
+                print('Debug info did not change')
                 return
 
     with open(dst_checksum_path, 'w') as f:
         f.write(checksum)
 
-    print("Dumping debug symbols to %s" % dst_path)
+    print('Dumping debug symbols to %s' % dst_path)
     subprocess.check_call([dump_syms, src_path, '-o', dst_path])
 
 
@@ -69,16 +75,21 @@ def main(args: Optional[List[str]] = None) -> int:
     parser = optparse.OptionParser()
     parser.add_option('--out-dir', '-o', default=None, metavar='DIR',
                       help='specify destination dir (default build/$CONFIGURATION_NAME)')
-    parser.add_option('--configuration', default='Release', metavar='C',
+    parser.add_option('--configuration', '-C', default='Release', metavar='CONFIG',
                       help='specify build configuration (Release or Debug)')
-    parser.add_option('--os-name', default=None, metavar='OS',
+    # Luckily, Python's sys.platform matches Node's OS names for our supported targets.
+    parser.add_option('--os-name', default=sys.platform, metavar='OS',
                       help='specify Node OS name')
-    parser.add_option('--cargo-build-dir', default='target', metavar='PATH',
+    parser.add_option('--cargo-build-dir', default=os.path.join('..', 'target'), metavar='PATH',
                       help='specify cargo build dir (default %default)')
     parser.add_option('--cargo-target', default=None,
                       help='specify cargo target')
-    parser.add_option('--node-arch', default=None,
+    parser.add_option('--node-arch', '--arch', default=None,
                       help='specify node arch (x64, ia32, arm64)')
+    parser.add_option('--copy-to-prebuilds', action='store_true',
+                      help='copy library to prebuilds/$OS-$ARCH when finished')
+    parser.add_option('--debug-level-logs', action='store_true',
+                      help='include log levels below INFO (default for Debug builds)')
 
     (options, args) = parser.parse_args(args)
 
@@ -91,21 +102,30 @@ def main(args: Optional[List[str]] = None) -> int:
         return 1
 
     node_os_name = options.os_name
-    if node_os_name is None:
-        print('ERROR: --os-name is required')
-        return 1
-
-    cargo_target = options.cargo_target
-    if cargo_target is None:
-        print('ERROR: --cargo-target is required')
-        return 1
 
     node_arch = options.node_arch
     if node_arch is None:
-        print('ERROR: --node_arch is required')
-        return 1
+        # Python doesn't provide many guarantees about the format of platform.machine(),
+        # so we turn to Node instead.
+        node_arch = subprocess.check_output(
+            ['node', '-e', "console.log(require('node:process').arch)"],
+            encoding='utf8').strip()
 
-    out_dir = options.out_dir.strip('"') or os.path.join('build', configuration_name)
+    cargo_target = options.cargo_target
+    if cargo_target is None:
+        cargo_arch = {
+            'ia32': 'i686',
+            'x64': 'x86_64',
+            'arm64': 'aarch64',
+        }.get(node_arch, node_arch)
+        cargo_target_suffix = {
+            'darwin': 'apple-darwin',
+            'win32': 'pc-windows-msvc',
+            'linux': 'unknown-linux-gnu',
+        }.get(node_os_name, node_os_name)
+        cargo_target = f'{cargo_arch}-{cargo_target_suffix}'
+
+    out_dir = (options.out_dir or os.path.join('build', configuration_name)).strip('"')
 
     # Fetch all dependencies first, so we can check information about them in constructing our
     # command lines.
@@ -113,7 +133,7 @@ def main(args: Optional[List[str]] = None) -> int:
 
     features = []
     allow_debug_level_logs = False
-    if 'npm_config_libsignal_debug_level_logs' in os.environ:
+    if options.debug_level_logs:
         allow_debug_level_logs = True
     else:
         features.append('log/release_max_level_info')
@@ -128,16 +148,18 @@ def main(args: Optional[List[str]] = None) -> int:
     cargo_env = os.environ.copy()
     cargo_env['RUSTFLAGS'] = cargo_env.get('RUSTFLAGS') or ''
     cargo_env['CARGO_BUILD_TARGET_DIR'] = options.cargo_build_dir
-    cargo_env['MACOSX_DEPLOYMENT_TARGET'] = '10.13'
+    cargo_env['MACOSX_DEPLOYMENT_TARGET'] = '12'
     # Build with debug line tables, but not full debug info.
     cargo_env['CARGO_PROFILE_RELEASE_DEBUG'] = '1'
-    # On Linux, cdylibs don't include public symbols from their dependencies,
-    # even if those symbols have been re-exported in the Rust source.
-    # Using LTO works around this at the cost of a slightly slower build.
-    # https://github.com/rust-lang/rfcs/issues/2771
-    cargo_env['CARGO_PROFILE_RELEASE_LTO'] = 'thin'
+    # Use full LTO to reduce binary size
+    cargo_env['CARGO_PROFILE_RELEASE_LTO'] = 'fat'
     # Enable ARMv8 cryptography acceleration when available
     cargo_env['RUSTFLAGS'] += ' --cfg aes_armv8'
+    # Access tokio's unstable metrics
+    cargo_env['RUSTFLAGS'] += ' --cfg tokio_unstable'
+    # Work around CMake bug introduced in cmake-rs v1.49.0
+    # https://github.com/rust-lang/cmake-rs/pull/158#issuecomment-1544782070
+    cargo_env['CMAKE_ARGS'] = '-DCMAKE_SYSTEM_NAME='
     # Strip absolute paths
     for path in build_helpers.rust_paths_to_remap():
         cargo_env['RUSTFLAGS'] += f' --remap-path-prefix {path}='
@@ -176,7 +198,7 @@ def main(args: Optional[List[str]] = None) -> int:
             # but that also isn't accepted by all of Visual Studio's CLI tools.
             tmpdir = cargo_env['RUNNER_TEMP']
             if len(tmpdir) < len(abs_build_dir):
-                cargo_env['CARGO_BUILD_TARGET_DIR'] = os.path.join(tmpdir, "libsignal")
+                cargo_env['CARGO_BUILD_TARGET_DIR'] = os.path.join(tmpdir, 'libsignal')
 
     elif node_os_name == 'darwin':
         # Save the debug info in dSYM format...
@@ -205,10 +227,10 @@ def main(args: Optional[List[str]] = None) -> int:
 
         objcopy = shutil.which('%s-linux-gnu-objcopy' % cargo_target.split('-')[0]) or 'objcopy'
 
-    print("with environment:")
+    print('with environment:')
     for (k, v) in cargo_env.items():
-        print("%s=%s" % (k, v))
-    print("", flush=True)
+        print('%s=%s' % (k, v))
+    print('', flush=True)
 
     subprocess.check_call(cmdline, env=cargo_env)
 
@@ -220,26 +242,35 @@ def main(args: Optional[List[str]] = None) -> int:
     if os.access(src_path, os.R_OK):
         if not allow_debug_level_logs:
             check_for_debug_level_logs(src_path)
+        check_for_attest_testutil(src_path)
 
         dst_base = 'libsignal_client_%s_%s' % (node_os_name, node_arch)
 
         dst_path = os.path.join(out_dir, dst_base + '.node')
-        print("Copying %s to %s" % (src_path, dst_path))
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        if objcopy:
+        print('Copying %s to %s' % (src_path, dst_path))
+        os.makedirs(out_dir, exist_ok=True)
+        if objcopy and configuration_name != 'Debug':
             subprocess.check_call([objcopy, '-S', src_path, dst_path])
         else:
             shutil.copyfile(src_path, dst_path)
 
-        maybe_dump_debug_symbols(
-            src_path=os.path.join(libs_in, debug_format.format('signal_node')),
-            src_checksum_path=os.path.join(libs_in, debug_format_for_checksum.format('signal_node')),
-            dst_path=os.path.join(out_dir, dst_base + '-debuginfo.sym'),
-            dst_checksum_path=os.path.join(out_dir, dst_base + '-debuginfo.sha256'),
-        )
+        if configuration_name != 'Debug':
+            maybe_dump_debug_symbols(
+                src_path=os.path.join(libs_in, debug_format.format('signal_node')),
+                src_checksum_path=os.path.join(libs_in, debug_format_for_checksum.format('signal_node')),
+                dst_path=os.path.join(out_dir, dst_base + '-debuginfo.sym'),
+                dst_checksum_path=os.path.join(out_dir, dst_base + '-debuginfo.sha256'),
+            )
+
+        if options.copy_to_prebuilds:
+            prebuild_dir = os.path.join('prebuilds', f'{node_os_name}-{node_arch}')
+            prebuild_path = os.path.join(prebuild_dir, '@signalapp+libsignal-client.node')
+            print('Copying %s to %s' % (dst_path, prebuild_path))
+            os.makedirs(prebuild_dir, exist_ok=True)
+            # We copy from dst_path in the build directory because it's already gone through an objcopy pass
+            shutil.copyfile(dst_path, prebuild_path)
     else:
-        print("ERROR: did not find generated library")
+        print('ERROR: did not find generated library')
         return 1
 
     return 0

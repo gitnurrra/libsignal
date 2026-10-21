@@ -1,0 +1,6000 @@
+//
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+// WARNING: this file was automatically generated
+
+import type { Bytes } from '@signalapp/types';
+
+import type { ChargeFailure } from './Errors.js';
+
+export type StringMapFfiContents<Value> = Array<string | Value>;
+
+export type Uuid = Bytes;
+
+/// A Native.Timestamp may be measured in seconds or in milliseconds;
+/// what's important is that it's an integer less than Number.MAX_SAFE_INTEGER.
+export type Timestamp = number;
+
+// Rust code produces or consumes values that conform to these interface
+// definitions. They must be kept in sync to prevent bridging errors.
+
+export type LookupResponse = {
+  entries: Map<string, LookupResponseEntry>;
+  debugPermitsUsed: number;
+};
+
+export type LookupResponseEntry = {
+  readonly aci: string | undefined;
+  readonly pni: string | undefined;
+};
+
+export type ChatResponse = {
+  status: number;
+  message: string | undefined;
+  headers: ReadonlyArray<[string, string]>;
+  body: Bytes | undefined;
+};
+
+export type ChatServiceDebugInfo = {
+  ipType: number;
+  durationMillis: number;
+  connectionInfo: string;
+};
+
+export type ResponseAndDebugInfo = {
+  response: ChatResponse;
+  debugInfo: ChatServiceDebugInfo;
+};
+
+export type SealedSenderMultiRecipientMessageRecipient = {
+  deviceIds: number[];
+  registrationIds: number[];
+  rangeOffset: number;
+  rangeLen: number;
+};
+
+export type SealedSenderMultiRecipientMessage = {
+  recipientMap: {
+    [serviceId: string]: SealedSenderMultiRecipientMessageRecipient;
+  };
+  excludedRecipients: string[];
+  offsetOfSharedData: number;
+};
+
+export enum IdentityChange {
+  // This must be kept in sync with the Rust enum of the same name.
+  NewOrUnchanged = 0,
+  ReplacedExisting = 1,
+}
+
+export type SyncInputStream = Bytes;
+
+export type ChallengeOption = 'pushChallenge' | 'captcha';
+
+export type RegistrationPushTokenType = 'apn' | 'fcm';
+
+export type RegistrationCreateSessionRequest = {
+  number: string;
+  push_token?: string;
+  push_token_type?: RegistrationPushTokenType;
+  mcc?: string;
+  mnc?: string;
+};
+
+export type RegisterResponseBadge = {
+  id: string;
+  visible: boolean;
+  expirationSeconds: number;
+};
+
+export type CheckSvr2CredentialsResponse = Map<
+  string,
+  'match' | 'no-match' | 'invalid'
+>;
+
+export type SignedPublicPreKey = {
+  keyId: number;
+  publicKey: Bytes;
+  signature: Bytes;
+};
+
+export type Wrapper<T> = Readonly<{
+  _nativeHandle: T;
+}>;
+
+export type MessageBackupValidationOutcome = {
+  errorMessage: string | null;
+  unknownFieldMessages: Array<string>;
+};
+
+export type JsonFrameExportResult = [
+  line: string | null,
+  errorMessage: string | null
+];
+
+export type PreKeysResponse = {
+  identityKey: PublicKey;
+  preKeyBundles: PreKeyBundle[];
+};
+
+export type UploadForm = {
+  cdn: number;
+  key: string;
+  headers: [string, string][];
+  signedUploadUrl: string;
+};
+
+export type AccountEntropyPool = string;
+
+export type RandomNumberGenerator = number;
+
+export type CancellablePromise<T> = Promise<T> & {
+  _cancellationToken: bigint;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export type Serialized<T> = Bytes;
+
+type ConnectChatBridge = Wrapper<ConnectionManager>;
+type TestingFutureCancellationGuard = Wrapper<TestingFutureCancellationCounter>;
+
+export type GrpcTestCase<Req, Resp> = {
+  name: string;
+  method: string;
+  request: Req;
+  requestGrpc: Bytes;
+  responseGrpc: GrpcTestCaseBridgedResponse;
+  response: Resp;
+};
+export type GrpcTestCaseFfi<Req, Resp> = GrpcTestCase<Req, Resp>;
+
+// Keep in sync with rust/bridge/node/src/logging.rs
+export const enum LogLevel {
+  Error = 1,
+  Warn,
+  Info,
+  Debug,
+  Trace,
+}
+
+export type ReturnFfiAccountEntitlements = {
+  badges: Array<ReturnFfiBadgeEntitlement>;
+  backup: ReturnFfiBackupEntitlement | null;
+};
+
+export type ReturnFfiAuthCheckResult =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiBackupEntitlement = {
+  level: bigint;
+  expiration: Timestamp;
+};
+
+export type ReturnFfiBadgeEntitlement = {
+  badge_id: string;
+  expiration: Timestamp;
+  visible: boolean;
+};
+
+export type ReturnFfiBadgeVisibility =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiBridgeConfirmedMfaKey = {
+  id: number;
+  metadata: ReturnFfiBridgeConfirmedMfaKeyMetadata;
+  kind: ReturnFfiBridgeMfaKeyKind;
+};
+
+export type ReturnFfiBridgeConfirmedMfaKeyMetadata =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgeMfaMetadata;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiBridgeCopyBackupMediaItem = {
+  source_attachment_cdn: number;
+  source_key: string;
+  object_length: bigint;
+  media_id: Bytes;
+  encryption_key: Bytes;
+};
+
+export type ReturnFfiBridgeCopyBackupMediaOutcome = {
+  media_id: Bytes;
+  result: ReturnFfiBridgeCopyBackupMediaResult;
+};
+
+export type ReturnFfiBridgeCopyBackupMediaResult =
+  | {
+      __type: 0;
+      cdn: number;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiBridgeDeleteBackupMediaItem = {
+  media_id: Bytes;
+  cdn: number;
+};
+
+export type ReturnFfiBridgeMediaBackupInfo = {
+  backup_dir: string;
+  media_dir: string;
+  used_space: bigint;
+};
+
+export type ReturnFfiBridgeMessageBackupInfo = {
+  backup_dir: string;
+  cdn: number;
+  backup_name: string;
+};
+
+export type ReturnFfiBridgeMfaKeyKind =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiBridgeMfaMetadata = {
+  name: string;
+  created_at: Timestamp;
+};
+
+export type ReturnFfiBridgeMfaVerificationCredential =
+  | {
+      __type: 0;
+      password: number;
+    }
+  | {
+      __type: 1;
+      json: string;
+    };
+
+export type ReturnFfiBridgePendingTotpKey = {
+  key: Bytes;
+  parameters: ReturnFfiBridgeTotpParameters;
+};
+
+export type ReturnFfiBridgePreKeyCounts = {
+  aci_ec_pre_key_count: number;
+  aci_kem_pre_key_count: number;
+  pni_ec_pre_key_count: number;
+  pni_kem_pre_key_count: number;
+};
+
+export type ReturnFfiBridgeTotpParameters = {
+  algorithm: string;
+  password_length: number;
+  time_step_seconds: number;
+};
+
+export type ReturnFfiBridgeWebAuthnAuthenticationParameters = {
+  challenge: Bytes;
+  timeout_seconds: number;
+  allowed_credential_ids: Array<Bytes>;
+};
+
+export type ReturnFfiBridgeWebAuthnCreateParameters = {
+  user_handle: Bytes;
+  allowed_algorithms: Array<number>;
+  exclude_credential_ids: Array<Bytes>;
+};
+
+export type ReturnFfiCallQualitySurveyInternal = {
+  user_satisfied: boolean;
+  call_quality_issues: Array<string>;
+  additional_issues_description: string | null;
+  debug_log_url: string | null;
+  start_timestamp: Timestamp;
+  end_timestamp: Timestamp;
+  call_type: string;
+  success: boolean;
+  call_end_reason: string;
+  connection_rtt_median: number | null;
+  audio_rtt_median: number | null;
+  video_rtt_median: number | null;
+  audio_recv_jitter_median: number | null;
+  video_recv_jitter_median: number | null;
+  audio_send_jitter_median: number | null;
+  video_send_jitter_median: number | null;
+  audio_recv_packet_loss_fraction: number | null;
+  video_recv_packet_loss_fraction: number | null;
+  audio_send_packet_loss_fraction: number | null;
+  video_send_packet_loss_fraction: number | null;
+  call_telemetry: Bytes | null;
+  call_id_hash: Bytes | null;
+};
+
+export type ReturnFfiCheckSvrCredentialsArgs = {
+  number: string;
+  passwords: Array<string>;
+};
+
+export type ReturnFfiConfirmTotpKeyArgs = {
+  one_time_password: number;
+  name: string;
+  created_at: Timestamp;
+  svr_key: Bytes;
+};
+
+export type ReturnFfiConfirmTotpKeyOut =
+  | {
+      __type: 0;
+      _0: number;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiConfirmUsernameArgs = {
+  username: string;
+  username_ciphertext: Bytes;
+};
+
+export type ReturnFfiConfirmUsernameOut =
+  | {
+      __type: 0;
+      _0: Bytes;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiCopyBackupMediaNextChunk = {
+  chunk: Array<ReturnFfiBridgeCopyBackupMediaOutcome>;
+  termination: ('finished' | Error) | null;
+};
+
+export type ReturnFfiCopyBackupMediaOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgeCopyBackupMediaOutcome;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiCreateDonationPermitsArgs = {
+  request_context: Bytes;
+  server_params: ReturnFfiServerPublicParamsSerialized;
+};
+
+export type ReturnFfiCreateDonationPermitsOut =
+  | {
+      __type: 0;
+      _0: Array<Bytes>;
+    }
+  | {
+      __type: 1;
+      contains: string;
+    };
+
+export type ReturnFfiCreateLoginReceiptCredentialArgs = {
+  payment_processor: ReturnFfiPaymentProvider;
+  purchase_identifier: string;
+  receipt_credential_request_context: Bytes;
+  server_params: ReturnFfiServerPublicParamsSerialized;
+  purchase_time: Timestamp;
+  expected_level: ReturnFfiLoginReceiptLevel;
+};
+
+export type ReturnFfiCreateLoginReceiptCredentialOut =
+  | {
+      __type: 0;
+      _0: Bytes;
+    }
+  | {
+      __type: 1;
+      contains: string;
+    }
+  | {
+      __type: 2;
+      _0: ReturnFfiReceiptCredentialError;
+    };
+
+export type ReturnFfiCurrencyConversionsInternal = {
+  timestamp_ms: Timestamp;
+  currencies: Array<ReturnFfiCurrencyInternal>;
+};
+
+export type ReturnFfiCurrencyInternal = {
+  base: string;
+  conversions: Array<[string, string]>;
+};
+
+export type ReturnFfiDeleteBackupMediaNextChunk = {
+  chunk: Array<ReturnFfiBridgeDeleteBackupMediaItem>;
+  termination: ('finished' | Error) | null;
+};
+
+export type ReturnFfiDeleteBackupMediaOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgeDeleteBackupMediaItem;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiDeviceCapabilityInternal =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    }
+  | {
+      __type: 4;
+    }
+  | {
+      __type: 5;
+    }
+  | {
+      __type: 6;
+    };
+
+export type ReturnFfiFinishMfaVerificationOut =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiFinishWebAuthnRegistrationArgs = {
+  attestation_object: Bytes;
+  collected_client_data_json: string;
+  name: string;
+  created_at: Timestamp;
+  svr_key: Bytes;
+};
+
+export type ReturnFfiFinishWebAuthnRegistrationOut =
+  | {
+      __type: 0;
+      _0: number;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiGenerateTotpKeyOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgePendingTotpKey;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiGetCapabilitiesOut =
+  | {
+      __type: 0;
+      _0: Array<ReturnFfiDeviceCapabilityInternal>;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiGetCdnCredentialsOut =
+  | {
+      __type: 0;
+      _0: [[string, string]];
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiGetDevicesOut = {
+  devices: Array<ReturnFfiLinkedDeviceInternal>;
+};
+
+export type ReturnFfiGetEntitlementsOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiAccountEntitlements;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiGetMediaBackupInfoOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgeMediaBackupInfo;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiGetMessageBackupInfoOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgeMessageBackupInfo;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiGetProfileKeyCredentialArgs = {
+  profile_key_request_context: Bytes;
+  server_params: ReturnFfiServerPublicParamsSerialized;
+};
+
+export type ReturnFfiGetProfileKeyCredentialOut =
+  | {
+      __type: 0;
+      _0: Bytes;
+    }
+  | {
+      __type: 1;
+      contains: string;
+    }
+  | {
+      __type: 2;
+      _0: ReturnFfiProfileKeyCredentialRequestError;
+    };
+
+export type ReturnFfiGetStickerUploadFormsOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiGetStickerUploadFormsResponse;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiGetStickerUploadFormsResponse = {
+  pack_id: string;
+  manifest_upload_form: ReturnFfiS3UploadFormInternal;
+  sticker_upload_forms: Array<ReturnFfiS3UploadFormInternal>;
+};
+
+export type ReturnFfiGetSubscriptionReceiptCredentialArgs = {
+  subscriber_id: Bytes;
+  receipt_credential_request_context: Bytes;
+  server_params: ReturnFfiServerPublicParamsSerialized;
+};
+
+export type ReturnFfiGetSubscriptionReceiptCredentialOut =
+  | {
+      __type: 0;
+      _0: Bytes;
+    }
+  | {
+      __type: 1;
+      contains: string;
+    }
+  | {
+      __type: 2;
+      _0: ReturnFfiReceiptCredentialError;
+    };
+
+export type ReturnFfiGetSvrBCredentialsOut =
+  | {
+      __type: 0;
+      username: string;
+      password: string;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiLinkedDeviceInternal = {
+  id: number;
+  encrypted_name: Bytes;
+  last_seen: Timestamp;
+  registration_id: number;
+  created_at_ciphertext: Bytes;
+};
+
+export type ReturnFfiListMediaArgs = {
+  cursor: string | null;
+  limit: number;
+};
+
+export type ReturnFfiListMediaItem = {
+  cdn: number;
+  media_id: Bytes;
+  object_length: bigint;
+};
+
+export type ReturnFfiListMediaOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiListMediaResponse;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiListMediaResponse = {
+  items: Array<ReturnFfiListMediaItem>;
+  backup_dir: string;
+  media_dir: string;
+  cursor: string | null;
+};
+
+export type ReturnFfiListMfaKeysArgs = {
+  svr_key: Bytes;
+};
+
+export type ReturnFfiListMfaKeysOut = {
+  __type: 0;
+  _0: Array<ReturnFfiBridgeConfirmedMfaKey>;
+};
+
+export type ReturnFfiLoginReceiptLevel =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiLookUpUsernameLinkArgs = {
+  uuid: Bytes;
+  entropy: Bytes;
+};
+
+export type ReturnFfiLookUpUsernameLinkOut =
+  | {
+      __type: 0;
+      _0: string;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiMyRemoteDeriveEnum =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+      _0: number;
+      _1: number;
+    }
+  | {
+      __type: 2;
+      x: string;
+      y: number;
+    };
+
+export type ReturnFfiMyRemoteDeriveStruct = {
+  x: number;
+  y: number;
+};
+
+export type ReturnFfiMySimpleTestEnum =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiMyTestEnum =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+      _0: number;
+    }
+  | {
+      __type: 2;
+      x: number;
+    }
+  | {
+      __type: 3;
+      _0: number;
+      _1: number;
+    }
+  | {
+      __type: 4;
+      person_name: string;
+      person_age: number;
+      position: ReturnFfiMyTestPoint;
+      fun_struct: ReturnFfiMyTestStruct;
+    };
+
+export type ReturnFfiMyTestPoint = {
+  _0: number;
+  _1: number;
+};
+
+export type ReturnFfiMyTestStruct = {
+  my_numeric_field: number;
+  my_string_field: string;
+};
+
+export type ReturnFfiPaymentProvider =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiProfileKeyCredentialRequestError =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiReceiptCredentialError =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+      charge_failure: Array<ChargeFailure>;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiRedeemBackupReceiptOut =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export type ReturnFfiRedeemDonationReceiptArgs = {
+  presentation: Bytes;
+  visibility: ReturnFfiBadgeVisibility;
+};
+
+export type ReturnFfiRedeemDonationReceiptOut =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+      contains: string;
+    };
+
+export type ReturnFfiRemoveDeviceArgs = {
+  id: number;
+};
+
+export type ReturnFfiRemoveDeviceOut = {
+  __type: 0;
+};
+
+export type ReturnFfiRemoveMfaKeyArgs = {
+  key_id: number;
+};
+
+export type ReturnFfiRemoveMfaKeyOut = {
+  __type: 0;
+};
+
+export type ReturnFfiReportMessageArgs = {
+  source: Bytes;
+  message_guid: Bytes;
+  report_spam_token: Bytes;
+};
+
+export type ReturnFfiReserveUsernameHashArgs = {
+  usernames: Array<Bytes>;
+};
+
+export type ReturnFfiReserveUsernameHashOut =
+  | {
+      __type: 0;
+      _0: Bytes;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiS3UploadFormInternal = {
+  key: string;
+  credential: string;
+  acl: string;
+  algorithm: string;
+  date: string;
+  policy: string;
+  signature: string;
+};
+
+export type ReturnFfiServerPublicParamsSerialized = {
+  bytes: Bytes;
+};
+
+export type ReturnFfiSetCapabilitiesArgs = {
+  capabilities: Array<ReturnFfiDeviceCapabilityInternal>;
+};
+
+export type ReturnFfiSetDeviceNameArgs = {
+  id: number;
+  encrypted_name: Bytes;
+};
+
+export type ReturnFfiSetDeviceNameOut =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiSetLastResortKemPreKeyArgs = {
+  identity: number;
+  pre_key: ReturnFfiTestingAnySignedPreKey;
+};
+
+export type ReturnFfiSetMfaKeyMetadataArgs = {
+  key_id: number;
+  name: string;
+  created_at: Timestamp;
+  svr_key: Bytes;
+};
+
+export type ReturnFfiSetMfaKeyMetadataOut =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiSetOneTimeEcPreKeysArgs = {
+  identity: number;
+  pre_keys: Array<[number, Bytes]>;
+};
+
+export type ReturnFfiSetOneTimeKemPreKeysArgs = {
+  identity: number;
+  pre_keys: Array<ReturnFfiTestingAnySignedPreKey>;
+};
+
+export type ReturnFfiSetSignedEcPreKeyArgs = {
+  identity: number;
+  pre_key: ReturnFfiTestingAnySignedPreKey;
+};
+
+export type ReturnFfiSetUsernameLinkArgs = {
+  username_ciphertext: Bytes;
+  keep_link_handle: boolean;
+};
+
+export type ReturnFfiSetUsernameLinkOut =
+  | {
+      __type: 0;
+      _0: Bytes;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiSimpleBackupTestOut =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ReturnFfiStartMfaVerificationOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiStartMfaVerificationResponse;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiStartMfaVerificationResponse = {
+  has_totp: boolean;
+  webauthn_params: ReturnFfiBridgeWebAuthnAuthenticationParameters | null;
+};
+
+export type ReturnFfiStartWebAuthnRegistrationOut =
+  | {
+      __type: 0;
+      _0: ReturnFfiBridgeWebAuthnCreateParameters;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ReturnFfiTestStreamChunk = {
+  chunk: Array<string>;
+  termination: ('finished' | Error) | null;
+};
+
+export type ReturnFfiTestingAnySignedPreKey = {
+  id: number;
+  key: Bytes;
+  sig: Bytes;
+};
+
+export type ArgFfiBadgeVisibility =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    };
+
+export type ArgFfiBridgeCopyBackupMediaItem = {
+  source_attachment_cdn: number;
+  source_key: string;
+  object_length: bigint;
+  media_id: Bytes;
+  encryption_key: Bytes;
+};
+
+export type ArgFfiBridgeDeleteBackupMediaItem = {
+  media_id: Bytes;
+  cdn: number;
+};
+
+export type ArgFfiBridgeMfaVerificationCredential =
+  | {
+      __type: 0;
+      password: number;
+    }
+  | {
+      __type: 1;
+      json: string;
+    };
+
+export type ArgFfiCallQualitySurveyInternal = {
+  user_satisfied: boolean;
+  call_quality_issues: Array<string>;
+  additional_issues_description: string | null;
+  debug_log_url: string | null;
+  start_timestamp: Timestamp;
+  end_timestamp: Timestamp;
+  call_type: string;
+  success: boolean;
+  call_end_reason: string;
+  connection_rtt_median: number | null;
+  audio_rtt_median: number | null;
+  video_rtt_median: number | null;
+  audio_recv_jitter_median: number | null;
+  video_recv_jitter_median: number | null;
+  audio_send_jitter_median: number | null;
+  video_send_jitter_median: number | null;
+  audio_recv_packet_loss_fraction: number | null;
+  video_recv_packet_loss_fraction: number | null;
+  audio_send_packet_loss_fraction: number | null;
+  video_send_packet_loss_fraction: number | null;
+  call_telemetry: Bytes | null;
+  call_id_hash: Bytes | null;
+};
+
+export type ArgFfiDeviceCapabilityInternal =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    }
+  | {
+      __type: 4;
+    }
+  | {
+      __type: 5;
+    }
+  | {
+      __type: 6;
+    };
+
+export type ArgFfiLoginReceiptLevel =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ArgFfiMyRemoteDeriveEnum =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+      _0: number;
+      _1: number;
+    }
+  | {
+      __type: 2;
+      x: string;
+      y: number;
+    };
+
+export type ArgFfiMyRemoteDeriveStruct = {
+  x: number;
+  y: number;
+};
+
+export type ArgFfiMySimpleTestEnum =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    };
+
+export type ArgFfiMyTestEnum =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+      _0: number;
+    }
+  | {
+      __type: 2;
+      x: number;
+    }
+  | {
+      __type: 3;
+      _0: number;
+      _1: number;
+    }
+  | {
+      __type: 4;
+      person_name: string;
+      person_age: number;
+      position: ArgFfiMyTestPoint;
+      fun_struct: ArgFfiMyTestStruct;
+    };
+
+export type ArgFfiMyTestPoint = {
+  _0: number;
+  _1: number;
+};
+
+export type ArgFfiMyTestStruct = {
+  my_numeric_field: number;
+  my_string_field: string;
+};
+
+export type ArgFfiPaymentProvider =
+  | {
+      __type: 0;
+    }
+  | {
+      __type: 1;
+    }
+  | {
+      __type: 2;
+    }
+  | {
+      __type: 3;
+    };
+
+export const NetRemoteConfigKeys = [
+  'chatRequestConnectionCheckTimeoutMillis',
+  'grpc.AccountsAnonymousLookupUsernameHash',
+  'grpc.AccountsAnonymousLookupUsernameLink.2',
+  'grpc.AccountsAnonymousCheckAccountExistence.2',
+  'grpc.MessagesAnonymousSendMultiRecipientMessage.2',
+  'grpc.MessagesAnonymousSendSingleRecipientMessage',
+  'grpc.AttachmentsGetUploadForm',
+  'grpc.MessagesSendMessage',
+  'grpc.BackupsAnonymousGetUploadForm',
+  'grpc.KeyTransparencyQueryServiceSearchV2',
+] as const;
+
+import load from 'node-gyp-build';
+
+type NativeFunctions = {
+  registerErrors: (errorsModule: Record<string, unknown>) => void;
+  initLogger: (
+    maxLevel: LogLevel,
+    callback: (
+      level: LogLevel,
+      target: string,
+      file: string | null,
+      line: number | null,
+      message: string
+    ) => void
+  ) => void;
+  AccountEntropyPool_DeriveBackupKey: (
+    account_entropy: AccountEntropyPool
+  ) => Bytes;
+  AccountEntropyPool_DeriveSvrKey: (
+    account_entropy: AccountEntropyPool
+  ) => Bytes;
+  AccountEntropyPool_Generate: () => string;
+  AccountEntropyPool_IsValid: (account_entropy: string) => boolean;
+  Aes256GcmSiv_Decrypt: (
+    aes_gcm_siv: Wrapper<Aes256GcmSiv>,
+    ctext: Bytes,
+    nonce: Bytes,
+    associated_data: Bytes
+  ) => Bytes;
+  Aes256GcmSiv_Encrypt: (
+    aes_gcm_siv_obj: Wrapper<Aes256GcmSiv>,
+    ptext: Bytes,
+    nonce: Bytes,
+    associated_data: Bytes
+  ) => Bytes;
+  Aes256GcmSiv_New: (key: Bytes) => Aes256GcmSiv;
+  AuthCredentialPresentation_CheckValidContents: (
+    presentation_bytes: Bytes
+  ) => void;
+  AuthCredentialPresentation_GetPniCiphertext: (
+    presentation_bytes: Bytes
+  ) => Serialized<UuidCiphertext>;
+  AuthCredentialPresentation_GetRedemptionTime: (
+    presentation_bytes: Bytes
+  ) => Timestamp;
+  AuthCredentialPresentation_GetUuidCiphertext: (
+    presentation_bytes: Bytes
+  ) => Serialized<UuidCiphertext>;
+  AuthCredentialWithPniResponse_CheckValidContents: (bytes: Bytes) => void;
+  AuthCredentialWithPni_CheckValidContents: (bytes: Bytes) => void;
+  AuthenticatedChatConnection_clear_push_token: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_clear_registration_lock: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_confirm_totp_key: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    one_time_password: number,
+    name: string,
+    created_at: Timestamp,
+    svr_key: Bytes,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<number>;
+  AuthenticatedChatConnection_confirm_username: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    username: string,
+    username_ciphertext: Bytes,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<Uuid>;
+  AuthenticatedChatConnection_connect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string,
+    receive_stories: boolean,
+    languages: Array<string>
+  ) => CancellablePromise<AuthenticatedChatConnection>;
+  AuthenticatedChatConnection_create_donation_permits: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    request_context: Bytes,
+    server_params: Wrapper<ServerPublicParams>
+  ) => CancellablePromise<Array<Bytes>>;
+  AuthenticatedChatConnection_delete_account: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_delete_username_hash: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_delete_username_link: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_disconnect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_finish_mfa_verification: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    credential: ArgFfiBridgeMfaVerificationCredential
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_finish_web_authn_registration: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    attestation_object: Bytes,
+    collected_client_data_json: string,
+    name: string,
+    created_at: Timestamp,
+    svr_key: Bytes,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<number>;
+  AuthenticatedChatConnection_generate_totp_key: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<ReturnFfiBridgePendingTotpKey>;
+  AuthenticatedChatConnection_get_capabilities: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<Array<ReturnFfiDeviceCapabilityInternal>>;
+  AuthenticatedChatConnection_get_currency_conversions: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<ReturnFfiCurrencyConversionsInternal>;
+  AuthenticatedChatConnection_get_devices: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<Array<ReturnFfiLinkedDeviceInternal>>;
+  AuthenticatedChatConnection_get_entitlements: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<ReturnFfiAccountEntitlements>;
+  AuthenticatedChatConnection_get_pre_key_count: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<ReturnFfiBridgePreKeyCounts>;
+  AuthenticatedChatConnection_get_sticker_upload_forms: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    number_of_stickers: number
+  ) => CancellablePromise<ReturnFfiGetStickerUploadFormsResponse>;
+  AuthenticatedChatConnection_get_upload_form: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    upload_length: bigint
+  ) => CancellablePromise<UploadForm>;
+  AuthenticatedChatConnection_info: (
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => ChatConnectionInfo;
+  AuthenticatedChatConnection_init_listener: (
+    chat: Wrapper<AuthenticatedChatConnection>,
+    listener: ChatListener
+  ) => void;
+  AuthenticatedChatConnection_list_mfa_keys: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    svr_key: Bytes
+  ) => CancellablePromise<Array<ReturnFfiBridgeConfirmedMfaKey>>;
+  AuthenticatedChatConnection_preconnect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_redeem_backup_receipt: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    presentation: Serialized<ReceiptCredentialPresentation>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_redeem_donation_receipt: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    presentation: Serialized<ReceiptCredentialPresentation>,
+    visibility: ArgFfiBadgeVisibility
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_remove_device: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    device_id: number
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_remove_mfa_key: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    key_id: number
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_report_message: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    source: Bytes,
+    message_guid: Uuid,
+    report_spam_token: Bytes
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_reserve_username_hash: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    username_hashes: Array<Bytes>
+  ) => CancellablePromise<Bytes>;
+  AuthenticatedChatConnection_send: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    http_request: Wrapper<HttpRequest>,
+    timeout_millis: number
+  ) => CancellablePromise<ChatResponse>;
+  AuthenticatedChatConnection_send_message: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    destination: Bytes,
+    timestamp: Timestamp,
+    device_ids: Uint32Array<ArrayBuffer>,
+    registration_ids: Uint32Array<ArrayBuffer>,
+    contents: Array<Wrapper<CiphertextMessage>>,
+    online_only: boolean,
+    is_urgent: boolean
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_send_sync_message: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    timestamp: Timestamp,
+    device_ids: Uint32Array<ArrayBuffer>,
+    registration_ids: Uint32Array<ArrayBuffer>,
+    contents: Array<Wrapper<CiphertextMessage>>,
+    is_urgent: boolean
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_capabilities: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    capabilities: Array<ArgFfiDeviceCapabilityInternal>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_device_name: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    device_id: number,
+    encrypted_name: Bytes
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_discoverable_by_phone_number: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    discoverable: boolean
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_last_resort_kem_pre_key: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    identity_type: number,
+    id: number,
+    key: Wrapper<KyberPublicKey>,
+    signature: Bytes
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_mfa_key_metadata: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    key_id: number,
+    name: string,
+    created_at: Timestamp,
+    svr_key: Bytes,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_one_time_ec_pre_keys: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    identity_type: number,
+    pre_key_ids: Uint32Array<ArrayBuffer>,
+    pre_key_data: Array<Wrapper<PublicKey>>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_one_time_kem_pre_keys: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    identity_type: number,
+    pre_key_ids: Uint32Array<ArrayBuffer>,
+    pre_key_data: Array<Wrapper<KyberPublicKey>>,
+    pre_key_signatures: Array<Bytes>
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_registration_lock: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    svr_key: Bytes
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_registration_recovery_password: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    svr_key: Bytes
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_signed_ec_pre_key: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    identity_type: number,
+    id: number,
+    key: Wrapper<PublicKey>,
+    signature: Bytes
+  ) => CancellablePromise<void>;
+  AuthenticatedChatConnection_set_username_link: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>,
+    username_ciphertext: Bytes,
+    keep_link_handle: boolean
+  ) => CancellablePromise<Uuid>;
+  AuthenticatedChatConnection_start_mfa_verification: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<ReturnFfiStartMfaVerificationResponse>;
+  AuthenticatedChatConnection_start_web_authn_registration: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<AuthenticatedChatConnection>
+  ) => CancellablePromise<ReturnFfiBridgeWebAuthnCreateParameters>;
+  AvatarUploadCredentialPresentation_CheckValidContents: (
+    presentation_bytes: Bytes
+  ) => void;
+  AvatarUploadCredentialPresentation_GetCm: (
+    presentation_bytes: Bytes
+  ) => Bytes;
+  AvatarUploadCredentialPresentation_GetRedemptionTime: (
+    presentation_bytes: Bytes
+  ) => Timestamp;
+  AvatarUploadCredentialPresentation_Verify: (
+    presentation_bytes: Bytes,
+    current_time: Timestamp,
+    server_params_bytes: Bytes
+  ) => void;
+  AvatarUploadCredentialRequestContext_CheckValidContents: (
+    context_bytes: Bytes
+  ) => void;
+  AvatarUploadCredentialRequestContext_GetRequest: (
+    context_bytes: Bytes
+  ) => Bytes;
+  AvatarUploadCredentialRequestContext_New: (
+    aci: Bytes,
+    zk_credential_key_pair_bytes: Bytes,
+    rotation_id: bigint,
+    randomness: Bytes
+  ) => Bytes;
+  AvatarUploadCredentialRequestContext_ReceiveResponse: (
+    context_bytes: Bytes,
+    response_bytes: Bytes,
+    current_time: Timestamp,
+    params_bytes: Bytes
+  ) => Bytes;
+  AvatarUploadCredentialRequest_CheckValidContents: (
+    request_bytes: Bytes
+  ) => void;
+  AvatarUploadCredentialRequest_IssueDeterministic: (
+    request_bytes: Bytes,
+    aci: Bytes,
+    zk_credential_key_pub_bytes: Bytes,
+    rotation_id: bigint,
+    redemption_time: Timestamp,
+    params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  AvatarUploadCredentialResponse_CheckValidContents: (
+    response_bytes: Bytes
+  ) => void;
+  AvatarUploadCredential_CheckValidContents: (credential_bytes: Bytes) => void;
+  AvatarUploadCredential_GetCm: (credential_bytes: Bytes) => Bytes;
+  AvatarUploadCredential_GetRedemptionTime: (
+    credential_bytes: Bytes
+  ) => Timestamp;
+  AvatarUploadCredential_PresentDeterministic: (
+    credential_bytes: Bytes,
+    server_params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  BackupAuthCredentialPresentation_CheckValidContents: (
+    presentation_bytes: Bytes
+  ) => void;
+  BackupAuthCredentialPresentation_GetBackupId: (
+    presentation_bytes: Bytes
+  ) => Bytes;
+  BackupAuthCredentialPresentation_GetBackupLevel: (
+    presentation_bytes: Bytes
+  ) => number;
+  BackupAuthCredentialPresentation_GetType: (
+    presentation_bytes: Bytes
+  ) => number;
+  BackupAuthCredentialPresentation_Verify: (
+    presentation_bytes: Bytes,
+    now: Timestamp,
+    server_params_bytes: Bytes
+  ) => void;
+  BackupAuthCredentialRequestContext_CheckValidContents: (
+    context_bytes: Bytes
+  ) => void;
+  BackupAuthCredentialRequestContext_GetRequest: (
+    context_bytes: Bytes
+  ) => Bytes;
+  BackupAuthCredentialRequestContext_New: (
+    backup_key: Bytes,
+    uuid: Uuid
+  ) => Bytes;
+  BackupAuthCredentialRequestContext_ReceiveResponse: (
+    context_bytes: Bytes,
+    response_bytes: Bytes,
+    expected_redemption_time: Timestamp,
+    params_bytes: Bytes
+  ) => Bytes;
+  BackupAuthCredentialRequest_CheckValidContents: (
+    request_bytes: Bytes
+  ) => void;
+  BackupAuthCredentialRequest_IssueDeterministic: (
+    request_bytes: Bytes,
+    redemption_time: Timestamp,
+    backup_level: number,
+    credential_type: number,
+    params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  BackupAuthCredentialResponse_CheckValidContents: (
+    response_bytes: Bytes
+  ) => void;
+  BackupAuthCredential_CheckValidContents: (params_bytes: Bytes) => void;
+  BackupAuthCredential_GetBackupId: (credential_bytes: Bytes) => Bytes;
+  BackupAuthCredential_GetBackupLevel: (credential_bytes: Bytes) => number;
+  BackupAuthCredential_GetType: (credential_bytes: Bytes) => number;
+  BackupAuthCredential_PresentDeterministic: (
+    credential_bytes: Bytes,
+    server_params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  BackupJsonExporter_ExportFrames: (
+    exporter: Wrapper<BackupJsonExporter>,
+    frames: Bytes
+  ) => Array<[string | null, string | null]>;
+  BackupJsonExporter_Finish: (exporter: Wrapper<BackupJsonExporter>) => void;
+  BackupJsonExporter_GetInitialChunk: (
+    exporter: Wrapper<BackupJsonExporter>
+  ) => string;
+  BackupJsonExporter_New: (
+    backup_info: Bytes,
+    should_validate: boolean
+  ) => BackupJsonExporter;
+  BackupKey_DeriveBackupId: (backup_key: Bytes, aci: Bytes) => Bytes;
+  BackupKey_DeriveEcKey: (backup_key: Bytes, aci: Bytes) => PrivateKey;
+  BackupKey_DeriveLocalBackupMetadataKey: (backup_key: Bytes) => Bytes;
+  BackupKey_DeriveMediaEncryptionKey: (
+    backup_key: Bytes,
+    media_id: Bytes
+  ) => Bytes;
+  BackupKey_DeriveMediaId: (backup_key: Bytes, media_name: string) => Bytes;
+  BackupKey_DeriveThumbnailTransitEncryptionKey: (
+    backup_key: Bytes,
+    media_id: Bytes
+  ) => Bytes;
+  BackupRestoreResponse_GetForwardSecrecyToken: (
+    response: Wrapper<BackupRestoreResponse>
+  ) => Bytes;
+  BackupRestoreResponse_GetNextBackupSecretData: (
+    response: Wrapper<BackupRestoreResponse>
+  ) => Bytes;
+  BackupStoreResponse_GetForwardSecrecyToken: (
+    response: Wrapper<BackupStoreResponse>
+  ) => Bytes;
+  BackupStoreResponse_GetNextBackupSecretData: (
+    response: Wrapper<BackupStoreResponse>
+  ) => Bytes;
+  BackupStoreResponse_GetOpaqueMetadata: (
+    response: Wrapper<BackupStoreResponse>
+  ) => Bytes;
+  BridgedStringMap_insert: (
+    map: Wrapper<BridgedStringMap>,
+    key: string,
+    value: string
+  ) => void;
+  BridgedStringMap_new: (initial_capacity: number) => BridgedStringMap;
+  CallLinkAuthCredentialPresentation_CheckValidContents: (
+    presentation_bytes: Bytes
+  ) => void;
+  CallLinkAuthCredentialPresentation_GetUserId: (
+    presentation_bytes: Bytes
+  ) => Serialized<UuidCiphertext>;
+  CallLinkAuthCredentialPresentation_Verify: (
+    presentation_bytes: Bytes,
+    now: Timestamp,
+    server_params_bytes: Bytes,
+    call_link_params_bytes: Bytes
+  ) => void;
+  CallLinkAuthCredentialResponse_CheckValidContents: (
+    response_bytes: Bytes
+  ) => void;
+  CallLinkAuthCredentialResponse_IssueDeterministic: (
+    user_id: Bytes,
+    redemption_time: Timestamp,
+    params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  CallLinkAuthCredentialResponse_Receive: (
+    response_bytes: Bytes,
+    user_id: Bytes,
+    redemption_time: Timestamp,
+    params_bytes: Bytes
+  ) => Bytes;
+  CallLinkAuthCredential_CheckValidContents: (credential_bytes: Bytes) => void;
+  CallLinkAuthCredential_PresentDeterministic: (
+    credential_bytes: Bytes,
+    user_id: Bytes,
+    redemption_time: Timestamp,
+    server_params_bytes: Bytes,
+    call_link_params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  CallLinkPublicParams_CheckValidContents: (params_bytes: Bytes) => void;
+  CallLinkSecretParams_CheckValidContents: (params_bytes: Bytes) => void;
+  CallLinkSecretParams_DecryptUserId: (
+    params_bytes: Bytes,
+    user_id: Serialized<UuidCiphertext>
+  ) => Bytes;
+  CallLinkSecretParams_DeriveFromRootKey: (root_key: Bytes) => Bytes;
+  CallLinkSecretParams_EncryptUserId: (
+    params_bytes: Bytes,
+    user_id: Bytes
+  ) => Serialized<UuidCiphertext>;
+  CallLinkSecretParams_GetPublicParams: (params_bytes: Bytes) => Bytes;
+  Cds2ClientState_New: (
+    mrenclave: Bytes,
+    attestation_msg: Bytes,
+    current_timestamp: Timestamp
+  ) => SgxClientState;
+  CdsiLookup_complete: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    lookup: Wrapper<CdsiLookup>
+  ) => CancellablePromise<LookupResponse>;
+  CdsiLookup_new: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string,
+    request: Wrapper<LookupRequest>
+  ) => CancellablePromise<CdsiLookup>;
+  CdsiLookup_token: (lookup: Wrapper<CdsiLookup>) => Bytes;
+  ChatConnectionInfo_description: (
+    connection_info: Wrapper<ChatConnectionInfo>
+  ) => string;
+  ChatConnectionInfo_ip_version: (
+    connection_info: Wrapper<ChatConnectionInfo>
+  ) => number;
+  ChatConnectionInfo_is_direct: (
+    connection_info: Wrapper<ChatConnectionInfo>
+  ) => boolean;
+  ChatConnectionInfo_local_port: (
+    connection_info: Wrapper<ChatConnectionInfo>
+  ) => number;
+  CiphertextMessage_FromPlaintextContent: (
+    m: Wrapper<PlaintextContent>
+  ) => CiphertextMessage;
+  CiphertextMessage_Serialize: (obj: Wrapper<CiphertextMessage>) => Bytes;
+  CiphertextMessage_Type: (msg: Wrapper<CiphertextMessage>) => number;
+  ComparableBackup_GetComparableString: (
+    backup: Wrapper<ComparableBackup>
+  ) => string;
+  ComparableBackup_GetUnknownFields: (
+    backup: Wrapper<ComparableBackup>
+  ) => Array<string>;
+  ComparableBackup_ReadUnencrypted: (
+    stream: InputStream,
+    len: bigint,
+    purpose: number
+  ) => Promise<ComparableBackup>;
+  ConnectionManager_clear_proxy: (
+    connection_manager: Wrapper<ConnectionManager>
+  ) => void;
+  ConnectionManager_new: (
+    environment: number,
+    user_agent: string,
+    remote_config: Wrapper<BridgedStringMap>,
+    build_variant: number
+  ) => ConnectionManager;
+  ConnectionManager_on_network_change: (
+    connection_manager: Wrapper<ConnectionManager>
+  ) => void;
+  ConnectionManager_set_censorship_circumvention_enabled: (
+    connection_manager: Wrapper<ConnectionManager>,
+    enabled: boolean
+  ) => void;
+  ConnectionManager_set_invalid_proxy: (
+    connection_manager: Wrapper<ConnectionManager>
+  ) => void;
+  ConnectionManager_set_ipv6_enabled: (
+    connection_manager: Wrapper<ConnectionManager>,
+    ipv6_enabled: boolean
+  ) => void;
+  ConnectionManager_set_proxy: (
+    connection_manager: Wrapper<ConnectionManager>,
+    proxy: Wrapper<ConnectionProxyConfig>
+  ) => void;
+  ConnectionManager_set_remote_config: (
+    connection_manager: Wrapper<ConnectionManager>,
+    remote_config: Wrapper<BridgedStringMap>,
+    build_variant: number
+  ) => void;
+  ConnectionProxyConfig_new: (
+    scheme: string,
+    host: string,
+    port: number,
+    username: string | null,
+    password: string | null
+  ) => ConnectionProxyConfig;
+  CopyBackupMediaStream_cancel: (
+    stream: Wrapper<CopyBackupMediaStream>
+  ) => void;
+  CopyBackupMediaStream_next: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    stream: Wrapper<CopyBackupMediaStream>
+  ) => CancellablePromise<ReturnFfiCopyBackupMediaNextChunk>;
+  CreateCallLinkCredentialPresentation_CheckValidContents: (
+    presentation_bytes: Bytes
+  ) => void;
+  CreateCallLinkCredentialPresentation_Verify: (
+    presentation_bytes: Bytes,
+    room_id: Bytes,
+    now: Timestamp,
+    server_params_bytes: Bytes,
+    call_link_params_bytes: Bytes
+  ) => void;
+  CreateCallLinkCredentialRequestContext_CheckValidContents: (
+    context_bytes: Bytes
+  ) => void;
+  CreateCallLinkCredentialRequestContext_GetRequest: (
+    context_bytes: Bytes
+  ) => Bytes;
+  CreateCallLinkCredentialRequestContext_NewDeterministic: (
+    room_id: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  CreateCallLinkCredentialRequestContext_ReceiveResponse: (
+    context_bytes: Bytes,
+    response_bytes: Bytes,
+    user_id: Bytes,
+    params_bytes: Bytes
+  ) => Bytes;
+  CreateCallLinkCredentialRequest_CheckValidContents: (
+    request_bytes: Bytes
+  ) => void;
+  CreateCallLinkCredentialRequest_IssueDeterministic: (
+    request_bytes: Bytes,
+    user_id: Bytes,
+    timestamp: Timestamp,
+    params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  CreateCallLinkCredentialResponse_CheckValidContents: (
+    response_bytes: Bytes
+  ) => void;
+  CreateCallLinkCredential_CheckValidContents: (params_bytes: Bytes) => void;
+  CreateCallLinkCredential_PresentDeterministic: (
+    credential_bytes: Bytes,
+    room_id: Bytes,
+    user_id: Bytes,
+    server_params_bytes: Bytes,
+    call_link_params_bytes: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  DecryptionErrorMessage_Deserialize: (data: Bytes) => DecryptionErrorMessage;
+  DecryptionErrorMessage_ExtractFromSerializedContent: (
+    bytes: Bytes
+  ) => DecryptionErrorMessage;
+  DecryptionErrorMessage_ForOriginalMessage: (
+    original_bytes: Bytes,
+    original_type: number,
+    original_timestamp: Timestamp,
+    original_sender_device_id: number
+  ) => DecryptionErrorMessage;
+  DecryptionErrorMessage_GetDeviceId: (
+    obj: Wrapper<DecryptionErrorMessage>
+  ) => number;
+  DecryptionErrorMessage_GetRatchetKey: (
+    m: Wrapper<DecryptionErrorMessage>
+  ) => PublicKey | null;
+  DecryptionErrorMessage_GetTimestamp: (
+    obj: Wrapper<DecryptionErrorMessage>
+  ) => Timestamp;
+  DecryptionErrorMessage_Serialize: (
+    obj: Wrapper<DecryptionErrorMessage>
+  ) => Bytes;
+  DeleteBackupMediaStream_cancel: (
+    stream: Wrapper<DeleteBackupMediaStream>
+  ) => void;
+  DeleteBackupMediaStream_next: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    stream: Wrapper<DeleteBackupMediaStream>
+  ) => CancellablePromise<ReturnFfiDeleteBackupMediaNextChunk>;
+  DonationPermitDerivedKeyPair_CheckValidContents: (buffer: Bytes) => void;
+  DonationPermitDerivedKeyPair_ForExpiration: (
+    timestamp: Timestamp,
+    root: Wrapper<ServerSecretParams>
+  ) => Bytes;
+  DonationPermitRequestContext_CheckValidContents: (buffer: Bytes) => void;
+  DonationPermitRequestContext_NewDeterministic: (
+    count: number,
+    randomness: Bytes
+  ) => Bytes;
+  DonationPermitRequestContext_Receive: (
+    context: Bytes,
+    response: Bytes,
+    public_params: Wrapper<ServerPublicParams>,
+    now: Timestamp
+  ) => Array<Bytes>;
+  DonationPermitRequestContext_Request: (ctx: Bytes) => Bytes;
+  DonationPermitRequest_CheckValidContents: (buffer: Bytes) => void;
+  DonationPermitRequest_Len: (donation_permit_request: Bytes) => number;
+  DonationPermitResponse_CheckValidContents: (buffer: Bytes) => void;
+  DonationPermitResponse_DefaultExpiration: (
+    current_time: Timestamp
+  ) => Timestamp;
+  DonationPermitResponse_GetExpiration: (response: Bytes) => Timestamp;
+  DonationPermitResponse_IssueDeterministic: (
+    request: Bytes,
+    key_pair: Bytes,
+    seed: Bytes
+  ) => Bytes;
+  DonationPermit_CheckValidContents: (buffer: Bytes) => void;
+  DonationPermit_Expiration: (donation_permit: Bytes) => Timestamp;
+  DonationPermit_SpendId: (donation_permit: Bytes) => Bytes;
+  DonationPermit_Verify: (
+    permit: Bytes,
+    now: Timestamp,
+    key_pair: Bytes
+  ) => void;
+  ExpiringProfileKeyCredentialResponse_CheckValidContents: (
+    buffer: Bytes
+  ) => void;
+  ExpiringProfileKeyCredential_CheckValidContents: (buffer: Bytes) => void;
+  ExpiringProfileKeyCredential_GetExpirationTime: (
+    credential: Serialized<ExpiringProfileKeyCredential>
+  ) => Timestamp;
+  Fingerprint_DisplayString: (obj: Wrapper<Fingerprint>) => string;
+  Fingerprint_New: (
+    iterations: number,
+    version: number,
+    local_identifier: Bytes,
+    local_key: Wrapper<PublicKey>,
+    remote_identifier: Bytes,
+    remote_key: Wrapper<PublicKey>
+  ) => Fingerprint;
+  Fingerprint_ScannableEncoding: (obj: Wrapper<Fingerprint>) => Bytes;
+  GenericServerPublicParams_CheckValidContents: (params_bytes: Bytes) => void;
+  GenericServerSecretParams_CheckValidContents: (params_bytes: Bytes) => void;
+  GenericServerSecretParams_GenerateDeterministic: (randomness: Bytes) => Bytes;
+  GenericServerSecretParams_GetPublicParams: (params_bytes: Bytes) => Bytes;
+  GroupCipher_DecryptMessage: (
+    sender: Wrapper<ProtocolAddress>,
+    message: Bytes,
+    store: SenderKeyStore
+  ) => Promise<Bytes>;
+  GroupCipher_EncryptMessage: (
+    sender: Wrapper<ProtocolAddress>,
+    distribution_id: Uuid,
+    message: Bytes,
+    store: SenderKeyStore
+  ) => Promise<CiphertextMessage>;
+  GroupMasterKey_CheckValidContents: (buffer: Bytes) => void;
+  GroupPublicParams_CheckValidContents: (buffer: Bytes) => void;
+  GroupPublicParams_GetGroupIdentifier: (
+    group_public_params: Serialized<GroupPublicParams>
+  ) => Bytes;
+  GroupSecretParams_CheckValidContents: (buffer: Bytes) => void;
+  GroupSecretParams_DecryptBlobWithPadding: (
+    params: Serialized<GroupSecretParams>,
+    ciphertext: Bytes
+  ) => Bytes;
+  GroupSecretParams_DecryptProfileKey: (
+    params: Serialized<GroupSecretParams>,
+    profile_key: Serialized<ProfileKeyCiphertext>,
+    user_id: Bytes
+  ) => Serialized<ProfileKey>;
+  GroupSecretParams_DecryptServiceId: (
+    params: Serialized<GroupSecretParams>,
+    ciphertext: Serialized<UuidCiphertext>
+  ) => Bytes;
+  GroupSecretParams_DeriveFromMasterKey: (
+    master_key: Serialized<GroupMasterKey>
+  ) => Serialized<GroupSecretParams>;
+  GroupSecretParams_EncryptBlobWithPaddingDeterministic: (
+    params: Serialized<GroupSecretParams>,
+    randomness: Bytes,
+    plaintext: Bytes,
+    padding_len: number
+  ) => Bytes;
+  GroupSecretParams_EncryptProfileKey: (
+    params: Serialized<GroupSecretParams>,
+    profile_key: Serialized<ProfileKey>,
+    user_id: Bytes
+  ) => Serialized<ProfileKeyCiphertext>;
+  GroupSecretParams_EncryptServiceId: (
+    params: Serialized<GroupSecretParams>,
+    service_id: Bytes
+  ) => Serialized<UuidCiphertext>;
+  GroupSecretParams_GenerateDeterministic: (
+    randomness: Bytes
+  ) => Serialized<GroupSecretParams>;
+  GroupSecretParams_GetMasterKey: (
+    params: Serialized<GroupSecretParams>
+  ) => Serialized<GroupMasterKey>;
+  GroupSecretParams_GetPublicParams: (
+    params: Serialized<GroupSecretParams>
+  ) => Serialized<GroupPublicParams>;
+  GroupSendDerivedKeyPair_CheckValidContents: (bytes: Bytes) => void;
+  GroupSendDerivedKeyPair_ForExpiration: (
+    expiration: Timestamp,
+    server_params: Wrapper<ServerSecretParams>
+  ) => Bytes;
+  GroupSendEndorsement_CallLinkParams_ToToken: (
+    endorsement: Bytes,
+    call_link_secret_params_serialized: Bytes
+  ) => Bytes;
+  GroupSendEndorsement_CheckValidContents: (bytes: Bytes) => void;
+  GroupSendEndorsement_Combine: (endorsements: Array<Bytes>) => Bytes;
+  GroupSendEndorsement_Remove: (endorsement: Bytes, to_remove: Bytes) => Bytes;
+  GroupSendEndorsement_ToToken: (
+    endorsement: Bytes,
+    group_params: Serialized<GroupSecretParams>
+  ) => Bytes;
+  GroupSendEndorsementsResponse_CheckValidContents: (bytes: Bytes) => void;
+  GroupSendEndorsementsResponse_GetExpiration: (
+    response_bytes: Bytes
+  ) => Timestamp;
+  GroupSendEndorsementsResponse_IssueDeterministic: (
+    concatenated_group_member_ciphertexts: Bytes,
+    key_pair: Bytes,
+    randomness: Bytes
+  ) => Bytes;
+  GroupSendEndorsementsResponse_ReceiveAndCombineWithCiphertexts: (
+    response_bytes: Bytes,
+    concatenated_group_member_ciphertexts: Bytes,
+    local_user_ciphertext: Bytes,
+    now: Timestamp,
+    server_params: Wrapper<ServerPublicParams>
+  ) => Array<Bytes>;
+  GroupSendEndorsementsResponse_ReceiveAndCombineWithServiceIds: (
+    response_bytes: Bytes,
+    group_members: Bytes,
+    local_user: Bytes,
+    now: Timestamp,
+    group_params: Serialized<GroupSecretParams>,
+    server_params: Wrapper<ServerPublicParams>
+  ) => Array<Bytes>;
+  GroupSendFullToken_CheckValidContents: (bytes: Bytes) => void;
+  GroupSendFullToken_GetExpiration: (token: Bytes) => Timestamp;
+  GroupSendFullToken_Verify: (
+    token: Bytes,
+    user_ids: Bytes,
+    now: Timestamp,
+    key_pair: Bytes
+  ) => void;
+  GroupSendToken_CheckValidContents: (bytes: Bytes) => void;
+  GroupSendToken_ToFullToken: (token: Bytes, expiration: Timestamp) => Bytes;
+  HKDF_DeriveSecrets: (
+    output_length: number,
+    ikm: Bytes,
+    label: Bytes | null,
+    salt: Bytes | null
+  ) => Bytes;
+  HsmEnclaveClient_CompleteHandshake: (
+    cli: Wrapper<HsmEnclaveClient>,
+    handshake_received: Bytes
+  ) => void;
+  HsmEnclaveClient_EstablishedRecv: (
+    cli: Wrapper<HsmEnclaveClient>,
+    received_ciphertext: Bytes
+  ) => Bytes;
+  HsmEnclaveClient_EstablishedSend: (
+    cli: Wrapper<HsmEnclaveClient>,
+    plaintext_to_send: Bytes
+  ) => Bytes;
+  HsmEnclaveClient_InitialRequest: (obj: Wrapper<HsmEnclaveClient>) => Bytes;
+  HsmEnclaveClient_New: (
+    trusted_public_key: Bytes,
+    trusted_code_hashes: Bytes
+  ) => HsmEnclaveClient;
+  HttpRequest_add_header: (
+    request: Wrapper<HttpRequest>,
+    name: string,
+    value: string
+  ) => void;
+  HttpRequest_new: (
+    method: string,
+    path: string,
+    body_as_slice: Bytes | null
+  ) => HttpRequest;
+  IdentityKeyPair_Deserialize: (input: Bytes) => [PublicKey, PrivateKey];
+  IdentityKeyPair_Serialize: (
+    public_key: Wrapper<PublicKey>,
+    private_key: Wrapper<PrivateKey>
+  ) => Bytes;
+  IdentityKeyPair_SignAlternateIdentity: (
+    public_key: Wrapper<PublicKey>,
+    private_key: Wrapper<PrivateKey>,
+    other_identity: Wrapper<PublicKey>
+  ) => Bytes;
+  IdentityKey_VerifyAlternateIdentity: (
+    public_key: Wrapper<PublicKey>,
+    other_identity: Wrapper<PublicKey>,
+    signature: Bytes
+  ) => boolean;
+  IncrementalMac_CalculateChunkSize: (data_size: number) => number;
+  IncrementalMac_Finalize: (mac: Wrapper<IncrementalMac>) => Bytes;
+  IncrementalMac_Initialize: (key: Bytes, chunk_size: number) => IncrementalMac;
+  IncrementalMac_Update: (
+    mac: Wrapper<IncrementalMac>,
+    bytes: Bytes,
+    offset: number,
+    length: number
+  ) => Bytes;
+  KeyTransparency_AciSearchKey: (aci: Bytes) => Bytes;
+  KeyTransparency_Check: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    environment: number,
+    chat_connection: Wrapper<UnauthenticatedChatConnection>,
+    aci: Bytes,
+    aci_identity_key: Wrapper<PublicKey>,
+    e164: string | null,
+    unidentified_access_key: Bytes | null,
+    username_hash: Bytes | null,
+    account_data: Bytes | null,
+    last_distinguished_tree_head: Bytes | null,
+    is_self_check: boolean,
+    is_e164_discoverable: boolean
+  ) => CancellablePromise<[Bytes, Bytes]>;
+  KeyTransparency_E164SearchKey: (e164: string) => Bytes;
+  KeyTransparency_ResetDataField: (account_data: Bytes, field: number) => Bytes;
+  KeyTransparency_UsernameHashSearchKey: (hash: Bytes) => Bytes;
+  KyberKeyPair_Generate: () => KyberKeyPair;
+  KyberKeyPair_GetPublicKey: (
+    key_pair: Wrapper<KyberKeyPair>
+  ) => KyberPublicKey;
+  KyberKeyPair_GetSecretKey: (
+    key_pair: Wrapper<KyberKeyPair>
+  ) => KyberSecretKey;
+  KyberPreKeyRecord_Deserialize: (data: Bytes) => KyberPreKeyRecord;
+  KyberPreKeyRecord_GetId: (obj: Wrapper<KyberPreKeyRecord>) => number;
+  KyberPreKeyRecord_GetKeyPair: (
+    obj: Wrapper<KyberPreKeyRecord>
+  ) => KyberKeyPair;
+  KyberPreKeyRecord_GetPublicKey: (
+    obj: Wrapper<KyberPreKeyRecord>
+  ) => KyberPublicKey;
+  KyberPreKeyRecord_GetSecretKey: (
+    obj: Wrapper<KyberPreKeyRecord>
+  ) => KyberSecretKey;
+  KyberPreKeyRecord_GetSignature: (obj: Wrapper<KyberPreKeyRecord>) => Bytes;
+  KyberPreKeyRecord_GetTimestamp: (
+    obj: Wrapper<KyberPreKeyRecord>
+  ) => Timestamp;
+  KyberPreKeyRecord_New: (
+    id: number,
+    timestamp: Timestamp,
+    key_pair: Wrapper<KyberKeyPair>,
+    signature: Bytes
+  ) => KyberPreKeyRecord;
+  KyberPreKeyRecord_Serialize: (obj: Wrapper<KyberPreKeyRecord>) => Bytes;
+  KyberPublicKey_Deserialize: (data: Bytes) => KyberPublicKey;
+  KyberPublicKey_Equals: (
+    lhs: Wrapper<KyberPublicKey>,
+    rhs: Wrapper<KyberPublicKey>
+  ) => boolean;
+  KyberPublicKey_Serialize: (obj: Wrapper<KyberPublicKey>) => Bytes;
+  KyberSecretKey_Deserialize: (data: Bytes) => KyberSecretKey;
+  KyberSecretKey_Serialize: (obj: Wrapper<KyberSecretKey>) => Bytes;
+  LookupRequest_addAciAndAccessKey: (
+    request: Wrapper<LookupRequest>,
+    aci: Bytes,
+    access_key: Bytes
+  ) => void;
+  LookupRequest_addE164: (
+    request: Wrapper<LookupRequest>,
+    e164: string
+  ) => void;
+  LookupRequest_addPreviousE164: (
+    request: Wrapper<LookupRequest>,
+    e164: string
+  ) => void;
+  LookupRequest_new: () => LookupRequest;
+  LookupRequest_setToken: (
+    request: Wrapper<LookupRequest>,
+    token: Bytes
+  ) => void;
+  MessageBackupKey_FromAccountEntropyPool: (
+    account_entropy: AccountEntropyPool,
+    aci: Bytes,
+    forward_secrecy_token: Bytes | null
+  ) => MessageBackupKey;
+  MessageBackupKey_FromBackupKeyAndBackupId: (
+    backup_key: Bytes,
+    backup_id: Bytes,
+    forward_secrecy_token: Bytes | null
+  ) => MessageBackupKey;
+  MessageBackupKey_GetAesKey: (key: Wrapper<MessageBackupKey>) => Bytes;
+  MessageBackupKey_GetHmacKey: (key: Wrapper<MessageBackupKey>) => Bytes;
+  MessageBackupSizing_FlushInterval: (
+    uncompressed_len: bigint,
+    estimated_total_uncompressed_len: bigint
+  ) => bigint;
+  MessageBackupSizing_PaddingSize: (
+    max_interval_bytes: bigint,
+    compressed_len: bigint
+  ) => bigint;
+  MessageBackupValidator_Validate: (
+    key: Wrapper<MessageBackupKey>,
+    first_stream: InputStream,
+    second_stream: InputStream,
+    len: bigint,
+    purpose: number
+  ) => Promise<MessageBackupValidationOutcome>;
+  MinidumpToJSONString: (buffer: Bytes) => string;
+  Mp4Sanitizer_Sanitize: (
+    input: InputStream,
+    len: bigint
+  ) => Promise<SanitizedMetadata>;
+  OnlineBackupValidator_AddFrame: (
+    backup: Wrapper<OnlineBackupValidator>,
+    frame: Bytes
+  ) => void;
+  OnlineBackupValidator_Finalize: (
+    backup: Wrapper<OnlineBackupValidator>
+  ) => void;
+  OnlineBackupValidator_New: (
+    backup_info_frame: Bytes,
+    purpose: number
+  ) => OnlineBackupValidator;
+  PinHash_AccessKey: (ph: Wrapper<PinHash>) => Bytes;
+  PinHash_EncryptionKey: (ph: Wrapper<PinHash>) => Bytes;
+  PinHash_FromSalt: (pin: Bytes, salt: Bytes) => PinHash;
+  PinHash_FromUsernameMrenclave: (
+    pin: Bytes,
+    username: string,
+    mrenclave: Bytes
+  ) => PinHash;
+  Pin_LocalHash: (pin: Bytes) => string;
+  Pin_VerifyLocalHash: (encoded_hash: string, pin: Bytes) => boolean;
+  PlaintextContent_Deserialize: (data: Bytes) => PlaintextContent;
+  PlaintextContent_FromDecryptionErrorMessage: (
+    m: Wrapper<DecryptionErrorMessage>
+  ) => PlaintextContent;
+  PlaintextContent_GetBody: (obj: Wrapper<PlaintextContent>) => Bytes;
+  PlaintextContent_Serialize: (obj: Wrapper<PlaintextContent>) => Bytes;
+  PreKeyBundle_GetDeviceId: (obj: Wrapper<PreKeyBundle>) => number;
+  PreKeyBundle_GetIdentityKey: (p: Wrapper<PreKeyBundle>) => PublicKey;
+  PreKeyBundle_GetKyberPreKeyId: (obj: Wrapper<PreKeyBundle>) => number;
+  PreKeyBundle_GetKyberPreKeyPublic: (
+    bundle: Wrapper<PreKeyBundle>
+  ) => KyberPublicKey;
+  PreKeyBundle_GetKyberPreKeySignature: (obj: Wrapper<PreKeyBundle>) => Bytes;
+  PreKeyBundle_GetPreKeyId: (obj: Wrapper<PreKeyBundle>) => number | null;
+  PreKeyBundle_GetPreKeyPublic: (
+    obj: Wrapper<PreKeyBundle>
+  ) => PublicKey | null;
+  PreKeyBundle_GetRegistrationId: (obj: Wrapper<PreKeyBundle>) => number;
+  PreKeyBundle_GetSignedPreKeyId: (obj: Wrapper<PreKeyBundle>) => number;
+  PreKeyBundle_GetSignedPreKeyPublic: (obj: Wrapper<PreKeyBundle>) => PublicKey;
+  PreKeyBundle_GetSignedPreKeySignature: (obj: Wrapper<PreKeyBundle>) => Bytes;
+  PreKeyBundle_New: (
+    registration_id: number,
+    device_id: number,
+    prekey_id: number | null,
+    prekey: Wrapper<PublicKey> | null,
+    signed_prekey_id: number,
+    signed_prekey: Wrapper<PublicKey>,
+    signed_prekey_signature: Bytes,
+    identity_key: Wrapper<PublicKey>,
+    kyber_prekey_id: number,
+    kyber_prekey: Wrapper<KyberPublicKey>,
+    kyber_prekey_signature: Bytes
+  ) => PreKeyBundle;
+  PreKeyRecord_Deserialize: (data: Bytes) => PreKeyRecord;
+  PreKeyRecord_GetId: (obj: Wrapper<PreKeyRecord>) => number;
+  PreKeyRecord_GetPrivateKey: (obj: Wrapper<PreKeyRecord>) => PrivateKey;
+  PreKeyRecord_GetPublicKey: (obj: Wrapper<PreKeyRecord>) => PublicKey;
+  PreKeyRecord_New: (
+    id: number,
+    pub_key: Wrapper<PublicKey>,
+    priv_key: Wrapper<PrivateKey>
+  ) => PreKeyRecord;
+  PreKeyRecord_Serialize: (obj: Wrapper<PreKeyRecord>) => Bytes;
+  PreKeySignalMessage_Deserialize: (data: Bytes) => PreKeySignalMessage;
+  PreKeySignalMessage_GetPreKeyId: (
+    obj: Wrapper<PreKeySignalMessage>
+  ) => number | null;
+  PreKeySignalMessage_GetRegistrationId: (
+    obj: Wrapper<PreKeySignalMessage>
+  ) => number;
+  PreKeySignalMessage_GetSignedPreKeyId: (
+    obj: Wrapper<PreKeySignalMessage>
+  ) => number;
+  PreKeySignalMessage_GetVersion: (obj: Wrapper<PreKeySignalMessage>) => number;
+  PreKeySignalMessage_New: (
+    message_version: number,
+    registration_id: number,
+    pre_key_id: number | null,
+    signed_pre_key_id: number,
+    base_key: Wrapper<PublicKey>,
+    identity_key: Wrapper<PublicKey>,
+    signal_message: Wrapper<SignalMessage>
+  ) => PreKeySignalMessage;
+  PreKeySignalMessage_Serialize: (obj: Wrapper<PreKeySignalMessage>) => Bytes;
+  PrivateKey_Agree: (
+    private_key: Wrapper<PrivateKey>,
+    public_key: Wrapper<PublicKey>
+  ) => Bytes;
+  PrivateKey_Deserialize: (data: Bytes) => PrivateKey;
+  PrivateKey_Generate: () => PrivateKey;
+  PrivateKey_GetPublicKey: (k: Wrapper<PrivateKey>) => PublicKey;
+  PrivateKey_HpkeOpen: (
+    sk: Wrapper<PrivateKey>,
+    ciphertext: Bytes,
+    info: Bytes,
+    associated_data: Bytes
+  ) => Bytes;
+  PrivateKey_Serialize: (obj: Wrapper<PrivateKey>) => Bytes;
+  PrivateKey_Sign: (key: Wrapper<PrivateKey>, message: Bytes) => Bytes;
+  ProfileKeyCiphertext_CheckValidContents: (buffer: Bytes) => void;
+  ProfileKeyCommitment_CheckValidContents: (buffer: Bytes) => void;
+  ProfileKeyCredentialPresentation_CheckValidContents: (
+    presentation_bytes: Bytes
+  ) => void;
+  ProfileKeyCredentialPresentation_GetProfileKeyCiphertext: (
+    presentation_bytes: Bytes
+  ) => Serialized<ProfileKeyCiphertext>;
+  ProfileKeyCredentialPresentation_GetUuidCiphertext: (
+    presentation_bytes: Bytes
+  ) => Serialized<UuidCiphertext>;
+  ProfileKeyCredentialRequestContext_CheckValidContents: (
+    buffer: Bytes
+  ) => void;
+  ProfileKeyCredentialRequestContext_GetRequest: (
+    context: Serialized<ProfileKeyCredentialRequestContext>
+  ) => Serialized<ProfileKeyCredentialRequest>;
+  ProfileKeyCredentialRequest_CheckValidContents: (buffer: Bytes) => void;
+  ProfileKey_CheckValidContents: (buffer: Bytes) => void;
+  ProfileKey_DeriveAccessKey: (profile_key: Serialized<ProfileKey>) => Bytes;
+  ProfileKey_GetCommitment: (
+    profile_key: Serialized<ProfileKey>,
+    user_id: Bytes
+  ) => Serialized<ProfileKeyCommitment>;
+  ProfileKey_GetProfileKeyVersion: (
+    profile_key: Serialized<ProfileKey>,
+    user_id: Bytes
+  ) => Bytes;
+  ProtocolAddress_DeviceId: (obj: Wrapper<ProtocolAddress>) => number;
+  ProtocolAddress_Name: (obj: Wrapper<ProtocolAddress>) => string;
+  ProtocolAddress_New: (name: string, device_id: number) => ProtocolAddress;
+  ProvisioningChatConnection_connect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>
+  ) => CancellablePromise<ProvisioningChatConnection>;
+  ProvisioningChatConnection_disconnect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<ProvisioningChatConnection>
+  ) => CancellablePromise<void>;
+  ProvisioningChatConnection_info: (
+    chat: Wrapper<ProvisioningChatConnection>
+  ) => ChatConnectionInfo;
+  ProvisioningChatConnection_init_listener: (
+    chat: Wrapper<ProvisioningChatConnection>,
+    listener: ProvisioningListener
+  ) => void;
+  PublicKey_Deserialize: (data: Bytes) => PublicKey;
+  PublicKey_Equals: (
+    lhs: Wrapper<PublicKey>,
+    rhs: Wrapper<PublicKey>
+  ) => boolean;
+  PublicKey_GetPublicKeyBytes: (obj: Wrapper<PublicKey>) => Bytes;
+  PublicKey_HpkeSeal: (
+    pk: Wrapper<PublicKey>,
+    plaintext: Bytes,
+    info: Bytes,
+    associated_data: Bytes
+  ) => Bytes;
+  PublicKey_Serialize: (obj: Wrapper<PublicKey>) => Bytes;
+  PublicKey_Verify: (
+    key: Wrapper<PublicKey>,
+    message: Bytes,
+    signature: Bytes
+  ) => boolean;
+  ReceiptCredentialPresentation_CheckValidContents: (buffer: Bytes) => void;
+  ReceiptCredentialPresentation_GetReceiptExpirationTime: (
+    presentation: Serialized<ReceiptCredentialPresentation>
+  ) => Timestamp;
+  ReceiptCredentialPresentation_GetReceiptLevel: (
+    presentation: Serialized<ReceiptCredentialPresentation>
+  ) => bigint;
+  ReceiptCredentialPresentation_GetReceiptSerial: (
+    presentation: Serialized<ReceiptCredentialPresentation>
+  ) => Bytes;
+  ReceiptCredentialRequestContext_CheckValidContents: (buffer: Bytes) => void;
+  ReceiptCredentialRequestContext_GetRequest: (
+    request_context: Serialized<ReceiptCredentialRequestContext>
+  ) => Serialized<ReceiptCredentialRequest>;
+  ReceiptCredentialRequest_CheckValidContents: (buffer: Bytes) => void;
+  ReceiptCredentialResponse_CheckValidContents: (buffer: Bytes) => void;
+  ReceiptCredential_CheckValidContents: (buffer: Bytes) => void;
+  ReceiptCredential_GetReceiptExpirationTime: (
+    receipt_credential: Serialized<ReceiptCredential>
+  ) => Timestamp;
+  ReceiptCredential_GetReceiptLevel: (
+    receipt_credential: Serialized<ReceiptCredential>
+  ) => bigint;
+  RegisterAccountRequest_Create: () => RegisterAccountRequest;
+  RegisterAccountRequest_SetAccountPassword: (
+    register_account: Wrapper<RegisterAccountRequest>,
+    account_password: string
+  ) => void;
+  RegisterAccountRequest_SetIdentityPqLastResortPreKey: (
+    register_account: Wrapper<RegisterAccountRequest>,
+    identity_type: number,
+    pq_last_resort_pre_key: SignedPublicPreKey
+  ) => void;
+  RegisterAccountRequest_SetIdentityPublicKey: (
+    register_account: Wrapper<RegisterAccountRequest>,
+    identity_type: number,
+    identity_key: Wrapper<PublicKey>
+  ) => void;
+  RegisterAccountRequest_SetIdentitySignedPreKey: (
+    register_account: Wrapper<RegisterAccountRequest>,
+    identity_type: number,
+    signed_pre_key: SignedPublicPreKey
+  ) => void;
+  RegisterAccountRequest_SetOneTimePassword: (
+    register_account: Wrapper<RegisterAccountRequest>,
+    one_time_password: number
+  ) => void;
+  RegisterAccountRequest_SetSkipDeviceTransfer: (
+    register_account: Wrapper<RegisterAccountRequest>
+  ) => void;
+  RegisterAccountResponse_GetAci: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => Uuid;
+  RegisterAccountResponse_GetAuthCredentialSalt: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => Bytes | null;
+  RegisterAccountResponse_GetEntitlementBackupExpirationSeconds: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => bigint | null;
+  RegisterAccountResponse_GetEntitlementBackupLevel: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => bigint | null;
+  RegisterAccountResponse_GetEntitlementBadges: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => Array<RegisterResponseBadge>;
+  RegisterAccountResponse_GetNumber: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => string | null;
+  RegisterAccountResponse_GetPni: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => Uuid | null;
+  RegisterAccountResponse_GetReregistration: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => boolean;
+  RegisterAccountResponse_GetStorageCapable: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => boolean;
+  RegisterAccountResponse_GetUsernameHash: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => Bytes | null;
+  RegisterAccountResponse_GetUsernameLinkHandle: (
+    response: Wrapper<RegisterAccountResponse>
+  ) => Uuid | null;
+  RegistrationAccountAttributes_Create: (
+    recovery_password: Bytes,
+    aci_registration_id: number,
+    pni_registration_id: number,
+    registration_lock: string | null,
+    unidentified_access_key: Bytes,
+    unrestricted_unidentified_access: boolean,
+    capabilities: Array<string>,
+    discoverable_by_phone_number: boolean
+  ) => RegistrationAccountAttributes;
+  RegistrationService_CheckSvr2Credentials: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    service: Wrapper<RegistrationService>,
+    svr_tokens: Array<string>
+  ) => CancellablePromise<CheckSvr2CredentialsResponse>;
+  RegistrationService_CreateSession: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    create_session: RegistrationCreateSessionRequest,
+    connect_chat: ConnectChatBridge
+  ) => CancellablePromise<RegistrationService>;
+  RegistrationService_RegisterAccount: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    service: Wrapper<RegistrationService>,
+    register_account: Wrapper<RegisterAccountRequest>,
+    account_attributes: Wrapper<RegistrationAccountAttributes>
+  ) => CancellablePromise<RegisterAccountResponse>;
+  RegistrationService_RegisterAccountWithoutNumber: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connect_chat: ConnectChatBridge,
+    receipt_credential_presentation: Bytes,
+    register_account: Wrapper<RegisterAccountRequest>,
+    account_attributes: Wrapper<RegistrationAccountAttributes>
+  ) => CancellablePromise<RegisterAccountResponse>;
+  RegistrationService_RegistrationSession: (
+    service: Wrapper<RegistrationService>
+  ) => RegistrationSession;
+  RegistrationService_RequestVerificationCode: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    service: Wrapper<RegistrationService>,
+    transport: string,
+    client: string,
+    languages: Array<string>
+  ) => CancellablePromise<void>;
+  RegistrationService_ReregisterAccount: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connect_chat: ConnectChatBridge,
+    number: string,
+    register_account: Wrapper<RegisterAccountRequest>,
+    account_attributes: Wrapper<RegistrationAccountAttributes>
+  ) => CancellablePromise<RegisterAccountResponse>;
+  RegistrationService_ReregisterAccountWithoutNumber: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connect_chat: ConnectChatBridge,
+    aci: Bytes,
+    register_account: Wrapper<RegisterAccountRequest>,
+    account_attributes: Wrapper<RegistrationAccountAttributes>
+  ) => CancellablePromise<RegisterAccountResponse>;
+  RegistrationService_ResumeSession: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    session_id: string,
+    number: string,
+    connect_chat: ConnectChatBridge
+  ) => CancellablePromise<RegistrationService>;
+  RegistrationService_SessionId: (
+    service: Wrapper<RegistrationService>
+  ) => string;
+  RegistrationService_SubmitCaptcha: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    service: Wrapper<RegistrationService>,
+    captcha_value: string
+  ) => CancellablePromise<void>;
+  RegistrationService_SubmitVerificationCode: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    service: Wrapper<RegistrationService>,
+    code: string
+  ) => CancellablePromise<void>;
+  RegistrationSession_GetAllowedToRequestCode: (
+    session: Wrapper<RegistrationSession>
+  ) => boolean;
+  RegistrationSession_GetNextCallSeconds: (
+    session: Wrapper<RegistrationSession>
+  ) => number | null;
+  RegistrationSession_GetNextSmsSeconds: (
+    session: Wrapper<RegistrationSession>
+  ) => number | null;
+  RegistrationSession_GetNextVerificationAttemptSeconds: (
+    session: Wrapper<RegistrationSession>
+  ) => number | null;
+  RegistrationSession_GetRequestedInformation: (
+    session: Wrapper<RegistrationSession>
+  ) => Array<ChallengeOption>;
+  RegistrationSession_GetVerified: (
+    session: Wrapper<RegistrationSession>
+  ) => boolean;
+  SanitizedMetadata_GetDataLen: (
+    sanitized: Wrapper<SanitizedMetadata>
+  ) => bigint;
+  SanitizedMetadata_GetDataOffset: (
+    sanitized: Wrapper<SanitizedMetadata>
+  ) => bigint;
+  SanitizedMetadata_GetMetadata: (
+    sanitized: Wrapper<SanitizedMetadata>
+  ) => Bytes;
+  ScannableFingerprint_Compare: (fprint1: Bytes, fprint2: Bytes) => boolean;
+  SealedSenderDecryptionResult_GetDeviceId: (
+    obj: Wrapper<SealedSenderDecryptionResult>
+  ) => number;
+  SealedSenderDecryptionResult_GetSenderE164: (
+    obj: Wrapper<SealedSenderDecryptionResult>
+  ) => string | null;
+  SealedSenderDecryptionResult_GetSenderUuid: (
+    obj: Wrapper<SealedSenderDecryptionResult>
+  ) => string;
+  SealedSenderDecryptionResult_Message: (
+    obj: Wrapper<SealedSenderDecryptionResult>
+  ) => Bytes;
+  SealedSenderMultiRecipientMessage_Parse: (
+    buffer: Bytes
+  ) => SealedSenderMultiRecipientMessage;
+  SealedSender_DecryptMessage: (
+    message: Bytes,
+    trust_root: Wrapper<PublicKey>,
+    timestamp: Timestamp,
+    local_e164: string | null,
+    local_uuid: string,
+    local_device_id: number,
+    session_store: SessionStore,
+    identity_store: IdentityKeyStore,
+    prekey_store: PreKeyStore,
+    signed_prekey_store: SignedPreKeyStore,
+    kyber_prekey_store: KyberPreKeyStore
+  ) => Promise<SealedSenderDecryptionResult>;
+  SealedSender_DecryptToUsmc: (
+    ctext: Bytes,
+    identity_store: IdentityKeyStore
+  ) => Promise<UnidentifiedSenderMessageContent>;
+  SealedSender_Encrypt: (
+    destination: Wrapper<ProtocolAddress>,
+    content: Wrapper<UnidentifiedSenderMessageContent>,
+    identity_key_store: IdentityKeyStore
+  ) => Promise<Bytes>;
+  SealedSender_MultiRecipientEncrypt: (
+    recipients: Array<Wrapper<ProtocolAddress>>,
+    recipient_sessions: Array<Wrapper<SessionRecord>>,
+    excluded_recipients: Bytes,
+    content: Wrapper<UnidentifiedSenderMessageContent>,
+    identity_key_store: IdentityKeyStore
+  ) => Promise<Bytes>;
+  SealedSender_MultiRecipientMessageForSingleRecipient: (
+    encoded_multi_recipient_message: Bytes
+  ) => Bytes;
+  SecureValueRecoveryForBackups_CreateNewBackupChain: (
+    environment: number,
+    backup_key: Bytes
+  ) => Bytes;
+  SecureValueRecoveryForBackups_RemoveBackup: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<void>;
+  SecureValueRecoveryForBackups_RestoreBackupFromServer: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    backup_key: Bytes,
+    metadata: Bytes,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<BackupRestoreResponse>;
+  SecureValueRecoveryForBackups_StoreBackup: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    backup_key: Bytes,
+    previous_secret_data: Bytes,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<BackupStoreResponse>;
+  SenderCertificate_Deserialize: (data: Bytes) => SenderCertificate;
+  SenderCertificate_GetCertificate: (obj: Wrapper<SenderCertificate>) => Bytes;
+  SenderCertificate_GetDeviceId: (obj: Wrapper<SenderCertificate>) => number;
+  SenderCertificate_GetExpiration: (
+    obj: Wrapper<SenderCertificate>
+  ) => Timestamp;
+  SenderCertificate_GetKey: (obj: Wrapper<SenderCertificate>) => PublicKey;
+  SenderCertificate_GetSenderE164: (
+    obj: Wrapper<SenderCertificate>
+  ) => string | null;
+  SenderCertificate_GetSenderUuid: (obj: Wrapper<SenderCertificate>) => string;
+  SenderCertificate_GetSerialized: (obj: Wrapper<SenderCertificate>) => Bytes;
+  SenderCertificate_GetServerCertificate: (
+    cert: Wrapper<SenderCertificate>
+  ) => ServerCertificate;
+  SenderCertificate_GetSignature: (obj: Wrapper<SenderCertificate>) => Bytes;
+  SenderCertificate_New: (
+    sender_uuid: string,
+    sender_e164: string | null,
+    sender_device_id: number,
+    sender_key: Wrapper<PublicKey>,
+    expiration: Timestamp,
+    signer_cert: Wrapper<ServerCertificate>,
+    signer_key: Wrapper<PrivateKey>
+  ) => SenderCertificate;
+  SenderCertificate_Validate: (
+    cert: Wrapper<SenderCertificate>,
+    trust_roots: Array<Wrapper<PublicKey>>,
+    time: Timestamp
+  ) => boolean;
+  SenderKeyDistributionMessage_Create: (
+    sender: Wrapper<ProtocolAddress>,
+    distribution_id: Uuid,
+    store: SenderKeyStore
+  ) => Promise<SenderKeyDistributionMessage>;
+  SenderKeyDistributionMessage_Deserialize: (
+    data: Bytes
+  ) => SenderKeyDistributionMessage;
+  SenderKeyDistributionMessage_GetChainId: (
+    obj: Wrapper<SenderKeyDistributionMessage>
+  ) => number;
+  SenderKeyDistributionMessage_GetChainKey: (
+    obj: Wrapper<SenderKeyDistributionMessage>
+  ) => Bytes;
+  SenderKeyDistributionMessage_GetDistributionId: (
+    obj: Wrapper<SenderKeyDistributionMessage>
+  ) => Uuid;
+  SenderKeyDistributionMessage_GetIteration: (
+    obj: Wrapper<SenderKeyDistributionMessage>
+  ) => number;
+  SenderKeyDistributionMessage_New: (
+    message_version: number,
+    distribution_id: Uuid,
+    chain_id: number,
+    iteration: number,
+    chainkey: Bytes,
+    pk: Wrapper<PublicKey>
+  ) => SenderKeyDistributionMessage;
+  SenderKeyDistributionMessage_Process: (
+    sender: Wrapper<ProtocolAddress>,
+    sender_key_distribution_message: Wrapper<SenderKeyDistributionMessage>,
+    store: SenderKeyStore
+  ) => Promise<void>;
+  SenderKeyDistributionMessage_Serialize: (
+    obj: Wrapper<SenderKeyDistributionMessage>
+  ) => Bytes;
+  SenderKeyMessage_Deserialize: (data: Bytes) => SenderKeyMessage;
+  SenderKeyMessage_GetChainId: (obj: Wrapper<SenderKeyMessage>) => number;
+  SenderKeyMessage_GetCipherText: (obj: Wrapper<SenderKeyMessage>) => Bytes;
+  SenderKeyMessage_GetDistributionId: (obj: Wrapper<SenderKeyMessage>) => Uuid;
+  SenderKeyMessage_GetIteration: (obj: Wrapper<SenderKeyMessage>) => number;
+  SenderKeyMessage_New: (
+    message_version: number,
+    distribution_id: Uuid,
+    chain_id: number,
+    iteration: number,
+    ciphertext: Bytes,
+    pk: Wrapper<PrivateKey>
+  ) => SenderKeyMessage;
+  SenderKeyMessage_Serialize: (obj: Wrapper<SenderKeyMessage>) => Bytes;
+  SenderKeyMessage_VerifySignature: (
+    skm: Wrapper<SenderKeyMessage>,
+    pubkey: Wrapper<PublicKey>
+  ) => boolean;
+  SenderKeyRecord_Deserialize: (data: Bytes) => SenderKeyRecord;
+  SenderKeyRecord_Serialize: (obj: Wrapper<SenderKeyRecord>) => Bytes;
+  ServerCertificate_Deserialize: (data: Bytes) => ServerCertificate;
+  ServerCertificate_GetCertificate: (obj: Wrapper<ServerCertificate>) => Bytes;
+  ServerCertificate_GetKey: (obj: Wrapper<ServerCertificate>) => PublicKey;
+  ServerCertificate_GetKeyId: (obj: Wrapper<ServerCertificate>) => number;
+  ServerCertificate_GetSerialized: (obj: Wrapper<ServerCertificate>) => Bytes;
+  ServerCertificate_GetSignature: (obj: Wrapper<ServerCertificate>) => Bytes;
+  ServerCertificate_New: (
+    key_id: number,
+    server_key: Wrapper<PublicKey>,
+    trust_root: Wrapper<PrivateKey>
+  ) => ServerCertificate;
+  ServerMessageAck_SendStatus: (
+    ack: Wrapper<ServerMessageAck>,
+    status: number
+  ) => void;
+  ServerPublicParams_CreateAuthCredentialWithPniPresentationDeterministic: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    randomness: Bytes,
+    group_secret_params: Serialized<GroupSecretParams>,
+    auth_credential_with_pni_bytes: Bytes
+  ) => Bytes;
+  ServerPublicParams_CreateExpiringProfileKeyCredentialPresentationDeterministic: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    randomness: Bytes,
+    group_secret_params: Serialized<GroupSecretParams>,
+    profile_key_credential: Serialized<ExpiringProfileKeyCredential>
+  ) => Bytes;
+  ServerPublicParams_CreateProfileKeyCredentialRequestContextDeterministic: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    randomness: Bytes,
+    user_id: Bytes,
+    profile_key: Serialized<ProfileKey>
+  ) => Serialized<ProfileKeyCredentialRequestContext>;
+  ServerPublicParams_CreateReceiptCredentialPresentationDeterministic: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    randomness: Bytes,
+    receipt_credential: Serialized<ReceiptCredential>
+  ) => Serialized<ReceiptCredentialPresentation>;
+  ServerPublicParams_CreateReceiptCredentialRequestContextDeterministic: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    randomness: Bytes,
+    receipt_serial: Bytes
+  ) => Serialized<ReceiptCredentialRequestContext>;
+  ServerPublicParams_Deserialize: (buffer: Bytes) => ServerPublicParams;
+  ServerPublicParams_GetEndorsementPublicKey: (
+    params: Wrapper<ServerPublicParams>
+  ) => Bytes;
+  ServerPublicParams_ReceiveAuthCredentialWithPniAsServiceId: (
+    params: Wrapper<ServerPublicParams>,
+    aci: Bytes,
+    pni: Bytes,
+    redemption_time: Timestamp,
+    auth_credential_with_pni_response_bytes: Bytes
+  ) => Bytes;
+  ServerPublicParams_ReceiveAuthCredentialZkcWithoutPni: (
+    params: Wrapper<ServerPublicParams>,
+    aci: Bytes,
+    salt: Bytes,
+    redemption_time: Timestamp,
+    auth_credential_with_pni_response_bytes: Bytes
+  ) => Bytes;
+  ServerPublicParams_ReceiveExpiringProfileKeyCredential: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    request_context: Serialized<ProfileKeyCredentialRequestContext>,
+    response: Serialized<ExpiringProfileKeyCredentialResponse>,
+    current_time_in_seconds: Timestamp
+  ) => Serialized<ExpiringProfileKeyCredential>;
+  ServerPublicParams_ReceiveReceiptCredential: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    request_context: Serialized<ReceiptCredentialRequestContext>,
+    response: Serialized<ReceiptCredentialResponse>
+  ) => Serialized<ReceiptCredential>;
+  ServerPublicParams_Serialize: (handle: Wrapper<ServerPublicParams>) => Bytes;
+  ServerPublicParams_VerifySignature: (
+    server_public_params: Wrapper<ServerPublicParams>,
+    message: Bytes,
+    notary_signature: Bytes
+  ) => void;
+  ServerSecretParams_Deserialize: (buffer: Bytes) => ServerSecretParams;
+  ServerSecretParams_GenerateDeterministic: (
+    randomness: Bytes
+  ) => ServerSecretParams;
+  ServerSecretParams_GetPublicParams: (
+    params: Wrapper<ServerSecretParams>
+  ) => ServerPublicParams;
+  ServerSecretParams_IssueAuthCredentialWithPniZkcDeterministic: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    randomness: Bytes,
+    aci: Bytes,
+    pni: Bytes,
+    redemption_time: Timestamp
+  ) => Bytes;
+  ServerSecretParams_IssueAuthCredentialZkcWithoutPniDeterministic: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    randomness: Bytes,
+    aci: Bytes,
+    salt: Bytes,
+    redemption_time: Timestamp
+  ) => Bytes;
+  ServerSecretParams_IssueExpiringProfileKeyCredentialDeterministic: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    randomness: Bytes,
+    request: Serialized<ProfileKeyCredentialRequest>,
+    user_id: Bytes,
+    commitment: Serialized<ProfileKeyCommitment>,
+    expiration_in_seconds: Timestamp
+  ) => Serialized<ExpiringProfileKeyCredentialResponse>;
+  ServerSecretParams_IssueReceiptCredentialDeterministic: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    randomness: Bytes,
+    request: Serialized<ReceiptCredentialRequest>,
+    receipt_expiration_time: Timestamp,
+    receipt_level: bigint
+  ) => Serialized<ReceiptCredentialResponse>;
+  ServerSecretParams_Serialize: (handle: Wrapper<ServerSecretParams>) => Bytes;
+  ServerSecretParams_SignDeterministic: (
+    params: Wrapper<ServerSecretParams>,
+    randomness: Bytes,
+    message: Bytes
+  ) => Bytes;
+  ServerSecretParams_VerifyAuthCredentialPresentation: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    group_public_params: Serialized<GroupPublicParams>,
+    presentation_bytes: Bytes,
+    current_time_in_seconds: Timestamp
+  ) => void;
+  ServerSecretParams_VerifyProfileKeyCredentialPresentation: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    group_public_params: Serialized<GroupPublicParams>,
+    presentation_bytes: Bytes,
+    current_time_in_seconds: Timestamp
+  ) => void;
+  ServerSecretParams_VerifyReceiptCredentialPresentation: (
+    server_secret_params: Wrapper<ServerSecretParams>,
+    presentation: Serialized<ReceiptCredentialPresentation>
+  ) => void;
+  ServiceId_ParseFromServiceIdBinary: (input: Bytes) => Bytes;
+  ServiceId_ParseFromServiceIdString: (input: string) => Bytes;
+  ServiceId_ServiceIdBinary: (value: Bytes) => Bytes;
+  ServiceId_ServiceIdLog: (value: Bytes) => string;
+  ServiceId_ServiceIdString: (value: Bytes) => string;
+  SessionBuilder_ProcessPreKeyBundle: (
+    bundle: Wrapper<PreKeyBundle>,
+    protocol_address: Wrapper<ProtocolAddress>,
+    local_address: Wrapper<ProtocolAddress>,
+    session_store: SessionStore,
+    identity_key_store: IdentityKeyStore,
+    now: Timestamp
+  ) => Promise<void>;
+  SessionCipher_DecryptPreKeySignalMessage: (
+    message: Wrapper<PreKeySignalMessage>,
+    protocol_address: Wrapper<ProtocolAddress>,
+    local_address: Wrapper<ProtocolAddress>,
+    session_store: SessionStore,
+    identity_key_store: IdentityKeyStore,
+    prekey_store: PreKeyStore,
+    signed_prekey_store: SignedPreKeyStore,
+    kyber_prekey_store: KyberPreKeyStore
+  ) => Promise<Bytes>;
+  SessionCipher_DecryptSignalMessage: (
+    message: Wrapper<SignalMessage>,
+    protocol_address: Wrapper<ProtocolAddress>,
+    local_address: Wrapper<ProtocolAddress>,
+    session_store: SessionStore,
+    identity_key_store: IdentityKeyStore
+  ) => Promise<Bytes>;
+  SessionCipher_EncryptMessage: (
+    ptext: Bytes,
+    protocol_address: Wrapper<ProtocolAddress>,
+    local_address: Wrapper<ProtocolAddress>,
+    session_store: SessionStore,
+    identity_key_store: IdentityKeyStore,
+    now: Timestamp
+  ) => Promise<CiphertextMessage>;
+  SessionRecord_ArchiveCurrentState: (
+    session_record: Wrapper<SessionRecord>
+  ) => void;
+  SessionRecord_CurrentRatchetKeyMatches: (
+    s: Wrapper<SessionRecord>,
+    key: Wrapper<PublicKey>
+  ) => boolean;
+  SessionRecord_Deserialize: (data: Bytes) => SessionRecord;
+  SessionRecord_GetLocalRegistrationId: (obj: Wrapper<SessionRecord>) => number;
+  SessionRecord_GetRemoteRegistrationId: (
+    obj: Wrapper<SessionRecord>
+  ) => number;
+  SessionRecord_HasUsableSenderChain: (
+    s: Wrapper<SessionRecord>,
+    now: Timestamp
+  ) => boolean;
+  SessionRecord_Serialize: (obj: Wrapper<SessionRecord>) => Bytes;
+  SgxClientState_CompleteHandshake: (
+    cli: Wrapper<SgxClientState>,
+    handshake_received: Bytes
+  ) => void;
+  SgxClientState_EstablishedRecv: (
+    cli: Wrapper<SgxClientState>,
+    received_ciphertext: Bytes
+  ) => Bytes;
+  SgxClientState_EstablishedSend: (
+    cli: Wrapper<SgxClientState>,
+    plaintext_to_send: Bytes
+  ) => Bytes;
+  SgxClientState_InitialRequest: (obj: Wrapper<SgxClientState>) => Bytes;
+  SignalMedia_CheckAvailable: () => void;
+  SignalMessage_Deserialize: (data: Bytes) => SignalMessage;
+  SignalMessage_GetBody: (obj: Wrapper<SignalMessage>) => Bytes;
+  SignalMessage_GetCounter: (obj: Wrapper<SignalMessage>) => number;
+  SignalMessage_GetMessageVersion: (obj: Wrapper<SignalMessage>) => number;
+  SignalMessage_GetPqRatchet: (msg: Wrapper<SignalMessage>) => Bytes;
+  SignalMessage_GetSerialized: (obj: Wrapper<SignalMessage>) => Bytes;
+  SignalMessage_New: (
+    message_version: number,
+    mac_key: Bytes,
+    sender_ratchet_key: Wrapper<PublicKey>,
+    counter: number,
+    previous_counter: number,
+    ciphertext: Bytes,
+    sender_identity_key: Wrapper<PublicKey>,
+    receiver_identity_key: Wrapper<PublicKey>,
+    pq_ratchet: Bytes
+  ) => SignalMessage;
+  SignedPreKeyRecord_Deserialize: (data: Bytes) => SignedPreKeyRecord;
+  SignedPreKeyRecord_GetId: (obj: Wrapper<SignedPreKeyRecord>) => number;
+  SignedPreKeyRecord_GetPrivateKey: (
+    obj: Wrapper<SignedPreKeyRecord>
+  ) => PrivateKey;
+  SignedPreKeyRecord_GetPublicKey: (
+    obj: Wrapper<SignedPreKeyRecord>
+  ) => PublicKey;
+  SignedPreKeyRecord_GetSignature: (obj: Wrapper<SignedPreKeyRecord>) => Bytes;
+  SignedPreKeyRecord_GetTimestamp: (
+    obj: Wrapper<SignedPreKeyRecord>
+  ) => Timestamp;
+  SignedPreKeyRecord_New: (
+    id: number,
+    timestamp: Timestamp,
+    pub_key: Wrapper<PublicKey>,
+    priv_key: Wrapper<PrivateKey>,
+    signature: Bytes
+  ) => SignedPreKeyRecord;
+  SignedPreKeyRecord_Serialize: (obj: Wrapper<SignedPreKeyRecord>) => Bytes;
+  Svr2BackupSession_Deserialize: (bytes: Bytes) => Svr2BackupSession;
+  Svr2BackupSession_Serialize: (session: Wrapper<Svr2BackupSession>) => Bytes;
+  Svr2Client_New: (
+    mrenclave: Bytes,
+    attestation_msg: Bytes,
+    current_timestamp: Timestamp
+  ) => SgxClientState;
+  Svr2MigrationSession_Deserialize: (bytes: Bytes) => Svr2MigrationSession;
+  Svr2MigrationSession_IsComplete: (
+    session: Wrapper<Svr2MigrationSession>
+  ) => boolean;
+  Svr2MigrationSession_Serialize: (
+    session: Wrapper<Svr2MigrationSession>
+  ) => Bytes;
+  Svr2_Delete: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<void>;
+  Svr2_FinishBackup: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    session: Wrapper<Svr2BackupSession>,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<void>;
+  Svr2_Migrate: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    prior_session: Wrapper<Svr2MigrationSession> | null,
+    normalized_pin: Bytes,
+    master_key: Bytes,
+    max_tries: number,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<Svr2MigrationSession>;
+  Svr2_Restore: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    pin: Bytes,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<[Bytes, number]>;
+  Svr2_RestoreMasterKey: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    normalized_pin: Bytes,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<[Bytes, number]>;
+  Svr2_StartBackup: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    pin: Bytes,
+    data: Bytes,
+    max_tries: number,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<Svr2BackupSession>;
+  Svr2_StartMasterKeyBackup: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    normalized_pin: Bytes,
+    master_key: Bytes,
+    max_tries: number,
+    connection_manager: Wrapper<ConnectionManager>,
+    username: string,
+    password: string
+  ) => CancellablePromise<Svr2BackupSession>;
+  SvrKey_DeriveLoggingKey: (svr_key: Bytes) => Bytes;
+  SvrKey_DeriveRegistrationLock: (svr_key: Bytes) => Bytes;
+  SvrKey_DeriveRegistrationRecoveryPassword: (svr_key: Bytes) => Bytes;
+  SvrKey_DeriveStorageServiceKey: (svr_key: Bytes) => Bytes;
+  TESTING_BackupDeleteAllTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiSimpleBackupTestOut>
+  >;
+  TESTING_BackupListMediaTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiListMediaArgs, ReturnFfiListMediaOut>
+  >;
+  TESTING_BackupRefreshTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiSimpleBackupTestOut>
+  >;
+  TESTING_BackupSetPublicKeyTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiSimpleBackupTestOut>
+  >;
+  TESTING_BridgedStringMap_dump_to_json: (
+    map: Wrapper<BridgedStringMap>
+  ) => string;
+  TESTING_BulkPullFromStream_Cancel: (stream: Wrapper<TestStream>) => void;
+  TESTING_BulkPullFromStream_New: (
+    contents: Array<string>,
+    end_with_error: boolean
+  ) => TestStream;
+  TESTING_BulkPullFromStream_NextChunk: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    stream: Wrapper<TestStream>
+  ) => CancellablePromise<ReturnFfiTestStreamChunk>;
+  TESTING_CdsiLookupErrorConvert: (error_description: string) => void;
+  TESTING_CdsiLookupResponseConvert: (
+    asyncRuntime: Wrapper<TokioAsyncContext>
+  ) => CancellablePromise<LookupResponse>;
+  TESTING_ChatConnectErrorConvert: (error_description: string) => void;
+  TESTING_ChatRequestGetBody: (request: Wrapper<HttpRequest>) => Bytes;
+  TESTING_ChatRequestGetHeaderNames: (
+    request: Wrapper<HttpRequest>
+  ) => Array<string>;
+  TESTING_ChatRequestGetHeaderValue: (
+    request: Wrapper<HttpRequest>,
+    header_name: string
+  ) => string;
+  TESTING_ChatRequestGetMethod: (request: Wrapper<HttpRequest>) => string;
+  TESTING_ChatRequestGetPath: (request: Wrapper<HttpRequest>) => string;
+  TESTING_ChatResponseConvert: (body_present: boolean) => ChatResponse;
+  TESTING_ChatSendErrorConvert: (error_description: string) => void;
+  TESTING_CheckSvrCredentialsTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiCheckSvrCredentialsArgs,
+      Array<[string, ReturnFfiAuthCheckResult]>
+    >
+  >;
+  TESTING_ClearPushTokenTests: () => Array<GrpcTestCaseFfi<void, void>>;
+  TESTING_ClearRegistrationLockTests: () => Array<GrpcTestCaseFfi<void, void>>;
+  TESTING_ConfirmTotpKeyTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiConfirmTotpKeyArgs, ReturnFfiConfirmTotpKeyOut>
+  >;
+  TESTING_ConfirmUsernameTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiConfirmUsernameArgs, ReturnFfiConfirmUsernameOut>
+  >;
+  TESTING_ConnectionManager_isUsingProxy: (
+    manager: Wrapper<ConnectionManager>
+  ) => number;
+  TESTING_ConnectionManager_newLocalOverride: (
+    userAgent: string,
+    chatPort: number,
+    cdsiPort: number,
+    svr2Port: number,
+    svrBPort: number,
+    rootCertificateDer: Bytes,
+    http_version: number
+  ) => ConnectionManager;
+  TESTING_ConvertOptionalUuid: (present: boolean) => Uuid | null;
+  TESTING_CopyBackupMediaTests: () => Array<
+    GrpcTestCaseFfi<
+      Array<ReturnFfiBridgeCopyBackupMediaItem>,
+      Array<ReturnFfiCopyBackupMediaOut>
+    >
+  >;
+  TESTING_CreateDonationPermitsTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiCreateDonationPermitsArgs,
+      ReturnFfiCreateDonationPermitsOut
+    >
+  >;
+  TESTING_CreateLoginReceiptCredentialTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiCreateLoginReceiptCredentialArgs,
+      ReturnFfiCreateLoginReceiptCredentialOut
+    >
+  >;
+  TESTING_CreateOTP: (username: string, secret: Bytes) => string;
+  TESTING_CreateOTPFromBase64: (username: string, secret: string) => string;
+  TESTING_DeleteAccountTests: () => Array<GrpcTestCaseFfi<void, void>>;
+  TESTING_DeleteBackupMediaTests: () => Array<
+    GrpcTestCaseFfi<
+      Array<ReturnFfiBridgeDeleteBackupMediaItem>,
+      Array<ReturnFfiDeleteBackupMediaOut>
+    >
+  >;
+  TESTING_DeleteUsernameHashTests: () => Array<GrpcTestCaseFfi<void, void>>;
+  TESTING_DeleteUsernameLinkTests: () => Array<GrpcTestCaseFfi<void, void>>;
+  TESTING_DowncastViaAsTypeOnReturn: (x: bigint) => number;
+  TESTING_EnableDeterministicRngForTesting: () => void;
+  TESTING_ErrorOnBorrowAsync: (_input: null) => Promise<void>;
+  TESTING_ErrorOnBorrowIo: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _input: null
+  ) => CancellablePromise<void>;
+  TESTING_ErrorOnBorrowSync: (_input: null) => void;
+  TESTING_ErrorOnReturnAsync: (_needs_cleanup: null) => Promise<null>;
+  TESTING_ErrorOnReturnIo: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _needs_cleanup: null
+  ) => CancellablePromise<null>;
+  TESTING_ErrorOnReturnSync: (_needs_cleanup: null) => null;
+  TESTING_FakeChatConnection_Create: (
+    tokio: Wrapper<TokioAsyncContext>,
+    listener: ChatListener,
+    grpc_overrides_joined_by_newlines: string,
+    alerts_joined_by_newlines: string
+  ) => FakeChatConnection;
+  TESTING_FakeChatConnection_CreateProvisioning: (
+    tokio: Wrapper<TokioAsyncContext>,
+    listener: ProvisioningListener
+  ) => FakeChatConnection;
+  TESTING_FakeChatConnection_TakeAuthenticatedChat: (
+    chat: Wrapper<FakeChatConnection>
+  ) => AuthenticatedChatConnection;
+  TESTING_FakeChatConnection_TakeProvisioningChat: (
+    chat: Wrapper<FakeChatConnection>
+  ) => ProvisioningChatConnection;
+  TESTING_FakeChatConnection_TakeRemote: (
+    chat: Wrapper<FakeChatConnection>
+  ) => FakeChatRemoteEnd;
+  TESTING_FakeChatConnection_TakeUnauthenticatedChat: (
+    chat: Wrapper<FakeChatConnection>
+  ) => UnauthenticatedChatConnection;
+  TESTING_FakeChatRemoteEnd_GrpcFrameForMessageLength: (len: number) => Bytes;
+  TESTING_FakeChatRemoteEnd_InjectConnectionInterrupted: (
+    chat: Wrapper<FakeChatRemoteEnd>
+  ) => void;
+  TESTING_FakeChatRemoteEnd_NextGrpcMessage: (
+    input: Bytes,
+    offset: number
+  ) => [number, number];
+  TESTING_FakeChatRemoteEnd_ReceiveIncomingGrpcRequest: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<FakeChatRemoteEnd>
+  ) => CancellablePromise<[HttpRequest, bigint] | null>;
+  TESTING_FakeChatRemoteEnd_ReceiveIncomingRequest: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<FakeChatRemoteEnd>
+  ) => CancellablePromise<[HttpRequest, bigint] | null>;
+  TESTING_FakeChatRemoteEnd_SendRawServerRequest: (
+    chat: Wrapper<FakeChatRemoteEnd>,
+    bytes: Bytes
+  ) => void;
+  TESTING_FakeChatRemoteEnd_SendRawServerResponse: (
+    chat: Wrapper<FakeChatRemoteEnd>,
+    bytes: Bytes
+  ) => void;
+  TESTING_FakeChatRemoteEnd_SendServerGrpcResponse: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<FakeChatRemoteEnd>,
+    response: Wrapper<FakeChatResponse>
+  ) => CancellablePromise<void>;
+  TESTING_FakeChatRemoteEnd_SendServerGrpcTestCaseResponse: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<FakeChatRemoteEnd>,
+    id: bigint,
+    response: Wrapper<GrpcTestCaseBridgedResponse>
+  ) => CancellablePromise<void>;
+  TESTING_FakeChatRemoteEnd_SendServerResponse: (
+    chat: Wrapper<FakeChatRemoteEnd>,
+    response: Wrapper<FakeChatResponse>
+  ) => void;
+  TESTING_FakeChatResponse_Create: (
+    id: bigint,
+    status: number,
+    message: string,
+    headers: Array<string>,
+    body: Bytes | null
+  ) => FakeChatResponse;
+  TESTING_FakeChatServer_Create: () => FakeChatServer;
+  TESTING_FakeChatServer_GetNextRemote: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    server: Wrapper<FakeChatServer>
+  ) => CancellablePromise<FakeChatRemoteEnd>;
+  TESTING_FakeRegistrationSession_CreateSession: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    create_session: RegistrationCreateSessionRequest,
+    chat: Wrapper<FakeChatServer>
+  ) => CancellablePromise<RegistrationService>;
+  TESTING_FinishMfaVerificationTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiBridgeMfaVerificationCredential,
+      ReturnFfiFinishMfaVerificationOut
+    >
+  >;
+  TESTING_FinishWebAuthnRegistrationTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiFinishWebAuthnRegistrationArgs,
+      ReturnFfiFinishWebAuthnRegistrationOut
+    >
+  >;
+  TESTING_FutureCancellationCounter_Create: (
+    initial_value: number
+  ) => TestingFutureCancellationCounter;
+  TESTING_FutureCancellationCounter_WaitForCount: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    count: Wrapper<TestingFutureCancellationCounter>,
+    target: number
+  ) => CancellablePromise<void>;
+  TESTING_FutureFailure: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _input: number
+  ) => CancellablePromise<number>;
+  TESTING_FutureIncrementOnCancel: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    _guard: TestingFutureCancellationGuard
+  ) => CancellablePromise<void>;
+  TESTING_FutureProducesOtherPointerType: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    input: string
+  ) => CancellablePromise<OtherTestingHandleType>;
+  TESTING_FutureProducesPointerType: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    input: number
+  ) => CancellablePromise<TestingHandleType>;
+  TESTING_FutureSuccess: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    input: number
+  ) => CancellablePromise<number>;
+  TESTING_GenerateTotpKeyTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGenerateTotpKeyOut>
+  >;
+  TESTING_GetBackupCdnCredentialsTests: () => Array<
+    GrpcTestCaseFfi<number, ReturnFfiGetCdnCredentialsOut>
+  >;
+  TESTING_GetBackupSvrBCredentialsTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGetSvrBCredentialsOut>
+  >;
+  TESTING_GetCapabilitiesTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGetCapabilitiesOut>
+  >;
+  TESTING_GetCurrencyConversionsTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiCurrencyConversionsInternal>
+  >;
+  TESTING_GetDevicesTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGetDevicesOut>
+  >;
+  TESTING_GetEntitlementsTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGetEntitlementsOut>
+  >;
+  TESTING_GetMediaBackupInfoTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGetMediaBackupInfoOut>
+  >;
+  TESTING_GetMessageBackupInfoTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiGetMessageBackupInfoOut>
+  >;
+  TESTING_GetPreKeyCountTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiBridgePreKeyCounts>
+  >;
+  TESTING_GetProfileKeyCredentialTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiGetProfileKeyCredentialArgs,
+      ReturnFfiGetProfileKeyCredentialOut
+    >
+  >;
+  TESTING_GetStickerUploadFormTests: () => Array<
+    GrpcTestCaseFfi<number, ReturnFfiGetStickerUploadFormsOut>
+  >;
+  TESTING_GetSubscriptionReceiptCredentialTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiGetSubscriptionReceiptCredentialArgs,
+      ReturnFfiGetSubscriptionReceiptCredentialOut
+    >
+  >;
+  TESTING_InputStreamReadIntoZeroLengthSlice: (
+    caps_alphabet_input: InputStream
+  ) => Promise<Bytes>;
+  TESTING_JoinStringArray: (array: Array<string>, join_with: string) => string;
+  TESTING_KeyTransChatSendError: () => void;
+  TESTING_KeyTransFatalVerificationFailure: () => void;
+  TESTING_KeyTransNonFatalVerificationFailure: () => void;
+  TESTING_KeyTransStoredAccountData: () => Bytes;
+  TESTING_ListMfaKeysTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiListMfaKeysArgs, ReturnFfiListMfaKeysOut>
+  >;
+  TESTING_LookUpUsernameLinkTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiLookUpUsernameLinkArgs,
+      ReturnFfiLookUpUsernameLinkOut
+    >
+  >;
+  TESTING_MyRemoteDeriveEnum_identity: (
+    x: ArgFfiMyRemoteDeriveEnum
+  ) => ReturnFfiMyRemoteDeriveEnum;
+  TESTING_MyRemoteDeriveStruct_identity: (
+    x: ArgFfiMyRemoteDeriveStruct
+  ) => ReturnFfiMyRemoteDeriveStruct;
+  TESTING_MySimpleTestEnum_BridgeVec_identity: (
+    x: Array<ArgFfiMySimpleTestEnum>
+  ) => Array<ReturnFfiMySimpleTestEnum>;
+  TESTING_MySimpleTestEnum_BridgeVec_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Array<ArgFfiMySimpleTestEnum>
+  ) => CancellablePromise<Array<ReturnFfiMySimpleTestEnum>>;
+  TESTING_MySimpleTestEnum_BridgeVec_to_string: (
+    x: Array<ArgFfiMySimpleTestEnum>
+  ) => string;
+  TESTING_MySimpleTestEnum_identity: (
+    x: ArgFfiMySimpleTestEnum
+  ) => ReturnFfiMySimpleTestEnum;
+  TESTING_MySimpleTestEnum_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: ArgFfiMySimpleTestEnum
+  ) => CancellablePromise<ReturnFfiMySimpleTestEnum>;
+  TESTING_MySimpleTestEnum_to_string: (x: ArgFfiMySimpleTestEnum) => string;
+  TESTING_MyTestEnum_identity: (x: ArgFfiMyTestEnum) => ReturnFfiMyTestEnum;
+  TESTING_MyTestEnum_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: ArgFfiMyTestEnum
+  ) => CancellablePromise<ReturnFfiMyTestEnum>;
+  TESTING_MyTestEnum_to_string: (x: ArgFfiMyTestEnum) => string;
+  TESTING_MyTestPoint_identity: (x: ArgFfiMyTestPoint) => ReturnFfiMyTestPoint;
+  TESTING_MyTestPoint_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: ArgFfiMyTestPoint
+  ) => CancellablePromise<ReturnFfiMyTestPoint>;
+  TESTING_MyTestPoint_to_string: (x: ArgFfiMyTestPoint) => string;
+  TESTING_MyTestStruct_identity: (
+    x: ArgFfiMyTestStruct
+  ) => ReturnFfiMyTestStruct;
+  TESTING_MyTestStruct_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: ArgFfiMyTestStruct
+  ) => CancellablePromise<ReturnFfiMyTestStruct>;
+  TESTING_MyTestStruct_to_string: (x: ArgFfiMyTestStruct) => string;
+  TESTING_NonSuspendingBackgroundThreadRuntime_New: () => NonSuspendingBackgroundThreadRuntime;
+  TESTING_OtherTestingHandleType_getValue: (
+    handle: Wrapper<OtherTestingHandleType>
+  ) => string;
+  TESTING_PanicInBodyAsync: (_input: null) => Promise<void>;
+  TESTING_PanicInBodyIo: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _input: null
+  ) => CancellablePromise<void>;
+  TESTING_PanicInBodySync: (_input: null) => void;
+  TESTING_PanicOnBorrowAsync: (_input: null) => Promise<void>;
+  TESTING_PanicOnBorrowIo: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _input: null
+  ) => CancellablePromise<void>;
+  TESTING_PanicOnBorrowSync: (_input: null) => void;
+  TESTING_PanicOnLoadAsync: (
+    _needs_cleanup: null,
+    _input: null
+  ) => Promise<void>;
+  TESTING_PanicOnLoadIo: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _needs_cleanup: null,
+    _input: null
+  ) => CancellablePromise<void>;
+  TESTING_PanicOnLoadSync: (_needs_cleanup: null, _input: null) => void;
+  TESTING_PanicOnReturnAsync: (_needs_cleanup: null) => Promise<null>;
+  TESTING_PanicOnReturnIo: (
+    asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>,
+    _needs_cleanup: null
+  ) => CancellablePromise<null>;
+  TESTING_PanicOnReturnSync: (_needs_cleanup: null) => null;
+  TESTING_ProcessBytestringArray: (input: Array<Bytes>) => Array<Bytes>;
+  TESTING_RedeemBackupReceiptTests: () => Array<
+    GrpcTestCaseFfi<Bytes, ReturnFfiRedeemBackupReceiptOut>
+  >;
+  TESTING_RedeemDonationReceiptTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiRedeemDonationReceiptArgs,
+      ReturnFfiRedeemDonationReceiptOut
+    >
+  >;
+  TESTING_RegisterAccountResponse_CreateTestValue: () => RegisterAccountResponse;
+  TESTING_RegisterAccountResponse_CreateTestValueWithoutPhoneNumber: () => RegisterAccountResponse;
+  TESTING_RegistrationService_CheckSvr2CredentialsErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationService_CheckSvr2CredentialsResponseConvert: () => CheckSvr2CredentialsResponse;
+  TESTING_RegistrationService_CreateSessionErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationService_RegisterAccountErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationService_RequestVerificationCodeErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationService_ResumeSessionErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationService_SubmitVerificationErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationService_UpdateSessionErrorConvert: (
+    error_description: string
+  ) => void;
+  TESTING_RegistrationSessionInfoConvert: () => RegistrationSession;
+  TESTING_RemoveDeviceTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiRemoveDeviceArgs, ReturnFfiRemoveDeviceOut>
+  >;
+  TESTING_RemoveMfaKeyTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiRemoveMfaKeyArgs, ReturnFfiRemoveMfaKeyOut>
+  >;
+  TESTING_ReportMessageTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiReportMessageArgs, void>
+  >;
+  TESTING_ReserveUsernameHashTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiReserveUsernameHashArgs,
+      ReturnFfiReserveUsernameHashOut
+    >
+  >;
+  TESTING_ReturnIoError: () => Error;
+  TESTING_ReturnPair: () => [number, string];
+  TESTING_ReturnSomeIoError: (present: boolean) => Error | null;
+  TESTING_ReturnStringArray: () => Array<string>;
+  TESTING_RoundTripI32: (input: number) => number;
+  TESTING_RoundTripU16: (input: number) => number;
+  TESTING_RoundTripU32: (input: number) => number;
+  TESTING_RoundTripU64: (input: bigint) => bigint;
+  TESTING_RoundTripU8: (input: number) => number;
+  TESTING_ServerMessageAck_Create: () => ServerMessageAck;
+  TESTING_SetCapabilitiesTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetCapabilitiesArgs, void>
+  >;
+  TESTING_SetDeviceNameTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetDeviceNameArgs, ReturnFfiSetDeviceNameOut>
+  >;
+  TESTING_SetDiscoverableByPhoneNumberTests: () => Array<
+    GrpcTestCaseFfi<boolean, void>
+  >;
+  TESTING_SetLastResortKemPreKeyTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetLastResortKemPreKeyArgs, void>
+  >;
+  TESTING_SetMfaKeyMetadataTests: () => Array<
+    GrpcTestCaseFfi<
+      ReturnFfiSetMfaKeyMetadataArgs,
+      ReturnFfiSetMfaKeyMetadataOut
+    >
+  >;
+  TESTING_SetOneTimeEcPreKeysTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetOneTimeEcPreKeysArgs, void>
+  >;
+  TESTING_SetOneTimeKemPreKeysTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetOneTimeKemPreKeysArgs, void>
+  >;
+  TESTING_SetRegistrationLockTests: () => Array<GrpcTestCaseFfi<Bytes, void>>;
+  TESTING_SetRegistrationRecoveryPasswordTests: () => Array<
+    GrpcTestCaseFfi<Bytes, void>
+  >;
+  TESTING_SetSignedEcPreKeyTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetSignedEcPreKeyArgs, void>
+  >;
+  TESTING_SetUsernameLinkTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiSetUsernameLinkArgs, ReturnFfiSetUsernameLinkOut>
+  >;
+  TESTING_SignedPublicPreKey_CheckBridgesCorrectly: (
+    source_public_key: Wrapper<PublicKey>,
+    signed_pre_key: SignedPublicPreKey
+  ) => void;
+  TESTING_StartMfaVerificationTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiStartMfaVerificationOut>
+  >;
+  TESTING_StartWebAuthnRegistrationTests: () => Array<
+    GrpcTestCaseFfi<void, ReturnFfiStartWebAuthnRegistrationOut>
+  >;
+  TESTING_SubmitCallQualitySurveyTests: () => Array<
+    GrpcTestCaseFfi<ReturnFfiCallQualitySurveyInternal, void>
+  >;
+  TESTING_Svr2MasterKeyRestoreError: () => void;
+  TESTING_TestStreamChunk_return: () => ReturnFfiTestStreamChunk;
+  TESTING_TestingHandleType_getValue: (
+    handle: Wrapper<TestingHandleType>
+  ) => number;
+  TESTING_TestingIntBox_Get: (my_int_box: Wrapper<TestingIntBox>) => number;
+  TESTING_TestingIntBox_New: (value: number) => TestingIntBox;
+  TESTING_TokioAsyncContext_FutureSuccessBytes: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    count: number
+  ) => CancellablePromise<Bytes>;
+  TESTING_TokioAsyncContext_NewSingleThreaded: () => TokioAsyncContext;
+  TESTING_TokioAsyncFuture: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    input: number
+  ) => CancellablePromise<number>;
+  TESTING_conversion_BridgeVecData32_identity: (
+    x: Array<Bytes>
+  ) => Array<Bytes>;
+  TESTING_conversion_BridgeVecData32_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Array<Bytes>
+  ) => CancellablePromise<Array<Bytes>>;
+  TESTING_conversion_BridgeVecData32_to_string: (x: Array<Bytes>) => string;
+  TESTING_conversion_BridgeVecString_identity: (
+    x: Array<string>
+  ) => Array<string>;
+  TESTING_conversion_BridgeVecString_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Array<string>
+  ) => CancellablePromise<Array<string>>;
+  TESTING_conversion_BridgeVecString_to_string: (x: Array<string>) => string;
+  TESTING_conversion_Data32_identity: (x: Bytes) => Bytes;
+  TESTING_conversion_Data32_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Bytes
+  ) => CancellablePromise<Bytes>;
+  TESTING_conversion_Data32_to_string: (x: Bytes) => string;
+  TESTING_conversion_Data_VecU8_identity: (x: Bytes) => Bytes;
+  TESTING_conversion_Data_VecU8_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Bytes
+  ) => CancellablePromise<Bytes>;
+  TESTING_conversion_Data_VecU8_to_string: (x: Bytes) => string;
+  TESTING_conversion_Data_identity: (x: Bytes) => Bytes;
+  TESTING_conversion_Data_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Bytes
+  ) => CancellablePromise<Bytes>;
+  TESTING_conversion_Data_to_string: (x: Bytes) => string;
+  TESTING_conversion_DeviceId_identity: (x: number) => number;
+  TESTING_conversion_DeviceId_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: number
+  ) => CancellablePromise<number>;
+  TESTING_conversion_DeviceId_to_string: (x: number) => string;
+  TESTING_conversion_Float_identity: (x: number) => number;
+  TESTING_conversion_Float_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: number
+  ) => CancellablePromise<number>;
+  TESTING_conversion_Float_to_string: (x: number) => string;
+  TESTING_conversion_MapStringMySimpleTestEnum_identity: (
+    x: StringMapFfiContents<ArgFfiMySimpleTestEnum>
+  ) => StringMapFfiContents<ReturnFfiMySimpleTestEnum>;
+  TESTING_conversion_MapStringMySimpleTestEnum_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: StringMapFfiContents<ArgFfiMySimpleTestEnum>
+  ) => CancellablePromise<StringMapFfiContents<ReturnFfiMySimpleTestEnum>>;
+  TESTING_conversion_MapStringMySimpleTestEnum_to_string: (
+    x: StringMapFfiContents<ArgFfiMySimpleTestEnum>
+  ) => string;
+  TESTING_conversion_MapStringString_identity: (
+    x: StringMapFfiContents<string>
+  ) => StringMapFfiContents<string>;
+  TESTING_conversion_MapStringString_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: StringMapFfiContents<string>
+  ) => CancellablePromise<StringMapFfiContents<string>>;
+  TESTING_conversion_MapStringString_to_string: (
+    x: StringMapFfiContents<string>
+  ) => string;
+  TESTING_conversion_OptionalBytes_identity: (x: Bytes | null) => Bytes | null;
+  TESTING_conversion_OptionalBytes_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Bytes | null
+  ) => CancellablePromise<Bytes | null>;
+  TESTING_conversion_OptionalBytes_to_string: (x: Bytes | null) => string;
+  TESTING_conversion_OptionalFloat_identity: (
+    x: number | null
+  ) => number | null;
+  TESTING_conversion_OptionalFloat_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: number | null
+  ) => CancellablePromise<number | null>;
+  TESTING_conversion_OptionalFloat_to_string: (x: number | null) => string;
+  TESTING_conversion_OptionalString_identity: (
+    x: string | null
+  ) => string | null;
+  TESTING_conversion_OptionalString_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: string | null
+  ) => CancellablePromise<string | null>;
+  TESTING_conversion_OptionalString_to_string: (x: string | null) => string;
+  TESTING_conversion_PairStringMySimpleTestEnum_identity: (
+    x: [string, ArgFfiMySimpleTestEnum]
+  ) => [string, ReturnFfiMySimpleTestEnum];
+  TESTING_conversion_PairStringMySimpleTestEnum_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: [string, ArgFfiMySimpleTestEnum]
+  ) => CancellablePromise<[string, ReturnFfiMySimpleTestEnum]>;
+  TESTING_conversion_PairStringMySimpleTestEnum_to_string: (
+    x: [string, ArgFfiMySimpleTestEnum]
+  ) => string;
+  TESTING_conversion_PairStringString_identity: (
+    x: [string, string]
+  ) => [string, string];
+  TESTING_conversion_PairStringString_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: [string, string]
+  ) => CancellablePromise<[string, string]>;
+  TESTING_conversion_PairStringString_to_string: (
+    x: [string, string]
+  ) => string;
+  TESTING_conversion_ServiceId_identity: (x: Bytes) => Bytes;
+  TESTING_conversion_ServiceId_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Bytes
+  ) => CancellablePromise<Bytes>;
+  TESTING_conversion_ServiceId_to_string: (x: Bytes) => string;
+  TESTING_conversion_Uuid_identity: (x: Uuid) => Uuid;
+  TESTING_conversion_Uuid_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: Uuid
+  ) => CancellablePromise<Uuid>;
+  TESTING_conversion_Uuid_to_string: (x: Uuid) => string;
+  TESTING_conversion_bool_identity: (x: boolean) => boolean;
+  TESTING_conversion_bool_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: boolean
+  ) => CancellablePromise<boolean>;
+  TESTING_conversion_bool_to_string: (x: boolean) => string;
+  TESTING_conversion_i32_identity: (x: number) => number;
+  TESTING_conversion_i32_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: number
+  ) => CancellablePromise<number>;
+  TESTING_conversion_i32_to_string: (x: number) => string;
+  TESTING_conversion_string_identity: (x: string) => string;
+  TESTING_conversion_string_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: string
+  ) => CancellablePromise<string>;
+  TESTING_conversion_u16_identity: (x: number) => number;
+  TESTING_conversion_u16_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: number
+  ) => CancellablePromise<number>;
+  TESTING_conversion_u16_to_string: (x: number) => string;
+  TESTING_conversion_u8_identity: (x: number) => number;
+  TESTING_conversion_u8_identity_async: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    x: number
+  ) => CancellablePromise<number>;
+  TESTING_conversion_u8_to_string: (x: number) => string;
+  TestingSemaphore_AddPermits: (
+    semaphore: Wrapper<TestingSemaphore>,
+    permits: number
+  ) => void;
+  TestingSemaphore_New: (initial: number) => TestingSemaphore;
+  TestingValueHolder_Get: (holder: Wrapper<TestingValueHolder>) => number;
+  TestingValueHolder_New: (value: number) => TestingValueHolder;
+  TokioAsyncContext_cancel: (
+    context: Wrapper<TokioAsyncContext>,
+    raw_cancellation_id: bigint
+  ) => void;
+  TokioAsyncContext_new: () => TokioAsyncContext;
+  UnauthenticatedChatConnection_account_exists: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    account: Bytes
+  ) => CancellablePromise<boolean>;
+  UnauthenticatedChatConnection_backup_copy_media: (
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    items: Array<ArgFfiBridgeCopyBackupMediaItem>,
+    rng: RandomNumberGenerator
+  ) => CopyBackupMediaStream;
+  UnauthenticatedChatConnection_backup_delete_all: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<void>;
+  UnauthenticatedChatConnection_backup_delete_media: (
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    items: Array<ArgFfiBridgeDeleteBackupMediaItem>,
+    rng: RandomNumberGenerator
+  ) => DeleteBackupMediaStream;
+  UnauthenticatedChatConnection_backup_get_cdn_credentials: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    cdn: number,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<[[string, string]]>;
+  UnauthenticatedChatConnection_backup_get_media_backup_info: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<ReturnFfiBridgeMediaBackupInfo>;
+  UnauthenticatedChatConnection_backup_get_media_upload_form: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    upload_size: bigint,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<UploadForm>;
+  UnauthenticatedChatConnection_backup_get_message_backup_info: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<ReturnFfiBridgeMessageBackupInfo>;
+  UnauthenticatedChatConnection_backup_get_svrb_credentials: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<[string, string]>;
+  UnauthenticatedChatConnection_backup_get_upload_form: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    upload_size: bigint,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<UploadForm>;
+  UnauthenticatedChatConnection_backup_list_media: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    cursor: string,
+    limit: number,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<ReturnFfiListMediaResponse>;
+  UnauthenticatedChatConnection_backup_refresh: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<void>;
+  UnauthenticatedChatConnection_backup_set_public_key: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    credential: Bytes,
+    server_keys: Bytes,
+    signing_key: Wrapper<PrivateKey>,
+    rng: RandomNumberGenerator
+  ) => CancellablePromise<void>;
+  UnauthenticatedChatConnection_check_svr_credentials: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    number: string,
+    credentials: Array<string>
+  ) => CancellablePromise<Array<[string, ReturnFfiAuthCheckResult]>>;
+  UnauthenticatedChatConnection_connect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    connection_manager: Wrapper<ConnectionManager>,
+    languages: Array<string>
+  ) => CancellablePromise<UnauthenticatedChatConnection>;
+  UnauthenticatedChatConnection_create_login_receipt_credential: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    payment_processor: ArgFfiPaymentProvider,
+    purchase_identifier: string,
+    receipt_credential_request_context: Bytes,
+    server_params: Wrapper<ServerPublicParams>,
+    purchase_time: Timestamp,
+    expected_level: ArgFfiLoginReceiptLevel
+  ) => CancellablePromise<Bytes>;
+  UnauthenticatedChatConnection_disconnect: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>
+  ) => CancellablePromise<void>;
+  UnauthenticatedChatConnection_get_pre_keys_access_key_auth: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    auth: Bytes,
+    target: Bytes,
+    device: number
+  ) => CancellablePromise<PreKeysResponse>;
+  UnauthenticatedChatConnection_get_pre_keys_group_auth: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    auth: Bytes,
+    target: Bytes,
+    device: number
+  ) => CancellablePromise<PreKeysResponse>;
+  UnauthenticatedChatConnection_get_pre_keys_unrestricted_auth: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    target: Bytes,
+    device: number
+  ) => CancellablePromise<PreKeysResponse>;
+  UnauthenticatedChatConnection_get_profile_key_credential: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    profile_key_request_context: Serialized<ProfileKeyCredentialRequestContext>,
+    server_params: Wrapper<ServerPublicParams>
+  ) => CancellablePromise<Serialized<ExpiringProfileKeyCredential>>;
+  UnauthenticatedChatConnection_get_subscription_receipt_credential: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    subscriber_id: Bytes,
+    receipt_credential_request_context: Bytes,
+    server_params: Wrapper<ServerPublicParams>
+  ) => CancellablePromise<Bytes>;
+  UnauthenticatedChatConnection_info: (
+    chat: Wrapper<UnauthenticatedChatConnection>
+  ) => ChatConnectionInfo;
+  UnauthenticatedChatConnection_init_listener: (
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    listener: ChatListener
+  ) => void;
+  UnauthenticatedChatConnection_look_up_username_hash: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    hash: Bytes
+  ) => CancellablePromise<Uuid | null>;
+  UnauthenticatedChatConnection_look_up_username_link: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    uuid: Uuid,
+    entropy: Bytes
+  ) => CancellablePromise<[string, Bytes] | null>;
+  UnauthenticatedChatConnection_send: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    http_request: Wrapper<HttpRequest>,
+    timeout_millis: number
+  ) => CancellablePromise<ChatResponse>;
+  UnauthenticatedChatConnection_send_message: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    destination: Bytes,
+    timestamp: Timestamp,
+    device_ids: Uint32Array<ArrayBuffer>,
+    registration_ids: Uint32Array<ArrayBuffer>,
+    contents: Array<Bytes>,
+    auth_kind: number,
+    auth_buffer: Bytes | null,
+    online_only: boolean,
+    is_urgent: boolean
+  ) => CancellablePromise<void>;
+  UnauthenticatedChatConnection_send_multi_recipient_message: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    payload: Bytes,
+    timestamp: Timestamp,
+    auth: Bytes | null,
+    online_only: boolean,
+    is_urgent: boolean
+  ) => CancellablePromise<Array<Bytes>>;
+  UnauthenticatedChatConnection_submit_call_quality_survey: (
+    asyncRuntime: Wrapper<TokioAsyncContext>,
+    chat: Wrapper<UnauthenticatedChatConnection>,
+    survey: ArgFfiCallQualitySurveyInternal
+  ) => CancellablePromise<void>;
+  UnidentifiedSenderMessageContent_Deserialize: (
+    data: Bytes
+  ) => UnidentifiedSenderMessageContent;
+  UnidentifiedSenderMessageContent_GetContentHint: (
+    m: Wrapper<UnidentifiedSenderMessageContent>
+  ) => number;
+  UnidentifiedSenderMessageContent_GetContents: (
+    obj: Wrapper<UnidentifiedSenderMessageContent>
+  ) => Bytes;
+  UnidentifiedSenderMessageContent_GetGroupId: (
+    obj: Wrapper<UnidentifiedSenderMessageContent>
+  ) => Bytes | null;
+  UnidentifiedSenderMessageContent_GetMsgType: (
+    m: Wrapper<UnidentifiedSenderMessageContent>
+  ) => number;
+  UnidentifiedSenderMessageContent_GetSenderCert: (
+    m: Wrapper<UnidentifiedSenderMessageContent>
+  ) => SenderCertificate;
+  UnidentifiedSenderMessageContent_New: (
+    message: Wrapper<CiphertextMessage>,
+    sender: Wrapper<SenderCertificate>,
+    content_hint: number,
+    group_id: Bytes | null
+  ) => UnidentifiedSenderMessageContent;
+  UnidentifiedSenderMessageContent_Serialize: (
+    obj: Wrapper<UnidentifiedSenderMessageContent>
+  ) => Bytes;
+  UsernameLink_Create: (username: string, entropy: Bytes | null) => Bytes;
+  UsernameLink_DecryptUsername: (
+    entropy: Bytes,
+    encrypted_username: Bytes
+  ) => string;
+  Username_CandidatesFrom: (
+    nickname: string,
+    min_len: number,
+    max_len: number
+  ) => Array<string>;
+  Username_Hash: (username: string) => Bytes;
+  Username_HashFromParts: (
+    nickname: string,
+    discriminator: string,
+    min_len: number,
+    max_len: number
+  ) => Bytes;
+  Username_Proof: (username: string, randomness: Bytes) => Bytes;
+  Username_Verify: (proof: Bytes, hash: Bytes) => void;
+  UuidCiphertext_CheckValidContents: (buffer: Bytes) => void;
+  ValidatingMac_Finalize: (mac: Wrapper<ValidatingMac>) => number;
+  ValidatingMac_Initialize: (
+    key: Bytes,
+    chunk_size: number,
+    digests: Bytes
+  ) => ValidatingMac | null;
+  ValidatingMac_Update: (
+    mac: Wrapper<ValidatingMac>,
+    bytes: Bytes,
+    offset: number,
+    length: number
+  ) => number;
+  WebpSanitizer_Sanitize: (input: SyncInputStream) => void;
+  ZkCredentialKeyPair_CheckValidContents: (key_pair_bytes: Bytes) => void;
+  ZkCredentialKeyPair_GenerateDeterministic: (randomness: Bytes) => Bytes;
+  ZkCredentialKeyPair_GetPublicKey: (key_pair_bytes: Bytes) => Bytes;
+  ZkCredentialPublicKey_CheckValidContents: (public_key_bytes: Bytes) => void;
+  test_only_fn_returns_123: () => number;
+  uuid_from_string: (string: string) => Uuid | null;
+  uuid_new_v4: () => Uuid;
+  uuid_to_string: (uuid: Uuid) => string;
+};
+
+const {
+  registerErrors,
+  initLogger,
+
+  AccountEntropyPool_DeriveBackupKey,
+  AccountEntropyPool_DeriveSvrKey,
+  AccountEntropyPool_Generate,
+  AccountEntropyPool_IsValid,
+  Aes256GcmSiv_Decrypt,
+  Aes256GcmSiv_Encrypt,
+  Aes256GcmSiv_New,
+  AuthCredentialPresentation_CheckValidContents,
+  AuthCredentialPresentation_GetPniCiphertext,
+  AuthCredentialPresentation_GetRedemptionTime,
+  AuthCredentialPresentation_GetUuidCiphertext,
+  AuthCredentialWithPniResponse_CheckValidContents,
+  AuthCredentialWithPni_CheckValidContents,
+  AuthenticatedChatConnection_clear_push_token,
+  AuthenticatedChatConnection_clear_registration_lock,
+  AuthenticatedChatConnection_confirm_totp_key,
+  AuthenticatedChatConnection_confirm_username,
+  AuthenticatedChatConnection_connect,
+  AuthenticatedChatConnection_create_donation_permits,
+  AuthenticatedChatConnection_delete_account,
+  AuthenticatedChatConnection_delete_username_hash,
+  AuthenticatedChatConnection_delete_username_link,
+  AuthenticatedChatConnection_disconnect,
+  AuthenticatedChatConnection_finish_mfa_verification,
+  AuthenticatedChatConnection_finish_web_authn_registration,
+  AuthenticatedChatConnection_generate_totp_key,
+  AuthenticatedChatConnection_get_capabilities,
+  AuthenticatedChatConnection_get_currency_conversions,
+  AuthenticatedChatConnection_get_devices,
+  AuthenticatedChatConnection_get_entitlements,
+  AuthenticatedChatConnection_get_pre_key_count,
+  AuthenticatedChatConnection_get_sticker_upload_forms,
+  AuthenticatedChatConnection_get_upload_form,
+  AuthenticatedChatConnection_info,
+  AuthenticatedChatConnection_init_listener,
+  AuthenticatedChatConnection_list_mfa_keys,
+  AuthenticatedChatConnection_preconnect,
+  AuthenticatedChatConnection_redeem_backup_receipt,
+  AuthenticatedChatConnection_redeem_donation_receipt,
+  AuthenticatedChatConnection_remove_device,
+  AuthenticatedChatConnection_remove_mfa_key,
+  AuthenticatedChatConnection_report_message,
+  AuthenticatedChatConnection_reserve_username_hash,
+  AuthenticatedChatConnection_send,
+  AuthenticatedChatConnection_send_message,
+  AuthenticatedChatConnection_send_sync_message,
+  AuthenticatedChatConnection_set_capabilities,
+  AuthenticatedChatConnection_set_device_name,
+  AuthenticatedChatConnection_set_discoverable_by_phone_number,
+  AuthenticatedChatConnection_set_last_resort_kem_pre_key,
+  AuthenticatedChatConnection_set_mfa_key_metadata,
+  AuthenticatedChatConnection_set_one_time_ec_pre_keys,
+  AuthenticatedChatConnection_set_one_time_kem_pre_keys,
+  AuthenticatedChatConnection_set_registration_lock,
+  AuthenticatedChatConnection_set_registration_recovery_password,
+  AuthenticatedChatConnection_set_signed_ec_pre_key,
+  AuthenticatedChatConnection_set_username_link,
+  AuthenticatedChatConnection_start_mfa_verification,
+  AuthenticatedChatConnection_start_web_authn_registration,
+  AvatarUploadCredentialPresentation_CheckValidContents,
+  AvatarUploadCredentialPresentation_GetCm,
+  AvatarUploadCredentialPresentation_GetRedemptionTime,
+  AvatarUploadCredentialPresentation_Verify,
+  AvatarUploadCredentialRequestContext_CheckValidContents,
+  AvatarUploadCredentialRequestContext_GetRequest,
+  AvatarUploadCredentialRequestContext_New,
+  AvatarUploadCredentialRequestContext_ReceiveResponse,
+  AvatarUploadCredentialRequest_CheckValidContents,
+  AvatarUploadCredentialRequest_IssueDeterministic,
+  AvatarUploadCredentialResponse_CheckValidContents,
+  AvatarUploadCredential_CheckValidContents,
+  AvatarUploadCredential_GetCm,
+  AvatarUploadCredential_GetRedemptionTime,
+  AvatarUploadCredential_PresentDeterministic,
+  BackupAuthCredentialPresentation_CheckValidContents,
+  BackupAuthCredentialPresentation_GetBackupId,
+  BackupAuthCredentialPresentation_GetBackupLevel,
+  BackupAuthCredentialPresentation_GetType,
+  BackupAuthCredentialPresentation_Verify,
+  BackupAuthCredentialRequestContext_CheckValidContents,
+  BackupAuthCredentialRequestContext_GetRequest,
+  BackupAuthCredentialRequestContext_New,
+  BackupAuthCredentialRequestContext_ReceiveResponse,
+  BackupAuthCredentialRequest_CheckValidContents,
+  BackupAuthCredentialRequest_IssueDeterministic,
+  BackupAuthCredentialResponse_CheckValidContents,
+  BackupAuthCredential_CheckValidContents,
+  BackupAuthCredential_GetBackupId,
+  BackupAuthCredential_GetBackupLevel,
+  BackupAuthCredential_GetType,
+  BackupAuthCredential_PresentDeterministic,
+  BackupJsonExporter_ExportFrames,
+  BackupJsonExporter_Finish,
+  BackupJsonExporter_GetInitialChunk,
+  BackupJsonExporter_New,
+  BackupKey_DeriveBackupId,
+  BackupKey_DeriveEcKey,
+  BackupKey_DeriveLocalBackupMetadataKey,
+  BackupKey_DeriveMediaEncryptionKey,
+  BackupKey_DeriveMediaId,
+  BackupKey_DeriveThumbnailTransitEncryptionKey,
+  BackupRestoreResponse_GetForwardSecrecyToken,
+  BackupRestoreResponse_GetNextBackupSecretData,
+  BackupStoreResponse_GetForwardSecrecyToken,
+  BackupStoreResponse_GetNextBackupSecretData,
+  BackupStoreResponse_GetOpaqueMetadata,
+  BridgedStringMap_insert,
+  BridgedStringMap_new,
+  CallLinkAuthCredentialPresentation_CheckValidContents,
+  CallLinkAuthCredentialPresentation_GetUserId,
+  CallLinkAuthCredentialPresentation_Verify,
+  CallLinkAuthCredentialResponse_CheckValidContents,
+  CallLinkAuthCredentialResponse_IssueDeterministic,
+  CallLinkAuthCredentialResponse_Receive,
+  CallLinkAuthCredential_CheckValidContents,
+  CallLinkAuthCredential_PresentDeterministic,
+  CallLinkPublicParams_CheckValidContents,
+  CallLinkSecretParams_CheckValidContents,
+  CallLinkSecretParams_DecryptUserId,
+  CallLinkSecretParams_DeriveFromRootKey,
+  CallLinkSecretParams_EncryptUserId,
+  CallLinkSecretParams_GetPublicParams,
+  Cds2ClientState_New,
+  CdsiLookup_complete,
+  CdsiLookup_new,
+  CdsiLookup_token,
+  ChatConnectionInfo_description,
+  ChatConnectionInfo_ip_version,
+  ChatConnectionInfo_is_direct,
+  ChatConnectionInfo_local_port,
+  CiphertextMessage_FromPlaintextContent,
+  CiphertextMessage_Serialize,
+  CiphertextMessage_Type,
+  ComparableBackup_GetComparableString,
+  ComparableBackup_GetUnknownFields,
+  ComparableBackup_ReadUnencrypted,
+  ConnectionManager_clear_proxy,
+  ConnectionManager_new,
+  ConnectionManager_on_network_change,
+  ConnectionManager_set_censorship_circumvention_enabled,
+  ConnectionManager_set_invalid_proxy,
+  ConnectionManager_set_ipv6_enabled,
+  ConnectionManager_set_proxy,
+  ConnectionManager_set_remote_config,
+  ConnectionProxyConfig_new,
+  CopyBackupMediaStream_cancel,
+  CopyBackupMediaStream_next,
+  CreateCallLinkCredentialPresentation_CheckValidContents,
+  CreateCallLinkCredentialPresentation_Verify,
+  CreateCallLinkCredentialRequestContext_CheckValidContents,
+  CreateCallLinkCredentialRequestContext_GetRequest,
+  CreateCallLinkCredentialRequestContext_NewDeterministic,
+  CreateCallLinkCredentialRequestContext_ReceiveResponse,
+  CreateCallLinkCredentialRequest_CheckValidContents,
+  CreateCallLinkCredentialRequest_IssueDeterministic,
+  CreateCallLinkCredentialResponse_CheckValidContents,
+  CreateCallLinkCredential_CheckValidContents,
+  CreateCallLinkCredential_PresentDeterministic,
+  DecryptionErrorMessage_Deserialize,
+  DecryptionErrorMessage_ExtractFromSerializedContent,
+  DecryptionErrorMessage_ForOriginalMessage,
+  DecryptionErrorMessage_GetDeviceId,
+  DecryptionErrorMessage_GetRatchetKey,
+  DecryptionErrorMessage_GetTimestamp,
+  DecryptionErrorMessage_Serialize,
+  DeleteBackupMediaStream_cancel,
+  DeleteBackupMediaStream_next,
+  DonationPermitDerivedKeyPair_CheckValidContents,
+  DonationPermitDerivedKeyPair_ForExpiration,
+  DonationPermitRequestContext_CheckValidContents,
+  DonationPermitRequestContext_NewDeterministic,
+  DonationPermitRequestContext_Receive,
+  DonationPermitRequestContext_Request,
+  DonationPermitRequest_CheckValidContents,
+  DonationPermitRequest_Len,
+  DonationPermitResponse_CheckValidContents,
+  DonationPermitResponse_DefaultExpiration,
+  DonationPermitResponse_GetExpiration,
+  DonationPermitResponse_IssueDeterministic,
+  DonationPermit_CheckValidContents,
+  DonationPermit_Expiration,
+  DonationPermit_SpendId,
+  DonationPermit_Verify,
+  ExpiringProfileKeyCredentialResponse_CheckValidContents,
+  ExpiringProfileKeyCredential_CheckValidContents,
+  ExpiringProfileKeyCredential_GetExpirationTime,
+  Fingerprint_DisplayString,
+  Fingerprint_New,
+  Fingerprint_ScannableEncoding,
+  GenericServerPublicParams_CheckValidContents,
+  GenericServerSecretParams_CheckValidContents,
+  GenericServerSecretParams_GenerateDeterministic,
+  GenericServerSecretParams_GetPublicParams,
+  GroupCipher_DecryptMessage,
+  GroupCipher_EncryptMessage,
+  GroupMasterKey_CheckValidContents,
+  GroupPublicParams_CheckValidContents,
+  GroupPublicParams_GetGroupIdentifier,
+  GroupSecretParams_CheckValidContents,
+  GroupSecretParams_DecryptBlobWithPadding,
+  GroupSecretParams_DecryptProfileKey,
+  GroupSecretParams_DecryptServiceId,
+  GroupSecretParams_DeriveFromMasterKey,
+  GroupSecretParams_EncryptBlobWithPaddingDeterministic,
+  GroupSecretParams_EncryptProfileKey,
+  GroupSecretParams_EncryptServiceId,
+  GroupSecretParams_GenerateDeterministic,
+  GroupSecretParams_GetMasterKey,
+  GroupSecretParams_GetPublicParams,
+  GroupSendDerivedKeyPair_CheckValidContents,
+  GroupSendDerivedKeyPair_ForExpiration,
+  GroupSendEndorsement_CallLinkParams_ToToken,
+  GroupSendEndorsement_CheckValidContents,
+  GroupSendEndorsement_Combine,
+  GroupSendEndorsement_Remove,
+  GroupSendEndorsement_ToToken,
+  GroupSendEndorsementsResponse_CheckValidContents,
+  GroupSendEndorsementsResponse_GetExpiration,
+  GroupSendEndorsementsResponse_IssueDeterministic,
+  GroupSendEndorsementsResponse_ReceiveAndCombineWithCiphertexts,
+  GroupSendEndorsementsResponse_ReceiveAndCombineWithServiceIds,
+  GroupSendFullToken_CheckValidContents,
+  GroupSendFullToken_GetExpiration,
+  GroupSendFullToken_Verify,
+  GroupSendToken_CheckValidContents,
+  GroupSendToken_ToFullToken,
+  HKDF_DeriveSecrets,
+  HsmEnclaveClient_CompleteHandshake,
+  HsmEnclaveClient_EstablishedRecv,
+  HsmEnclaveClient_EstablishedSend,
+  HsmEnclaveClient_InitialRequest,
+  HsmEnclaveClient_New,
+  HttpRequest_add_header,
+  HttpRequest_new,
+  IdentityKeyPair_Deserialize,
+  IdentityKeyPair_Serialize,
+  IdentityKeyPair_SignAlternateIdentity,
+  IdentityKey_VerifyAlternateIdentity,
+  IncrementalMac_CalculateChunkSize,
+  IncrementalMac_Finalize,
+  IncrementalMac_Initialize,
+  IncrementalMac_Update,
+  KeyTransparency_AciSearchKey,
+  KeyTransparency_Check,
+  KeyTransparency_E164SearchKey,
+  KeyTransparency_ResetDataField,
+  KeyTransparency_UsernameHashSearchKey,
+  KyberKeyPair_Generate,
+  KyberKeyPair_GetPublicKey,
+  KyberKeyPair_GetSecretKey,
+  KyberPreKeyRecord_Deserialize,
+  KyberPreKeyRecord_GetId,
+  KyberPreKeyRecord_GetKeyPair,
+  KyberPreKeyRecord_GetPublicKey,
+  KyberPreKeyRecord_GetSecretKey,
+  KyberPreKeyRecord_GetSignature,
+  KyberPreKeyRecord_GetTimestamp,
+  KyberPreKeyRecord_New,
+  KyberPreKeyRecord_Serialize,
+  KyberPublicKey_Deserialize,
+  KyberPublicKey_Equals,
+  KyberPublicKey_Serialize,
+  KyberSecretKey_Deserialize,
+  KyberSecretKey_Serialize,
+  LookupRequest_addAciAndAccessKey,
+  LookupRequest_addE164,
+  LookupRequest_addPreviousE164,
+  LookupRequest_new,
+  LookupRequest_setToken,
+  MessageBackupKey_FromAccountEntropyPool,
+  MessageBackupKey_FromBackupKeyAndBackupId,
+  MessageBackupKey_GetAesKey,
+  MessageBackupKey_GetHmacKey,
+  MessageBackupSizing_FlushInterval,
+  MessageBackupSizing_PaddingSize,
+  MessageBackupValidator_Validate,
+  MinidumpToJSONString,
+  Mp4Sanitizer_Sanitize,
+  OnlineBackupValidator_AddFrame,
+  OnlineBackupValidator_Finalize,
+  OnlineBackupValidator_New,
+  PinHash_AccessKey,
+  PinHash_EncryptionKey,
+  PinHash_FromSalt,
+  PinHash_FromUsernameMrenclave,
+  Pin_LocalHash,
+  Pin_VerifyLocalHash,
+  PlaintextContent_Deserialize,
+  PlaintextContent_FromDecryptionErrorMessage,
+  PlaintextContent_GetBody,
+  PlaintextContent_Serialize,
+  PreKeyBundle_GetDeviceId,
+  PreKeyBundle_GetIdentityKey,
+  PreKeyBundle_GetKyberPreKeyId,
+  PreKeyBundle_GetKyberPreKeyPublic,
+  PreKeyBundle_GetKyberPreKeySignature,
+  PreKeyBundle_GetPreKeyId,
+  PreKeyBundle_GetPreKeyPublic,
+  PreKeyBundle_GetRegistrationId,
+  PreKeyBundle_GetSignedPreKeyId,
+  PreKeyBundle_GetSignedPreKeyPublic,
+  PreKeyBundle_GetSignedPreKeySignature,
+  PreKeyBundle_New,
+  PreKeyRecord_Deserialize,
+  PreKeyRecord_GetId,
+  PreKeyRecord_GetPrivateKey,
+  PreKeyRecord_GetPublicKey,
+  PreKeyRecord_New,
+  PreKeyRecord_Serialize,
+  PreKeySignalMessage_Deserialize,
+  PreKeySignalMessage_GetPreKeyId,
+  PreKeySignalMessage_GetRegistrationId,
+  PreKeySignalMessage_GetSignedPreKeyId,
+  PreKeySignalMessage_GetVersion,
+  PreKeySignalMessage_New,
+  PreKeySignalMessage_Serialize,
+  PrivateKey_Agree,
+  PrivateKey_Deserialize,
+  PrivateKey_Generate,
+  PrivateKey_GetPublicKey,
+  PrivateKey_HpkeOpen,
+  PrivateKey_Serialize,
+  PrivateKey_Sign,
+  ProfileKeyCiphertext_CheckValidContents,
+  ProfileKeyCommitment_CheckValidContents,
+  ProfileKeyCredentialPresentation_CheckValidContents,
+  ProfileKeyCredentialPresentation_GetProfileKeyCiphertext,
+  ProfileKeyCredentialPresentation_GetUuidCiphertext,
+  ProfileKeyCredentialRequestContext_CheckValidContents,
+  ProfileKeyCredentialRequestContext_GetRequest,
+  ProfileKeyCredentialRequest_CheckValidContents,
+  ProfileKey_CheckValidContents,
+  ProfileKey_DeriveAccessKey,
+  ProfileKey_GetCommitment,
+  ProfileKey_GetProfileKeyVersion,
+  ProtocolAddress_DeviceId,
+  ProtocolAddress_Name,
+  ProtocolAddress_New,
+  ProvisioningChatConnection_connect,
+  ProvisioningChatConnection_disconnect,
+  ProvisioningChatConnection_info,
+  ProvisioningChatConnection_init_listener,
+  PublicKey_Deserialize,
+  PublicKey_Equals,
+  PublicKey_GetPublicKeyBytes,
+  PublicKey_HpkeSeal,
+  PublicKey_Serialize,
+  PublicKey_Verify,
+  ReceiptCredentialPresentation_CheckValidContents,
+  ReceiptCredentialPresentation_GetReceiptExpirationTime,
+  ReceiptCredentialPresentation_GetReceiptLevel,
+  ReceiptCredentialPresentation_GetReceiptSerial,
+  ReceiptCredentialRequestContext_CheckValidContents,
+  ReceiptCredentialRequestContext_GetRequest,
+  ReceiptCredentialRequest_CheckValidContents,
+  ReceiptCredentialResponse_CheckValidContents,
+  ReceiptCredential_CheckValidContents,
+  ReceiptCredential_GetReceiptExpirationTime,
+  ReceiptCredential_GetReceiptLevel,
+  RegisterAccountRequest_Create,
+  RegisterAccountRequest_SetAccountPassword,
+  RegisterAccountRequest_SetIdentityPqLastResortPreKey,
+  RegisterAccountRequest_SetIdentityPublicKey,
+  RegisterAccountRequest_SetIdentitySignedPreKey,
+  RegisterAccountRequest_SetOneTimePassword,
+  RegisterAccountRequest_SetSkipDeviceTransfer,
+  RegisterAccountResponse_GetAci,
+  RegisterAccountResponse_GetAuthCredentialSalt,
+  RegisterAccountResponse_GetEntitlementBackupExpirationSeconds,
+  RegisterAccountResponse_GetEntitlementBackupLevel,
+  RegisterAccountResponse_GetEntitlementBadges,
+  RegisterAccountResponse_GetNumber,
+  RegisterAccountResponse_GetPni,
+  RegisterAccountResponse_GetReregistration,
+  RegisterAccountResponse_GetStorageCapable,
+  RegisterAccountResponse_GetUsernameHash,
+  RegisterAccountResponse_GetUsernameLinkHandle,
+  RegistrationAccountAttributes_Create,
+  RegistrationService_CheckSvr2Credentials,
+  RegistrationService_CreateSession,
+  RegistrationService_RegisterAccount,
+  RegistrationService_RegisterAccountWithoutNumber,
+  RegistrationService_RegistrationSession,
+  RegistrationService_RequestVerificationCode,
+  RegistrationService_ReregisterAccount,
+  RegistrationService_ReregisterAccountWithoutNumber,
+  RegistrationService_ResumeSession,
+  RegistrationService_SessionId,
+  RegistrationService_SubmitCaptcha,
+  RegistrationService_SubmitVerificationCode,
+  RegistrationSession_GetAllowedToRequestCode,
+  RegistrationSession_GetNextCallSeconds,
+  RegistrationSession_GetNextSmsSeconds,
+  RegistrationSession_GetNextVerificationAttemptSeconds,
+  RegistrationSession_GetRequestedInformation,
+  RegistrationSession_GetVerified,
+  SanitizedMetadata_GetDataLen,
+  SanitizedMetadata_GetDataOffset,
+  SanitizedMetadata_GetMetadata,
+  ScannableFingerprint_Compare,
+  SealedSenderDecryptionResult_GetDeviceId,
+  SealedSenderDecryptionResult_GetSenderE164,
+  SealedSenderDecryptionResult_GetSenderUuid,
+  SealedSenderDecryptionResult_Message,
+  SealedSenderMultiRecipientMessage_Parse,
+  SealedSender_DecryptMessage,
+  SealedSender_DecryptToUsmc,
+  SealedSender_Encrypt,
+  SealedSender_MultiRecipientEncrypt,
+  SealedSender_MultiRecipientMessageForSingleRecipient,
+  SecureValueRecoveryForBackups_CreateNewBackupChain,
+  SecureValueRecoveryForBackups_RemoveBackup,
+  SecureValueRecoveryForBackups_RestoreBackupFromServer,
+  SecureValueRecoveryForBackups_StoreBackup,
+  SenderCertificate_Deserialize,
+  SenderCertificate_GetCertificate,
+  SenderCertificate_GetDeviceId,
+  SenderCertificate_GetExpiration,
+  SenderCertificate_GetKey,
+  SenderCertificate_GetSenderE164,
+  SenderCertificate_GetSenderUuid,
+  SenderCertificate_GetSerialized,
+  SenderCertificate_GetServerCertificate,
+  SenderCertificate_GetSignature,
+  SenderCertificate_New,
+  SenderCertificate_Validate,
+  SenderKeyDistributionMessage_Create,
+  SenderKeyDistributionMessage_Deserialize,
+  SenderKeyDistributionMessage_GetChainId,
+  SenderKeyDistributionMessage_GetChainKey,
+  SenderKeyDistributionMessage_GetDistributionId,
+  SenderKeyDistributionMessage_GetIteration,
+  SenderKeyDistributionMessage_New,
+  SenderKeyDistributionMessage_Process,
+  SenderKeyDistributionMessage_Serialize,
+  SenderKeyMessage_Deserialize,
+  SenderKeyMessage_GetChainId,
+  SenderKeyMessage_GetCipherText,
+  SenderKeyMessage_GetDistributionId,
+  SenderKeyMessage_GetIteration,
+  SenderKeyMessage_New,
+  SenderKeyMessage_Serialize,
+  SenderKeyMessage_VerifySignature,
+  SenderKeyRecord_Deserialize,
+  SenderKeyRecord_Serialize,
+  ServerCertificate_Deserialize,
+  ServerCertificate_GetCertificate,
+  ServerCertificate_GetKey,
+  ServerCertificate_GetKeyId,
+  ServerCertificate_GetSerialized,
+  ServerCertificate_GetSignature,
+  ServerCertificate_New,
+  ServerMessageAck_SendStatus,
+  ServerPublicParams_CreateAuthCredentialWithPniPresentationDeterministic,
+  ServerPublicParams_CreateExpiringProfileKeyCredentialPresentationDeterministic,
+  ServerPublicParams_CreateProfileKeyCredentialRequestContextDeterministic,
+  ServerPublicParams_CreateReceiptCredentialPresentationDeterministic,
+  ServerPublicParams_CreateReceiptCredentialRequestContextDeterministic,
+  ServerPublicParams_Deserialize,
+  ServerPublicParams_GetEndorsementPublicKey,
+  ServerPublicParams_ReceiveAuthCredentialWithPniAsServiceId,
+  ServerPublicParams_ReceiveAuthCredentialZkcWithoutPni,
+  ServerPublicParams_ReceiveExpiringProfileKeyCredential,
+  ServerPublicParams_ReceiveReceiptCredential,
+  ServerPublicParams_Serialize,
+  ServerPublicParams_VerifySignature,
+  ServerSecretParams_Deserialize,
+  ServerSecretParams_GenerateDeterministic,
+  ServerSecretParams_GetPublicParams,
+  ServerSecretParams_IssueAuthCredentialWithPniZkcDeterministic,
+  ServerSecretParams_IssueAuthCredentialZkcWithoutPniDeterministic,
+  ServerSecretParams_IssueExpiringProfileKeyCredentialDeterministic,
+  ServerSecretParams_IssueReceiptCredentialDeterministic,
+  ServerSecretParams_Serialize,
+  ServerSecretParams_SignDeterministic,
+  ServerSecretParams_VerifyAuthCredentialPresentation,
+  ServerSecretParams_VerifyProfileKeyCredentialPresentation,
+  ServerSecretParams_VerifyReceiptCredentialPresentation,
+  ServiceId_ParseFromServiceIdBinary,
+  ServiceId_ParseFromServiceIdString,
+  ServiceId_ServiceIdBinary,
+  ServiceId_ServiceIdLog,
+  ServiceId_ServiceIdString,
+  SessionBuilder_ProcessPreKeyBundle,
+  SessionCipher_DecryptPreKeySignalMessage,
+  SessionCipher_DecryptSignalMessage,
+  SessionCipher_EncryptMessage,
+  SessionRecord_ArchiveCurrentState,
+  SessionRecord_CurrentRatchetKeyMatches,
+  SessionRecord_Deserialize,
+  SessionRecord_GetLocalRegistrationId,
+  SessionRecord_GetRemoteRegistrationId,
+  SessionRecord_HasUsableSenderChain,
+  SessionRecord_Serialize,
+  SgxClientState_CompleteHandshake,
+  SgxClientState_EstablishedRecv,
+  SgxClientState_EstablishedSend,
+  SgxClientState_InitialRequest,
+  SignalMedia_CheckAvailable,
+  SignalMessage_Deserialize,
+  SignalMessage_GetBody,
+  SignalMessage_GetCounter,
+  SignalMessage_GetMessageVersion,
+  SignalMessage_GetPqRatchet,
+  SignalMessage_GetSerialized,
+  SignalMessage_New,
+  SignedPreKeyRecord_Deserialize,
+  SignedPreKeyRecord_GetId,
+  SignedPreKeyRecord_GetPrivateKey,
+  SignedPreKeyRecord_GetPublicKey,
+  SignedPreKeyRecord_GetSignature,
+  SignedPreKeyRecord_GetTimestamp,
+  SignedPreKeyRecord_New,
+  SignedPreKeyRecord_Serialize,
+  Svr2BackupSession_Deserialize,
+  Svr2BackupSession_Serialize,
+  Svr2Client_New,
+  Svr2MigrationSession_Deserialize,
+  Svr2MigrationSession_IsComplete,
+  Svr2MigrationSession_Serialize,
+  Svr2_Delete,
+  Svr2_FinishBackup,
+  Svr2_Migrate,
+  Svr2_Restore,
+  Svr2_RestoreMasterKey,
+  Svr2_StartBackup,
+  Svr2_StartMasterKeyBackup,
+  SvrKey_DeriveLoggingKey,
+  SvrKey_DeriveRegistrationLock,
+  SvrKey_DeriveRegistrationRecoveryPassword,
+  SvrKey_DeriveStorageServiceKey,
+  TESTING_BackupDeleteAllTests,
+  TESTING_BackupListMediaTests,
+  TESTING_BackupRefreshTests,
+  TESTING_BackupSetPublicKeyTests,
+  TESTING_BridgedStringMap_dump_to_json,
+  TESTING_BulkPullFromStream_Cancel,
+  TESTING_BulkPullFromStream_New,
+  TESTING_BulkPullFromStream_NextChunk,
+  TESTING_CdsiLookupErrorConvert,
+  TESTING_CdsiLookupResponseConvert,
+  TESTING_ChatConnectErrorConvert,
+  TESTING_ChatRequestGetBody,
+  TESTING_ChatRequestGetHeaderNames,
+  TESTING_ChatRequestGetHeaderValue,
+  TESTING_ChatRequestGetMethod,
+  TESTING_ChatRequestGetPath,
+  TESTING_ChatResponseConvert,
+  TESTING_ChatSendErrorConvert,
+  TESTING_CheckSvrCredentialsTests,
+  TESTING_ClearPushTokenTests,
+  TESTING_ClearRegistrationLockTests,
+  TESTING_ConfirmTotpKeyTests,
+  TESTING_ConfirmUsernameTests,
+  TESTING_ConnectionManager_isUsingProxy,
+  TESTING_ConnectionManager_newLocalOverride,
+  TESTING_ConvertOptionalUuid,
+  TESTING_CopyBackupMediaTests,
+  TESTING_CreateDonationPermitsTests,
+  TESTING_CreateLoginReceiptCredentialTests,
+  TESTING_CreateOTP,
+  TESTING_CreateOTPFromBase64,
+  TESTING_DeleteAccountTests,
+  TESTING_DeleteBackupMediaTests,
+  TESTING_DeleteUsernameHashTests,
+  TESTING_DeleteUsernameLinkTests,
+  TESTING_DowncastViaAsTypeOnReturn,
+  TESTING_EnableDeterministicRngForTesting,
+  TESTING_ErrorOnBorrowAsync,
+  TESTING_ErrorOnBorrowIo,
+  TESTING_ErrorOnBorrowSync,
+  TESTING_ErrorOnReturnAsync,
+  TESTING_ErrorOnReturnIo,
+  TESTING_ErrorOnReturnSync,
+  TESTING_FakeChatConnection_Create,
+  TESTING_FakeChatConnection_CreateProvisioning,
+  TESTING_FakeChatConnection_TakeAuthenticatedChat,
+  TESTING_FakeChatConnection_TakeProvisioningChat,
+  TESTING_FakeChatConnection_TakeRemote,
+  TESTING_FakeChatConnection_TakeUnauthenticatedChat,
+  TESTING_FakeChatRemoteEnd_GrpcFrameForMessageLength,
+  TESTING_FakeChatRemoteEnd_InjectConnectionInterrupted,
+  TESTING_FakeChatRemoteEnd_NextGrpcMessage,
+  TESTING_FakeChatRemoteEnd_ReceiveIncomingGrpcRequest,
+  TESTING_FakeChatRemoteEnd_ReceiveIncomingRequest,
+  TESTING_FakeChatRemoteEnd_SendRawServerRequest,
+  TESTING_FakeChatRemoteEnd_SendRawServerResponse,
+  TESTING_FakeChatRemoteEnd_SendServerGrpcResponse,
+  TESTING_FakeChatRemoteEnd_SendServerGrpcTestCaseResponse,
+  TESTING_FakeChatRemoteEnd_SendServerResponse,
+  TESTING_FakeChatResponse_Create,
+  TESTING_FakeChatServer_Create,
+  TESTING_FakeChatServer_GetNextRemote,
+  TESTING_FakeRegistrationSession_CreateSession,
+  TESTING_FinishMfaVerificationTests,
+  TESTING_FinishWebAuthnRegistrationTests,
+  TESTING_FutureCancellationCounter_Create,
+  TESTING_FutureCancellationCounter_WaitForCount,
+  TESTING_FutureFailure,
+  TESTING_FutureIncrementOnCancel,
+  TESTING_FutureProducesOtherPointerType,
+  TESTING_FutureProducesPointerType,
+  TESTING_FutureSuccess,
+  TESTING_GenerateTotpKeyTests,
+  TESTING_GetBackupCdnCredentialsTests,
+  TESTING_GetBackupSvrBCredentialsTests,
+  TESTING_GetCapabilitiesTests,
+  TESTING_GetCurrencyConversionsTests,
+  TESTING_GetDevicesTests,
+  TESTING_GetEntitlementsTests,
+  TESTING_GetMediaBackupInfoTests,
+  TESTING_GetMessageBackupInfoTests,
+  TESTING_GetPreKeyCountTests,
+  TESTING_GetProfileKeyCredentialTests,
+  TESTING_GetStickerUploadFormTests,
+  TESTING_GetSubscriptionReceiptCredentialTests,
+  TESTING_InputStreamReadIntoZeroLengthSlice,
+  TESTING_JoinStringArray,
+  TESTING_KeyTransChatSendError,
+  TESTING_KeyTransFatalVerificationFailure,
+  TESTING_KeyTransNonFatalVerificationFailure,
+  TESTING_KeyTransStoredAccountData,
+  TESTING_ListMfaKeysTests,
+  TESTING_LookUpUsernameLinkTests,
+  TESTING_MyRemoteDeriveEnum_identity,
+  TESTING_MyRemoteDeriveStruct_identity,
+  TESTING_MySimpleTestEnum_BridgeVec_identity,
+  TESTING_MySimpleTestEnum_BridgeVec_identity_async,
+  TESTING_MySimpleTestEnum_BridgeVec_to_string,
+  TESTING_MySimpleTestEnum_identity,
+  TESTING_MySimpleTestEnum_identity_async,
+  TESTING_MySimpleTestEnum_to_string,
+  TESTING_MyTestEnum_identity,
+  TESTING_MyTestEnum_identity_async,
+  TESTING_MyTestEnum_to_string,
+  TESTING_MyTestPoint_identity,
+  TESTING_MyTestPoint_identity_async,
+  TESTING_MyTestPoint_to_string,
+  TESTING_MyTestStruct_identity,
+  TESTING_MyTestStruct_identity_async,
+  TESTING_MyTestStruct_to_string,
+  TESTING_NonSuspendingBackgroundThreadRuntime_New,
+  TESTING_OtherTestingHandleType_getValue,
+  TESTING_PanicInBodyAsync,
+  TESTING_PanicInBodyIo,
+  TESTING_PanicInBodySync,
+  TESTING_PanicOnBorrowAsync,
+  TESTING_PanicOnBorrowIo,
+  TESTING_PanicOnBorrowSync,
+  TESTING_PanicOnLoadAsync,
+  TESTING_PanicOnLoadIo,
+  TESTING_PanicOnLoadSync,
+  TESTING_PanicOnReturnAsync,
+  TESTING_PanicOnReturnIo,
+  TESTING_PanicOnReturnSync,
+  TESTING_ProcessBytestringArray,
+  TESTING_RedeemBackupReceiptTests,
+  TESTING_RedeemDonationReceiptTests,
+  TESTING_RegisterAccountResponse_CreateTestValue,
+  TESTING_RegisterAccountResponse_CreateTestValueWithoutPhoneNumber,
+  TESTING_RegistrationService_CheckSvr2CredentialsErrorConvert,
+  TESTING_RegistrationService_CheckSvr2CredentialsResponseConvert,
+  TESTING_RegistrationService_CreateSessionErrorConvert,
+  TESTING_RegistrationService_RegisterAccountErrorConvert,
+  TESTING_RegistrationService_RequestVerificationCodeErrorConvert,
+  TESTING_RegistrationService_ResumeSessionErrorConvert,
+  TESTING_RegistrationService_SubmitVerificationErrorConvert,
+  TESTING_RegistrationService_UpdateSessionErrorConvert,
+  TESTING_RegistrationSessionInfoConvert,
+  TESTING_RemoveDeviceTests,
+  TESTING_RemoveMfaKeyTests,
+  TESTING_ReportMessageTests,
+  TESTING_ReserveUsernameHashTests,
+  TESTING_ReturnIoError,
+  TESTING_ReturnPair,
+  TESTING_ReturnSomeIoError,
+  TESTING_ReturnStringArray,
+  TESTING_RoundTripI32,
+  TESTING_RoundTripU16,
+  TESTING_RoundTripU32,
+  TESTING_RoundTripU64,
+  TESTING_RoundTripU8,
+  TESTING_ServerMessageAck_Create,
+  TESTING_SetCapabilitiesTests,
+  TESTING_SetDeviceNameTests,
+  TESTING_SetDiscoverableByPhoneNumberTests,
+  TESTING_SetLastResortKemPreKeyTests,
+  TESTING_SetMfaKeyMetadataTests,
+  TESTING_SetOneTimeEcPreKeysTests,
+  TESTING_SetOneTimeKemPreKeysTests,
+  TESTING_SetRegistrationLockTests,
+  TESTING_SetRegistrationRecoveryPasswordTests,
+  TESTING_SetSignedEcPreKeyTests,
+  TESTING_SetUsernameLinkTests,
+  TESTING_SignedPublicPreKey_CheckBridgesCorrectly,
+  TESTING_StartMfaVerificationTests,
+  TESTING_StartWebAuthnRegistrationTests,
+  TESTING_SubmitCallQualitySurveyTests,
+  TESTING_Svr2MasterKeyRestoreError,
+  TESTING_TestStreamChunk_return,
+  TESTING_TestingHandleType_getValue,
+  TESTING_TestingIntBox_Get,
+  TESTING_TestingIntBox_New,
+  TESTING_TokioAsyncContext_FutureSuccessBytes,
+  TESTING_TokioAsyncContext_NewSingleThreaded,
+  TESTING_TokioAsyncFuture,
+  TESTING_conversion_BridgeVecData32_identity,
+  TESTING_conversion_BridgeVecData32_identity_async,
+  TESTING_conversion_BridgeVecData32_to_string,
+  TESTING_conversion_BridgeVecString_identity,
+  TESTING_conversion_BridgeVecString_identity_async,
+  TESTING_conversion_BridgeVecString_to_string,
+  TESTING_conversion_Data32_identity,
+  TESTING_conversion_Data32_identity_async,
+  TESTING_conversion_Data32_to_string,
+  TESTING_conversion_Data_VecU8_identity,
+  TESTING_conversion_Data_VecU8_identity_async,
+  TESTING_conversion_Data_VecU8_to_string,
+  TESTING_conversion_Data_identity,
+  TESTING_conversion_Data_identity_async,
+  TESTING_conversion_Data_to_string,
+  TESTING_conversion_DeviceId_identity,
+  TESTING_conversion_DeviceId_identity_async,
+  TESTING_conversion_DeviceId_to_string,
+  TESTING_conversion_Float_identity,
+  TESTING_conversion_Float_identity_async,
+  TESTING_conversion_Float_to_string,
+  TESTING_conversion_MapStringMySimpleTestEnum_identity,
+  TESTING_conversion_MapStringMySimpleTestEnum_identity_async,
+  TESTING_conversion_MapStringMySimpleTestEnum_to_string,
+  TESTING_conversion_MapStringString_identity,
+  TESTING_conversion_MapStringString_identity_async,
+  TESTING_conversion_MapStringString_to_string,
+  TESTING_conversion_OptionalBytes_identity,
+  TESTING_conversion_OptionalBytes_identity_async,
+  TESTING_conversion_OptionalBytes_to_string,
+  TESTING_conversion_OptionalFloat_identity,
+  TESTING_conversion_OptionalFloat_identity_async,
+  TESTING_conversion_OptionalFloat_to_string,
+  TESTING_conversion_OptionalString_identity,
+  TESTING_conversion_OptionalString_identity_async,
+  TESTING_conversion_OptionalString_to_string,
+  TESTING_conversion_PairStringMySimpleTestEnum_identity,
+  TESTING_conversion_PairStringMySimpleTestEnum_identity_async,
+  TESTING_conversion_PairStringMySimpleTestEnum_to_string,
+  TESTING_conversion_PairStringString_identity,
+  TESTING_conversion_PairStringString_identity_async,
+  TESTING_conversion_PairStringString_to_string,
+  TESTING_conversion_ServiceId_identity,
+  TESTING_conversion_ServiceId_identity_async,
+  TESTING_conversion_ServiceId_to_string,
+  TESTING_conversion_Uuid_identity,
+  TESTING_conversion_Uuid_identity_async,
+  TESTING_conversion_Uuid_to_string,
+  TESTING_conversion_bool_identity,
+  TESTING_conversion_bool_identity_async,
+  TESTING_conversion_bool_to_string,
+  TESTING_conversion_i32_identity,
+  TESTING_conversion_i32_identity_async,
+  TESTING_conversion_i32_to_string,
+  TESTING_conversion_string_identity,
+  TESTING_conversion_string_identity_async,
+  TESTING_conversion_u16_identity,
+  TESTING_conversion_u16_identity_async,
+  TESTING_conversion_u16_to_string,
+  TESTING_conversion_u8_identity,
+  TESTING_conversion_u8_identity_async,
+  TESTING_conversion_u8_to_string,
+  TestingSemaphore_AddPermits,
+  TestingSemaphore_New,
+  TestingValueHolder_Get,
+  TestingValueHolder_New,
+  TokioAsyncContext_cancel,
+  TokioAsyncContext_new,
+  UnauthenticatedChatConnection_account_exists,
+  UnauthenticatedChatConnection_backup_copy_media,
+  UnauthenticatedChatConnection_backup_delete_all,
+  UnauthenticatedChatConnection_backup_delete_media,
+  UnauthenticatedChatConnection_backup_get_cdn_credentials,
+  UnauthenticatedChatConnection_backup_get_media_backup_info,
+  UnauthenticatedChatConnection_backup_get_media_upload_form,
+  UnauthenticatedChatConnection_backup_get_message_backup_info,
+  UnauthenticatedChatConnection_backup_get_svrb_credentials,
+  UnauthenticatedChatConnection_backup_get_upload_form,
+  UnauthenticatedChatConnection_backup_list_media,
+  UnauthenticatedChatConnection_backup_refresh,
+  UnauthenticatedChatConnection_backup_set_public_key,
+  UnauthenticatedChatConnection_check_svr_credentials,
+  UnauthenticatedChatConnection_connect,
+  UnauthenticatedChatConnection_create_login_receipt_credential,
+  UnauthenticatedChatConnection_disconnect,
+  UnauthenticatedChatConnection_get_pre_keys_access_key_auth,
+  UnauthenticatedChatConnection_get_pre_keys_group_auth,
+  UnauthenticatedChatConnection_get_pre_keys_unrestricted_auth,
+  UnauthenticatedChatConnection_get_profile_key_credential,
+  UnauthenticatedChatConnection_get_subscription_receipt_credential,
+  UnauthenticatedChatConnection_info,
+  UnauthenticatedChatConnection_init_listener,
+  UnauthenticatedChatConnection_look_up_username_hash,
+  UnauthenticatedChatConnection_look_up_username_link,
+  UnauthenticatedChatConnection_send,
+  UnauthenticatedChatConnection_send_message,
+  UnauthenticatedChatConnection_send_multi_recipient_message,
+  UnauthenticatedChatConnection_submit_call_quality_survey,
+  UnidentifiedSenderMessageContent_Deserialize,
+  UnidentifiedSenderMessageContent_GetContentHint,
+  UnidentifiedSenderMessageContent_GetContents,
+  UnidentifiedSenderMessageContent_GetGroupId,
+  UnidentifiedSenderMessageContent_GetMsgType,
+  UnidentifiedSenderMessageContent_GetSenderCert,
+  UnidentifiedSenderMessageContent_New,
+  UnidentifiedSenderMessageContent_Serialize,
+  UsernameLink_Create,
+  UsernameLink_DecryptUsername,
+  Username_CandidatesFrom,
+  Username_Hash,
+  Username_HashFromParts,
+  Username_Proof,
+  Username_Verify,
+  UuidCiphertext_CheckValidContents,
+  ValidatingMac_Finalize,
+  ValidatingMac_Initialize,
+  ValidatingMac_Update,
+  WebpSanitizer_Sanitize,
+  ZkCredentialKeyPair_CheckValidContents,
+  ZkCredentialKeyPair_GenerateDeterministic,
+  ZkCredentialKeyPair_GetPublicKey,
+  ZkCredentialPublicKey_CheckValidContents,
+  test_only_fn_returns_123,
+  uuid_from_string,
+  uuid_new_v4,
+  uuid_to_string,
+} = load(`${import.meta.dirname}/../`) as NativeFunctions;
+
+export {
+  registerErrors,
+  initLogger,
+  AccountEntropyPool_DeriveBackupKey,
+  AccountEntropyPool_DeriveSvrKey,
+  AccountEntropyPool_Generate,
+  AccountEntropyPool_IsValid,
+  Aes256GcmSiv_Decrypt,
+  Aes256GcmSiv_Encrypt,
+  Aes256GcmSiv_New,
+  AuthCredentialPresentation_CheckValidContents,
+  AuthCredentialPresentation_GetPniCiphertext,
+  AuthCredentialPresentation_GetRedemptionTime,
+  AuthCredentialPresentation_GetUuidCiphertext,
+  AuthCredentialWithPniResponse_CheckValidContents,
+  AuthCredentialWithPni_CheckValidContents,
+  AuthenticatedChatConnection_clear_push_token,
+  AuthenticatedChatConnection_clear_registration_lock,
+  AuthenticatedChatConnection_confirm_totp_key,
+  AuthenticatedChatConnection_confirm_username,
+  AuthenticatedChatConnection_connect,
+  AuthenticatedChatConnection_create_donation_permits,
+  AuthenticatedChatConnection_delete_account,
+  AuthenticatedChatConnection_delete_username_hash,
+  AuthenticatedChatConnection_delete_username_link,
+  AuthenticatedChatConnection_disconnect,
+  AuthenticatedChatConnection_finish_mfa_verification,
+  AuthenticatedChatConnection_finish_web_authn_registration,
+  AuthenticatedChatConnection_generate_totp_key,
+  AuthenticatedChatConnection_get_capabilities,
+  AuthenticatedChatConnection_get_currency_conversions,
+  AuthenticatedChatConnection_get_devices,
+  AuthenticatedChatConnection_get_entitlements,
+  AuthenticatedChatConnection_get_pre_key_count,
+  AuthenticatedChatConnection_get_sticker_upload_forms,
+  AuthenticatedChatConnection_get_upload_form,
+  AuthenticatedChatConnection_info,
+  AuthenticatedChatConnection_init_listener,
+  AuthenticatedChatConnection_list_mfa_keys,
+  AuthenticatedChatConnection_preconnect,
+  AuthenticatedChatConnection_redeem_backup_receipt,
+  AuthenticatedChatConnection_redeem_donation_receipt,
+  AuthenticatedChatConnection_remove_device,
+  AuthenticatedChatConnection_remove_mfa_key,
+  AuthenticatedChatConnection_report_message,
+  AuthenticatedChatConnection_reserve_username_hash,
+  AuthenticatedChatConnection_send,
+  AuthenticatedChatConnection_send_message,
+  AuthenticatedChatConnection_send_sync_message,
+  AuthenticatedChatConnection_set_capabilities,
+  AuthenticatedChatConnection_set_device_name,
+  AuthenticatedChatConnection_set_discoverable_by_phone_number,
+  AuthenticatedChatConnection_set_last_resort_kem_pre_key,
+  AuthenticatedChatConnection_set_mfa_key_metadata,
+  AuthenticatedChatConnection_set_one_time_ec_pre_keys,
+  AuthenticatedChatConnection_set_one_time_kem_pre_keys,
+  AuthenticatedChatConnection_set_registration_lock,
+  AuthenticatedChatConnection_set_registration_recovery_password,
+  AuthenticatedChatConnection_set_signed_ec_pre_key,
+  AuthenticatedChatConnection_set_username_link,
+  AuthenticatedChatConnection_start_mfa_verification,
+  AuthenticatedChatConnection_start_web_authn_registration,
+  AvatarUploadCredentialPresentation_CheckValidContents,
+  AvatarUploadCredentialPresentation_GetCm,
+  AvatarUploadCredentialPresentation_GetRedemptionTime,
+  AvatarUploadCredentialPresentation_Verify,
+  AvatarUploadCredentialRequestContext_CheckValidContents,
+  AvatarUploadCredentialRequestContext_GetRequest,
+  AvatarUploadCredentialRequestContext_New,
+  AvatarUploadCredentialRequestContext_ReceiveResponse,
+  AvatarUploadCredentialRequest_CheckValidContents,
+  AvatarUploadCredentialRequest_IssueDeterministic,
+  AvatarUploadCredentialResponse_CheckValidContents,
+  AvatarUploadCredential_CheckValidContents,
+  AvatarUploadCredential_GetCm,
+  AvatarUploadCredential_GetRedemptionTime,
+  AvatarUploadCredential_PresentDeterministic,
+  BackupAuthCredentialPresentation_CheckValidContents,
+  BackupAuthCredentialPresentation_GetBackupId,
+  BackupAuthCredentialPresentation_GetBackupLevel,
+  BackupAuthCredentialPresentation_GetType,
+  BackupAuthCredentialPresentation_Verify,
+  BackupAuthCredentialRequestContext_CheckValidContents,
+  BackupAuthCredentialRequestContext_GetRequest,
+  BackupAuthCredentialRequestContext_New,
+  BackupAuthCredentialRequestContext_ReceiveResponse,
+  BackupAuthCredentialRequest_CheckValidContents,
+  BackupAuthCredentialRequest_IssueDeterministic,
+  BackupAuthCredentialResponse_CheckValidContents,
+  BackupAuthCredential_CheckValidContents,
+  BackupAuthCredential_GetBackupId,
+  BackupAuthCredential_GetBackupLevel,
+  BackupAuthCredential_GetType,
+  BackupAuthCredential_PresentDeterministic,
+  BackupJsonExporter_ExportFrames,
+  BackupJsonExporter_Finish,
+  BackupJsonExporter_GetInitialChunk,
+  BackupJsonExporter_New,
+  BackupKey_DeriveBackupId,
+  BackupKey_DeriveEcKey,
+  BackupKey_DeriveLocalBackupMetadataKey,
+  BackupKey_DeriveMediaEncryptionKey,
+  BackupKey_DeriveMediaId,
+  BackupKey_DeriveThumbnailTransitEncryptionKey,
+  BackupRestoreResponse_GetForwardSecrecyToken,
+  BackupRestoreResponse_GetNextBackupSecretData,
+  BackupStoreResponse_GetForwardSecrecyToken,
+  BackupStoreResponse_GetNextBackupSecretData,
+  BackupStoreResponse_GetOpaqueMetadata,
+  BridgedStringMap_insert,
+  BridgedStringMap_new,
+  CallLinkAuthCredentialPresentation_CheckValidContents,
+  CallLinkAuthCredentialPresentation_GetUserId,
+  CallLinkAuthCredentialPresentation_Verify,
+  CallLinkAuthCredentialResponse_CheckValidContents,
+  CallLinkAuthCredentialResponse_IssueDeterministic,
+  CallLinkAuthCredentialResponse_Receive,
+  CallLinkAuthCredential_CheckValidContents,
+  CallLinkAuthCredential_PresentDeterministic,
+  CallLinkPublicParams_CheckValidContents,
+  CallLinkSecretParams_CheckValidContents,
+  CallLinkSecretParams_DecryptUserId,
+  CallLinkSecretParams_DeriveFromRootKey,
+  CallLinkSecretParams_EncryptUserId,
+  CallLinkSecretParams_GetPublicParams,
+  Cds2ClientState_New,
+  CdsiLookup_complete,
+  CdsiLookup_new,
+  CdsiLookup_token,
+  ChatConnectionInfo_description,
+  ChatConnectionInfo_ip_version,
+  ChatConnectionInfo_is_direct,
+  ChatConnectionInfo_local_port,
+  CiphertextMessage_FromPlaintextContent,
+  CiphertextMessage_Serialize,
+  CiphertextMessage_Type,
+  ComparableBackup_GetComparableString,
+  ComparableBackup_GetUnknownFields,
+  ComparableBackup_ReadUnencrypted,
+  ConnectionManager_clear_proxy,
+  ConnectionManager_new,
+  ConnectionManager_on_network_change,
+  ConnectionManager_set_censorship_circumvention_enabled,
+  ConnectionManager_set_invalid_proxy,
+  ConnectionManager_set_ipv6_enabled,
+  ConnectionManager_set_proxy,
+  ConnectionManager_set_remote_config,
+  ConnectionProxyConfig_new,
+  CopyBackupMediaStream_cancel,
+  CopyBackupMediaStream_next,
+  CreateCallLinkCredentialPresentation_CheckValidContents,
+  CreateCallLinkCredentialPresentation_Verify,
+  CreateCallLinkCredentialRequestContext_CheckValidContents,
+  CreateCallLinkCredentialRequestContext_GetRequest,
+  CreateCallLinkCredentialRequestContext_NewDeterministic,
+  CreateCallLinkCredentialRequestContext_ReceiveResponse,
+  CreateCallLinkCredentialRequest_CheckValidContents,
+  CreateCallLinkCredentialRequest_IssueDeterministic,
+  CreateCallLinkCredentialResponse_CheckValidContents,
+  CreateCallLinkCredential_CheckValidContents,
+  CreateCallLinkCredential_PresentDeterministic,
+  DecryptionErrorMessage_Deserialize,
+  DecryptionErrorMessage_ExtractFromSerializedContent,
+  DecryptionErrorMessage_ForOriginalMessage,
+  DecryptionErrorMessage_GetDeviceId,
+  DecryptionErrorMessage_GetRatchetKey,
+  DecryptionErrorMessage_GetTimestamp,
+  DecryptionErrorMessage_Serialize,
+  DeleteBackupMediaStream_cancel,
+  DeleteBackupMediaStream_next,
+  DonationPermitDerivedKeyPair_CheckValidContents,
+  DonationPermitDerivedKeyPair_ForExpiration,
+  DonationPermitRequestContext_CheckValidContents,
+  DonationPermitRequestContext_NewDeterministic,
+  DonationPermitRequestContext_Receive,
+  DonationPermitRequestContext_Request,
+  DonationPermitRequest_CheckValidContents,
+  DonationPermitRequest_Len,
+  DonationPermitResponse_CheckValidContents,
+  DonationPermitResponse_DefaultExpiration,
+  DonationPermitResponse_GetExpiration,
+  DonationPermitResponse_IssueDeterministic,
+  DonationPermit_CheckValidContents,
+  DonationPermit_Expiration,
+  DonationPermit_SpendId,
+  DonationPermit_Verify,
+  ExpiringProfileKeyCredentialResponse_CheckValidContents,
+  ExpiringProfileKeyCredential_CheckValidContents,
+  ExpiringProfileKeyCredential_GetExpirationTime,
+  Fingerprint_DisplayString,
+  Fingerprint_New,
+  Fingerprint_ScannableEncoding,
+  GenericServerPublicParams_CheckValidContents,
+  GenericServerSecretParams_CheckValidContents,
+  GenericServerSecretParams_GenerateDeterministic,
+  GenericServerSecretParams_GetPublicParams,
+  GroupCipher_DecryptMessage,
+  GroupCipher_EncryptMessage,
+  GroupMasterKey_CheckValidContents,
+  GroupPublicParams_CheckValidContents,
+  GroupPublicParams_GetGroupIdentifier,
+  GroupSecretParams_CheckValidContents,
+  GroupSecretParams_DecryptBlobWithPadding,
+  GroupSecretParams_DecryptProfileKey,
+  GroupSecretParams_DecryptServiceId,
+  GroupSecretParams_DeriveFromMasterKey,
+  GroupSecretParams_EncryptBlobWithPaddingDeterministic,
+  GroupSecretParams_EncryptProfileKey,
+  GroupSecretParams_EncryptServiceId,
+  GroupSecretParams_GenerateDeterministic,
+  GroupSecretParams_GetMasterKey,
+  GroupSecretParams_GetPublicParams,
+  GroupSendDerivedKeyPair_CheckValidContents,
+  GroupSendDerivedKeyPair_ForExpiration,
+  GroupSendEndorsement_CallLinkParams_ToToken,
+  GroupSendEndorsement_CheckValidContents,
+  GroupSendEndorsement_Combine,
+  GroupSendEndorsement_Remove,
+  GroupSendEndorsement_ToToken,
+  GroupSendEndorsementsResponse_CheckValidContents,
+  GroupSendEndorsementsResponse_GetExpiration,
+  GroupSendEndorsementsResponse_IssueDeterministic,
+  GroupSendEndorsementsResponse_ReceiveAndCombineWithCiphertexts,
+  GroupSendEndorsementsResponse_ReceiveAndCombineWithServiceIds,
+  GroupSendFullToken_CheckValidContents,
+  GroupSendFullToken_GetExpiration,
+  GroupSendFullToken_Verify,
+  GroupSendToken_CheckValidContents,
+  GroupSendToken_ToFullToken,
+  HKDF_DeriveSecrets,
+  HsmEnclaveClient_CompleteHandshake,
+  HsmEnclaveClient_EstablishedRecv,
+  HsmEnclaveClient_EstablishedSend,
+  HsmEnclaveClient_InitialRequest,
+  HsmEnclaveClient_New,
+  HttpRequest_add_header,
+  HttpRequest_new,
+  IdentityKeyPair_Deserialize,
+  IdentityKeyPair_Serialize,
+  IdentityKeyPair_SignAlternateIdentity,
+  IdentityKey_VerifyAlternateIdentity,
+  IncrementalMac_CalculateChunkSize,
+  IncrementalMac_Finalize,
+  IncrementalMac_Initialize,
+  IncrementalMac_Update,
+  KeyTransparency_AciSearchKey,
+  KeyTransparency_Check,
+  KeyTransparency_E164SearchKey,
+  KeyTransparency_ResetDataField,
+  KeyTransparency_UsernameHashSearchKey,
+  KyberKeyPair_Generate,
+  KyberKeyPair_GetPublicKey,
+  KyberKeyPair_GetSecretKey,
+  KyberPreKeyRecord_Deserialize,
+  KyberPreKeyRecord_GetId,
+  KyberPreKeyRecord_GetKeyPair,
+  KyberPreKeyRecord_GetPublicKey,
+  KyberPreKeyRecord_GetSecretKey,
+  KyberPreKeyRecord_GetSignature,
+  KyberPreKeyRecord_GetTimestamp,
+  KyberPreKeyRecord_New,
+  KyberPreKeyRecord_Serialize,
+  KyberPublicKey_Deserialize,
+  KyberPublicKey_Equals,
+  KyberPublicKey_Serialize,
+  KyberSecretKey_Deserialize,
+  KyberSecretKey_Serialize,
+  LookupRequest_addAciAndAccessKey,
+  LookupRequest_addE164,
+  LookupRequest_addPreviousE164,
+  LookupRequest_new,
+  LookupRequest_setToken,
+  MessageBackupKey_FromAccountEntropyPool,
+  MessageBackupKey_FromBackupKeyAndBackupId,
+  MessageBackupKey_GetAesKey,
+  MessageBackupKey_GetHmacKey,
+  MessageBackupSizing_FlushInterval,
+  MessageBackupSizing_PaddingSize,
+  MessageBackupValidator_Validate,
+  MinidumpToJSONString,
+  Mp4Sanitizer_Sanitize,
+  OnlineBackupValidator_AddFrame,
+  OnlineBackupValidator_Finalize,
+  OnlineBackupValidator_New,
+  PinHash_AccessKey,
+  PinHash_EncryptionKey,
+  PinHash_FromSalt,
+  PinHash_FromUsernameMrenclave,
+  Pin_LocalHash,
+  Pin_VerifyLocalHash,
+  PlaintextContent_Deserialize,
+  PlaintextContent_FromDecryptionErrorMessage,
+  PlaintextContent_GetBody,
+  PlaintextContent_Serialize,
+  PreKeyBundle_GetDeviceId,
+  PreKeyBundle_GetIdentityKey,
+  PreKeyBundle_GetKyberPreKeyId,
+  PreKeyBundle_GetKyberPreKeyPublic,
+  PreKeyBundle_GetKyberPreKeySignature,
+  PreKeyBundle_GetPreKeyId,
+  PreKeyBundle_GetPreKeyPublic,
+  PreKeyBundle_GetRegistrationId,
+  PreKeyBundle_GetSignedPreKeyId,
+  PreKeyBundle_GetSignedPreKeyPublic,
+  PreKeyBundle_GetSignedPreKeySignature,
+  PreKeyBundle_New,
+  PreKeyRecord_Deserialize,
+  PreKeyRecord_GetId,
+  PreKeyRecord_GetPrivateKey,
+  PreKeyRecord_GetPublicKey,
+  PreKeyRecord_New,
+  PreKeyRecord_Serialize,
+  PreKeySignalMessage_Deserialize,
+  PreKeySignalMessage_GetPreKeyId,
+  PreKeySignalMessage_GetRegistrationId,
+  PreKeySignalMessage_GetSignedPreKeyId,
+  PreKeySignalMessage_GetVersion,
+  PreKeySignalMessage_New,
+  PreKeySignalMessage_Serialize,
+  PrivateKey_Agree,
+  PrivateKey_Deserialize,
+  PrivateKey_Generate,
+  PrivateKey_GetPublicKey,
+  PrivateKey_HpkeOpen,
+  PrivateKey_Serialize,
+  PrivateKey_Sign,
+  ProfileKeyCiphertext_CheckValidContents,
+  ProfileKeyCommitment_CheckValidContents,
+  ProfileKeyCredentialPresentation_CheckValidContents,
+  ProfileKeyCredentialPresentation_GetProfileKeyCiphertext,
+  ProfileKeyCredentialPresentation_GetUuidCiphertext,
+  ProfileKeyCredentialRequestContext_CheckValidContents,
+  ProfileKeyCredentialRequestContext_GetRequest,
+  ProfileKeyCredentialRequest_CheckValidContents,
+  ProfileKey_CheckValidContents,
+  ProfileKey_DeriveAccessKey,
+  ProfileKey_GetCommitment,
+  ProfileKey_GetProfileKeyVersion,
+  ProtocolAddress_DeviceId,
+  ProtocolAddress_Name,
+  ProtocolAddress_New,
+  ProvisioningChatConnection_connect,
+  ProvisioningChatConnection_disconnect,
+  ProvisioningChatConnection_info,
+  ProvisioningChatConnection_init_listener,
+  PublicKey_Deserialize,
+  PublicKey_Equals,
+  PublicKey_GetPublicKeyBytes,
+  PublicKey_HpkeSeal,
+  PublicKey_Serialize,
+  PublicKey_Verify,
+  ReceiptCredentialPresentation_CheckValidContents,
+  ReceiptCredentialPresentation_GetReceiptExpirationTime,
+  ReceiptCredentialPresentation_GetReceiptLevel,
+  ReceiptCredentialPresentation_GetReceiptSerial,
+  ReceiptCredentialRequestContext_CheckValidContents,
+  ReceiptCredentialRequestContext_GetRequest,
+  ReceiptCredentialRequest_CheckValidContents,
+  ReceiptCredentialResponse_CheckValidContents,
+  ReceiptCredential_CheckValidContents,
+  ReceiptCredential_GetReceiptExpirationTime,
+  ReceiptCredential_GetReceiptLevel,
+  RegisterAccountRequest_Create,
+  RegisterAccountRequest_SetAccountPassword,
+  RegisterAccountRequest_SetIdentityPqLastResortPreKey,
+  RegisterAccountRequest_SetIdentityPublicKey,
+  RegisterAccountRequest_SetIdentitySignedPreKey,
+  RegisterAccountRequest_SetOneTimePassword,
+  RegisterAccountRequest_SetSkipDeviceTransfer,
+  RegisterAccountResponse_GetAci,
+  RegisterAccountResponse_GetAuthCredentialSalt,
+  RegisterAccountResponse_GetEntitlementBackupExpirationSeconds,
+  RegisterAccountResponse_GetEntitlementBackupLevel,
+  RegisterAccountResponse_GetEntitlementBadges,
+  RegisterAccountResponse_GetNumber,
+  RegisterAccountResponse_GetPni,
+  RegisterAccountResponse_GetReregistration,
+  RegisterAccountResponse_GetStorageCapable,
+  RegisterAccountResponse_GetUsernameHash,
+  RegisterAccountResponse_GetUsernameLinkHandle,
+  RegistrationAccountAttributes_Create,
+  RegistrationService_CheckSvr2Credentials,
+  RegistrationService_CreateSession,
+  RegistrationService_RegisterAccount,
+  RegistrationService_RegisterAccountWithoutNumber,
+  RegistrationService_RegistrationSession,
+  RegistrationService_RequestVerificationCode,
+  RegistrationService_ReregisterAccount,
+  RegistrationService_ReregisterAccountWithoutNumber,
+  RegistrationService_ResumeSession,
+  RegistrationService_SessionId,
+  RegistrationService_SubmitCaptcha,
+  RegistrationService_SubmitVerificationCode,
+  RegistrationSession_GetAllowedToRequestCode,
+  RegistrationSession_GetNextCallSeconds,
+  RegistrationSession_GetNextSmsSeconds,
+  RegistrationSession_GetNextVerificationAttemptSeconds,
+  RegistrationSession_GetRequestedInformation,
+  RegistrationSession_GetVerified,
+  SanitizedMetadata_GetDataLen,
+  SanitizedMetadata_GetDataOffset,
+  SanitizedMetadata_GetMetadata,
+  ScannableFingerprint_Compare,
+  SealedSenderDecryptionResult_GetDeviceId,
+  SealedSenderDecryptionResult_GetSenderE164,
+  SealedSenderDecryptionResult_GetSenderUuid,
+  SealedSenderDecryptionResult_Message,
+  SealedSenderMultiRecipientMessage_Parse,
+  SealedSender_DecryptMessage,
+  SealedSender_DecryptToUsmc,
+  SealedSender_Encrypt,
+  SealedSender_MultiRecipientEncrypt,
+  SealedSender_MultiRecipientMessageForSingleRecipient,
+  SecureValueRecoveryForBackups_CreateNewBackupChain,
+  SecureValueRecoveryForBackups_RemoveBackup,
+  SecureValueRecoveryForBackups_RestoreBackupFromServer,
+  SecureValueRecoveryForBackups_StoreBackup,
+  SenderCertificate_Deserialize,
+  SenderCertificate_GetCertificate,
+  SenderCertificate_GetDeviceId,
+  SenderCertificate_GetExpiration,
+  SenderCertificate_GetKey,
+  SenderCertificate_GetSenderE164,
+  SenderCertificate_GetSenderUuid,
+  SenderCertificate_GetSerialized,
+  SenderCertificate_GetServerCertificate,
+  SenderCertificate_GetSignature,
+  SenderCertificate_New,
+  SenderCertificate_Validate,
+  SenderKeyDistributionMessage_Create,
+  SenderKeyDistributionMessage_Deserialize,
+  SenderKeyDistributionMessage_GetChainId,
+  SenderKeyDistributionMessage_GetChainKey,
+  SenderKeyDistributionMessage_GetDistributionId,
+  SenderKeyDistributionMessage_GetIteration,
+  SenderKeyDistributionMessage_New,
+  SenderKeyDistributionMessage_Process,
+  SenderKeyDistributionMessage_Serialize,
+  SenderKeyMessage_Deserialize,
+  SenderKeyMessage_GetChainId,
+  SenderKeyMessage_GetCipherText,
+  SenderKeyMessage_GetDistributionId,
+  SenderKeyMessage_GetIteration,
+  SenderKeyMessage_New,
+  SenderKeyMessage_Serialize,
+  SenderKeyMessage_VerifySignature,
+  SenderKeyRecord_Deserialize,
+  SenderKeyRecord_Serialize,
+  ServerCertificate_Deserialize,
+  ServerCertificate_GetCertificate,
+  ServerCertificate_GetKey,
+  ServerCertificate_GetKeyId,
+  ServerCertificate_GetSerialized,
+  ServerCertificate_GetSignature,
+  ServerCertificate_New,
+  ServerMessageAck_SendStatus,
+  ServerPublicParams_CreateAuthCredentialWithPniPresentationDeterministic,
+  ServerPublicParams_CreateExpiringProfileKeyCredentialPresentationDeterministic,
+  ServerPublicParams_CreateProfileKeyCredentialRequestContextDeterministic,
+  ServerPublicParams_CreateReceiptCredentialPresentationDeterministic,
+  ServerPublicParams_CreateReceiptCredentialRequestContextDeterministic,
+  ServerPublicParams_Deserialize,
+  ServerPublicParams_GetEndorsementPublicKey,
+  ServerPublicParams_ReceiveAuthCredentialWithPniAsServiceId,
+  ServerPublicParams_ReceiveAuthCredentialZkcWithoutPni,
+  ServerPublicParams_ReceiveExpiringProfileKeyCredential,
+  ServerPublicParams_ReceiveReceiptCredential,
+  ServerPublicParams_Serialize,
+  ServerPublicParams_VerifySignature,
+  ServerSecretParams_Deserialize,
+  ServerSecretParams_GenerateDeterministic,
+  ServerSecretParams_GetPublicParams,
+  ServerSecretParams_IssueAuthCredentialWithPniZkcDeterministic,
+  ServerSecretParams_IssueAuthCredentialZkcWithoutPniDeterministic,
+  ServerSecretParams_IssueExpiringProfileKeyCredentialDeterministic,
+  ServerSecretParams_IssueReceiptCredentialDeterministic,
+  ServerSecretParams_Serialize,
+  ServerSecretParams_SignDeterministic,
+  ServerSecretParams_VerifyAuthCredentialPresentation,
+  ServerSecretParams_VerifyProfileKeyCredentialPresentation,
+  ServerSecretParams_VerifyReceiptCredentialPresentation,
+  ServiceId_ParseFromServiceIdBinary,
+  ServiceId_ParseFromServiceIdString,
+  ServiceId_ServiceIdBinary,
+  ServiceId_ServiceIdLog,
+  ServiceId_ServiceIdString,
+  SessionBuilder_ProcessPreKeyBundle,
+  SessionCipher_DecryptPreKeySignalMessage,
+  SessionCipher_DecryptSignalMessage,
+  SessionCipher_EncryptMessage,
+  SessionRecord_ArchiveCurrentState,
+  SessionRecord_CurrentRatchetKeyMatches,
+  SessionRecord_Deserialize,
+  SessionRecord_GetLocalRegistrationId,
+  SessionRecord_GetRemoteRegistrationId,
+  SessionRecord_HasUsableSenderChain,
+  SessionRecord_Serialize,
+  SgxClientState_CompleteHandshake,
+  SgxClientState_EstablishedRecv,
+  SgxClientState_EstablishedSend,
+  SgxClientState_InitialRequest,
+  SignalMedia_CheckAvailable,
+  SignalMessage_Deserialize,
+  SignalMessage_GetBody,
+  SignalMessage_GetCounter,
+  SignalMessage_GetMessageVersion,
+  SignalMessage_GetPqRatchet,
+  SignalMessage_GetSerialized,
+  SignalMessage_New,
+  SignedPreKeyRecord_Deserialize,
+  SignedPreKeyRecord_GetId,
+  SignedPreKeyRecord_GetPrivateKey,
+  SignedPreKeyRecord_GetPublicKey,
+  SignedPreKeyRecord_GetSignature,
+  SignedPreKeyRecord_GetTimestamp,
+  SignedPreKeyRecord_New,
+  SignedPreKeyRecord_Serialize,
+  Svr2BackupSession_Deserialize,
+  Svr2BackupSession_Serialize,
+  Svr2Client_New,
+  Svr2MigrationSession_Deserialize,
+  Svr2MigrationSession_IsComplete,
+  Svr2MigrationSession_Serialize,
+  Svr2_Delete,
+  Svr2_FinishBackup,
+  Svr2_Migrate,
+  Svr2_Restore,
+  Svr2_RestoreMasterKey,
+  Svr2_StartBackup,
+  Svr2_StartMasterKeyBackup,
+  SvrKey_DeriveLoggingKey,
+  SvrKey_DeriveRegistrationLock,
+  SvrKey_DeriveRegistrationRecoveryPassword,
+  SvrKey_DeriveStorageServiceKey,
+  TESTING_BackupDeleteAllTests,
+  TESTING_BackupListMediaTests,
+  TESTING_BackupRefreshTests,
+  TESTING_BackupSetPublicKeyTests,
+  TESTING_BridgedStringMap_dump_to_json,
+  TESTING_BulkPullFromStream_Cancel,
+  TESTING_BulkPullFromStream_New,
+  TESTING_BulkPullFromStream_NextChunk,
+  TESTING_CdsiLookupErrorConvert,
+  TESTING_CdsiLookupResponseConvert,
+  TESTING_ChatConnectErrorConvert,
+  TESTING_ChatRequestGetBody,
+  TESTING_ChatRequestGetHeaderNames,
+  TESTING_ChatRequestGetHeaderValue,
+  TESTING_ChatRequestGetMethod,
+  TESTING_ChatRequestGetPath,
+  TESTING_ChatResponseConvert,
+  TESTING_ChatSendErrorConvert,
+  TESTING_CheckSvrCredentialsTests,
+  TESTING_ClearPushTokenTests,
+  TESTING_ClearRegistrationLockTests,
+  TESTING_ConfirmTotpKeyTests,
+  TESTING_ConfirmUsernameTests,
+  TESTING_ConnectionManager_isUsingProxy,
+  TESTING_ConnectionManager_newLocalOverride,
+  TESTING_ConvertOptionalUuid,
+  TESTING_CopyBackupMediaTests,
+  TESTING_CreateDonationPermitsTests,
+  TESTING_CreateLoginReceiptCredentialTests,
+  TESTING_CreateOTP,
+  TESTING_CreateOTPFromBase64,
+  TESTING_DeleteAccountTests,
+  TESTING_DeleteBackupMediaTests,
+  TESTING_DeleteUsernameHashTests,
+  TESTING_DeleteUsernameLinkTests,
+  TESTING_DowncastViaAsTypeOnReturn,
+  TESTING_EnableDeterministicRngForTesting,
+  TESTING_ErrorOnBorrowAsync,
+  TESTING_ErrorOnBorrowIo,
+  TESTING_ErrorOnBorrowSync,
+  TESTING_ErrorOnReturnAsync,
+  TESTING_ErrorOnReturnIo,
+  TESTING_ErrorOnReturnSync,
+  TESTING_FakeChatConnection_Create,
+  TESTING_FakeChatConnection_CreateProvisioning,
+  TESTING_FakeChatConnection_TakeAuthenticatedChat,
+  TESTING_FakeChatConnection_TakeProvisioningChat,
+  TESTING_FakeChatConnection_TakeRemote,
+  TESTING_FakeChatConnection_TakeUnauthenticatedChat,
+  TESTING_FakeChatRemoteEnd_GrpcFrameForMessageLength,
+  TESTING_FakeChatRemoteEnd_InjectConnectionInterrupted,
+  TESTING_FakeChatRemoteEnd_NextGrpcMessage,
+  TESTING_FakeChatRemoteEnd_ReceiveIncomingGrpcRequest,
+  TESTING_FakeChatRemoteEnd_ReceiveIncomingRequest,
+  TESTING_FakeChatRemoteEnd_SendRawServerRequest,
+  TESTING_FakeChatRemoteEnd_SendRawServerResponse,
+  TESTING_FakeChatRemoteEnd_SendServerGrpcResponse,
+  TESTING_FakeChatRemoteEnd_SendServerGrpcTestCaseResponse,
+  TESTING_FakeChatRemoteEnd_SendServerResponse,
+  TESTING_FakeChatResponse_Create,
+  TESTING_FakeChatServer_Create,
+  TESTING_FakeChatServer_GetNextRemote,
+  TESTING_FakeRegistrationSession_CreateSession,
+  TESTING_FinishMfaVerificationTests,
+  TESTING_FinishWebAuthnRegistrationTests,
+  TESTING_FutureCancellationCounter_Create,
+  TESTING_FutureCancellationCounter_WaitForCount,
+  TESTING_FutureFailure,
+  TESTING_FutureIncrementOnCancel,
+  TESTING_FutureProducesOtherPointerType,
+  TESTING_FutureProducesPointerType,
+  TESTING_FutureSuccess,
+  TESTING_GenerateTotpKeyTests,
+  TESTING_GetBackupCdnCredentialsTests,
+  TESTING_GetBackupSvrBCredentialsTests,
+  TESTING_GetCapabilitiesTests,
+  TESTING_GetCurrencyConversionsTests,
+  TESTING_GetDevicesTests,
+  TESTING_GetEntitlementsTests,
+  TESTING_GetMediaBackupInfoTests,
+  TESTING_GetMessageBackupInfoTests,
+  TESTING_GetPreKeyCountTests,
+  TESTING_GetProfileKeyCredentialTests,
+  TESTING_GetStickerUploadFormTests,
+  TESTING_GetSubscriptionReceiptCredentialTests,
+  TESTING_InputStreamReadIntoZeroLengthSlice,
+  TESTING_JoinStringArray,
+  TESTING_KeyTransChatSendError,
+  TESTING_KeyTransFatalVerificationFailure,
+  TESTING_KeyTransNonFatalVerificationFailure,
+  TESTING_KeyTransStoredAccountData,
+  TESTING_ListMfaKeysTests,
+  TESTING_LookUpUsernameLinkTests,
+  TESTING_MyRemoteDeriveEnum_identity,
+  TESTING_MyRemoteDeriveStruct_identity,
+  TESTING_MySimpleTestEnum_BridgeVec_identity,
+  TESTING_MySimpleTestEnum_BridgeVec_identity_async,
+  TESTING_MySimpleTestEnum_BridgeVec_to_string,
+  TESTING_MySimpleTestEnum_identity,
+  TESTING_MySimpleTestEnum_identity_async,
+  TESTING_MySimpleTestEnum_to_string,
+  TESTING_MyTestEnum_identity,
+  TESTING_MyTestEnum_identity_async,
+  TESTING_MyTestEnum_to_string,
+  TESTING_MyTestPoint_identity,
+  TESTING_MyTestPoint_identity_async,
+  TESTING_MyTestPoint_to_string,
+  TESTING_MyTestStruct_identity,
+  TESTING_MyTestStruct_identity_async,
+  TESTING_MyTestStruct_to_string,
+  TESTING_NonSuspendingBackgroundThreadRuntime_New,
+  TESTING_OtherTestingHandleType_getValue,
+  TESTING_PanicInBodyAsync,
+  TESTING_PanicInBodyIo,
+  TESTING_PanicInBodySync,
+  TESTING_PanicOnBorrowAsync,
+  TESTING_PanicOnBorrowIo,
+  TESTING_PanicOnBorrowSync,
+  TESTING_PanicOnLoadAsync,
+  TESTING_PanicOnLoadIo,
+  TESTING_PanicOnLoadSync,
+  TESTING_PanicOnReturnAsync,
+  TESTING_PanicOnReturnIo,
+  TESTING_PanicOnReturnSync,
+  TESTING_ProcessBytestringArray,
+  TESTING_RedeemBackupReceiptTests,
+  TESTING_RedeemDonationReceiptTests,
+  TESTING_RegisterAccountResponse_CreateTestValue,
+  TESTING_RegisterAccountResponse_CreateTestValueWithoutPhoneNumber,
+  TESTING_RegistrationService_CheckSvr2CredentialsErrorConvert,
+  TESTING_RegistrationService_CheckSvr2CredentialsResponseConvert,
+  TESTING_RegistrationService_CreateSessionErrorConvert,
+  TESTING_RegistrationService_RegisterAccountErrorConvert,
+  TESTING_RegistrationService_RequestVerificationCodeErrorConvert,
+  TESTING_RegistrationService_ResumeSessionErrorConvert,
+  TESTING_RegistrationService_SubmitVerificationErrorConvert,
+  TESTING_RegistrationService_UpdateSessionErrorConvert,
+  TESTING_RegistrationSessionInfoConvert,
+  TESTING_RemoveDeviceTests,
+  TESTING_RemoveMfaKeyTests,
+  TESTING_ReportMessageTests,
+  TESTING_ReserveUsernameHashTests,
+  TESTING_ReturnIoError,
+  TESTING_ReturnPair,
+  TESTING_ReturnSomeIoError,
+  TESTING_ReturnStringArray,
+  TESTING_RoundTripI32,
+  TESTING_RoundTripU16,
+  TESTING_RoundTripU32,
+  TESTING_RoundTripU64,
+  TESTING_RoundTripU8,
+  TESTING_ServerMessageAck_Create,
+  TESTING_SetCapabilitiesTests,
+  TESTING_SetDeviceNameTests,
+  TESTING_SetDiscoverableByPhoneNumberTests,
+  TESTING_SetLastResortKemPreKeyTests,
+  TESTING_SetMfaKeyMetadataTests,
+  TESTING_SetOneTimeEcPreKeysTests,
+  TESTING_SetOneTimeKemPreKeysTests,
+  TESTING_SetRegistrationLockTests,
+  TESTING_SetRegistrationRecoveryPasswordTests,
+  TESTING_SetSignedEcPreKeyTests,
+  TESTING_SetUsernameLinkTests,
+  TESTING_SignedPublicPreKey_CheckBridgesCorrectly,
+  TESTING_StartMfaVerificationTests,
+  TESTING_StartWebAuthnRegistrationTests,
+  TESTING_SubmitCallQualitySurveyTests,
+  TESTING_Svr2MasterKeyRestoreError,
+  TESTING_TestStreamChunk_return,
+  TESTING_TestingHandleType_getValue,
+  TESTING_TestingIntBox_Get,
+  TESTING_TestingIntBox_New,
+  TESTING_TokioAsyncContext_FutureSuccessBytes,
+  TESTING_TokioAsyncContext_NewSingleThreaded,
+  TESTING_TokioAsyncFuture,
+  TESTING_conversion_BridgeVecData32_identity,
+  TESTING_conversion_BridgeVecData32_identity_async,
+  TESTING_conversion_BridgeVecData32_to_string,
+  TESTING_conversion_BridgeVecString_identity,
+  TESTING_conversion_BridgeVecString_identity_async,
+  TESTING_conversion_BridgeVecString_to_string,
+  TESTING_conversion_Data32_identity,
+  TESTING_conversion_Data32_identity_async,
+  TESTING_conversion_Data32_to_string,
+  TESTING_conversion_Data_VecU8_identity,
+  TESTING_conversion_Data_VecU8_identity_async,
+  TESTING_conversion_Data_VecU8_to_string,
+  TESTING_conversion_Data_identity,
+  TESTING_conversion_Data_identity_async,
+  TESTING_conversion_Data_to_string,
+  TESTING_conversion_DeviceId_identity,
+  TESTING_conversion_DeviceId_identity_async,
+  TESTING_conversion_DeviceId_to_string,
+  TESTING_conversion_Float_identity,
+  TESTING_conversion_Float_identity_async,
+  TESTING_conversion_Float_to_string,
+  TESTING_conversion_MapStringMySimpleTestEnum_identity,
+  TESTING_conversion_MapStringMySimpleTestEnum_identity_async,
+  TESTING_conversion_MapStringMySimpleTestEnum_to_string,
+  TESTING_conversion_MapStringString_identity,
+  TESTING_conversion_MapStringString_identity_async,
+  TESTING_conversion_MapStringString_to_string,
+  TESTING_conversion_OptionalBytes_identity,
+  TESTING_conversion_OptionalBytes_identity_async,
+  TESTING_conversion_OptionalBytes_to_string,
+  TESTING_conversion_OptionalFloat_identity,
+  TESTING_conversion_OptionalFloat_identity_async,
+  TESTING_conversion_OptionalFloat_to_string,
+  TESTING_conversion_OptionalString_identity,
+  TESTING_conversion_OptionalString_identity_async,
+  TESTING_conversion_OptionalString_to_string,
+  TESTING_conversion_PairStringMySimpleTestEnum_identity,
+  TESTING_conversion_PairStringMySimpleTestEnum_identity_async,
+  TESTING_conversion_PairStringMySimpleTestEnum_to_string,
+  TESTING_conversion_PairStringString_identity,
+  TESTING_conversion_PairStringString_identity_async,
+  TESTING_conversion_PairStringString_to_string,
+  TESTING_conversion_ServiceId_identity,
+  TESTING_conversion_ServiceId_identity_async,
+  TESTING_conversion_ServiceId_to_string,
+  TESTING_conversion_Uuid_identity,
+  TESTING_conversion_Uuid_identity_async,
+  TESTING_conversion_Uuid_to_string,
+  TESTING_conversion_bool_identity,
+  TESTING_conversion_bool_identity_async,
+  TESTING_conversion_bool_to_string,
+  TESTING_conversion_i32_identity,
+  TESTING_conversion_i32_identity_async,
+  TESTING_conversion_i32_to_string,
+  TESTING_conversion_string_identity,
+  TESTING_conversion_string_identity_async,
+  TESTING_conversion_u16_identity,
+  TESTING_conversion_u16_identity_async,
+  TESTING_conversion_u16_to_string,
+  TESTING_conversion_u8_identity,
+  TESTING_conversion_u8_identity_async,
+  TESTING_conversion_u8_to_string,
+  TestingSemaphore_AddPermits,
+  TestingSemaphore_New,
+  TestingValueHolder_Get,
+  TestingValueHolder_New,
+  TokioAsyncContext_cancel,
+  TokioAsyncContext_new,
+  UnauthenticatedChatConnection_account_exists,
+  UnauthenticatedChatConnection_backup_copy_media,
+  UnauthenticatedChatConnection_backup_delete_all,
+  UnauthenticatedChatConnection_backup_delete_media,
+  UnauthenticatedChatConnection_backup_get_cdn_credentials,
+  UnauthenticatedChatConnection_backup_get_media_backup_info,
+  UnauthenticatedChatConnection_backup_get_media_upload_form,
+  UnauthenticatedChatConnection_backup_get_message_backup_info,
+  UnauthenticatedChatConnection_backup_get_svrb_credentials,
+  UnauthenticatedChatConnection_backup_get_upload_form,
+  UnauthenticatedChatConnection_backup_list_media,
+  UnauthenticatedChatConnection_backup_refresh,
+  UnauthenticatedChatConnection_backup_set_public_key,
+  UnauthenticatedChatConnection_check_svr_credentials,
+  UnauthenticatedChatConnection_connect,
+  UnauthenticatedChatConnection_create_login_receipt_credential,
+  UnauthenticatedChatConnection_disconnect,
+  UnauthenticatedChatConnection_get_pre_keys_access_key_auth,
+  UnauthenticatedChatConnection_get_pre_keys_group_auth,
+  UnauthenticatedChatConnection_get_pre_keys_unrestricted_auth,
+  UnauthenticatedChatConnection_get_profile_key_credential,
+  UnauthenticatedChatConnection_get_subscription_receipt_credential,
+  UnauthenticatedChatConnection_info,
+  UnauthenticatedChatConnection_init_listener,
+  UnauthenticatedChatConnection_look_up_username_hash,
+  UnauthenticatedChatConnection_look_up_username_link,
+  UnauthenticatedChatConnection_send,
+  UnauthenticatedChatConnection_send_message,
+  UnauthenticatedChatConnection_send_multi_recipient_message,
+  UnauthenticatedChatConnection_submit_call_quality_survey,
+  UnidentifiedSenderMessageContent_Deserialize,
+  UnidentifiedSenderMessageContent_GetContentHint,
+  UnidentifiedSenderMessageContent_GetContents,
+  UnidentifiedSenderMessageContent_GetGroupId,
+  UnidentifiedSenderMessageContent_GetMsgType,
+  UnidentifiedSenderMessageContent_GetSenderCert,
+  UnidentifiedSenderMessageContent_New,
+  UnidentifiedSenderMessageContent_Serialize,
+  UsernameLink_Create,
+  UsernameLink_DecryptUsername,
+  Username_CandidatesFrom,
+  Username_Hash,
+  Username_HashFromParts,
+  Username_Proof,
+  Username_Verify,
+  UuidCiphertext_CheckValidContents,
+  ValidatingMac_Finalize,
+  ValidatingMac_Initialize,
+  ValidatingMac_Update,
+  WebpSanitizer_Sanitize,
+  ZkCredentialKeyPair_CheckValidContents,
+  ZkCredentialKeyPair_GenerateDeterministic,
+  ZkCredentialKeyPair_GetPublicKey,
+  ZkCredentialPublicKey_CheckValidContents,
+  test_only_fn_returns_123,
+  uuid_from_string,
+  uuid_new_v4,
+  uuid_to_string,
+};
+
+export /*trait*/ type ChatListener = {
+  receivedIncomingMessage: (
+    envelope: Bytes,
+    timestamp: Timestamp,
+    ack: ServerMessageAck
+  ) => void;
+  receivedQueueEmpty: () => void;
+  receivedAlerts: (alerts: Array<string>) => void;
+  receivedServerTimestamp: (timestamp: Timestamp) => void;
+  connectionInterrupted: (disconnectCause: Error | null) => void;
+};
+
+export /*trait*/ type IdentityKeyStore = {
+  getLocalIdentityKeyPair: () => Promise<[PrivateKey, PublicKey]>;
+  getLocalRegistrationId: () => Promise<number>;
+  getIdentityKey: (address: ProtocolAddress) => Promise<PublicKey | null>;
+  saveIdentityKey: (
+    address: ProtocolAddress,
+    publicKey: PublicKey
+  ) => Promise<number>;
+  isTrustedIdentity: (
+    address: ProtocolAddress,
+    publicKey: PublicKey,
+    direction: number
+  ) => Promise<boolean>;
+};
+
+export /*trait*/ type InputStream = {
+  read: (amount: number) => Promise<Bytes>;
+  skip: (amount: bigint) => Promise<void>;
+};
+
+export /*trait*/ type KyberPreKeyStore = {
+  loadKyberPreKey: (id: number) => Promise<KyberPreKeyRecord | null>;
+  storeKyberPreKey: (id: number, record: KyberPreKeyRecord) => Promise<void>;
+  markKyberPreKeyUsed: (
+    id: number,
+    ecPrekeyId: number,
+    baseKey: PublicKey
+  ) => Promise<void>;
+};
+
+export /*trait*/ type PreKeyStore = {
+  loadPreKey: (id: number) => Promise<PreKeyRecord | null>;
+  storePreKey: (id: number, record: PreKeyRecord) => Promise<void>;
+  removePreKey: (id: number) => Promise<void>;
+};
+
+export /*trait*/ type ProvisioningListener = {
+  receivedAddress: (address: string, sendAck: ServerMessageAck) => void;
+  receivedEnvelope: (envelope: Bytes, sendAck: ServerMessageAck) => void;
+  connectionInterrupted: (disconnectCause: Error | null) => void;
+};
+
+export /*trait*/ type SenderKeyStore = {
+  loadSenderKey: (
+    sender: ProtocolAddress,
+    distributionId: Uuid
+  ) => Promise<SenderKeyRecord | null>;
+  storeSenderKey: (
+    sender: ProtocolAddress,
+    distributionId: Uuid,
+    record: SenderKeyRecord
+  ) => Promise<void>;
+};
+
+export /*trait*/ type SessionStore = {
+  loadSession: (address: ProtocolAddress) => Promise<SessionRecord | null>;
+  storeSession: (
+    address: ProtocolAddress,
+    record: SessionRecord
+  ) => Promise<void>;
+};
+
+export /*trait*/ type SignedPreKeyStore = {
+  loadSignedPreKey: (id: number) => Promise<SignedPreKeyRecord | null>;
+  storeSignedPreKey: (id: number, record: SignedPreKeyRecord) => Promise<void>;
+};
+
+export interface Aes256GcmSiv {
+  readonly __type: unique symbol;
+}
+export interface AuthenticatedChatConnection {
+  readonly __type: unique symbol;
+}
+export interface BackupJsonExporter {
+  readonly __type: unique symbol;
+}
+export interface BackupRestoreResponse {
+  readonly __type: unique symbol;
+}
+export interface BackupStoreResponse {
+  readonly __type: unique symbol;
+}
+export interface BridgedStringMap {
+  readonly __type: unique symbol;
+}
+export interface CdsiLookup {
+  readonly __type: unique symbol;
+}
+export interface ChatConnectionInfo {
+  readonly __type: unique symbol;
+}
+export interface CiphertextMessage {
+  readonly __type: unique symbol;
+}
+export interface ComparableBackup {
+  readonly __type: unique symbol;
+}
+export interface ConnectionManager {
+  readonly __type: unique symbol;
+}
+export interface ConnectionProxyConfig {
+  readonly __type: unique symbol;
+}
+export interface CopyBackupMediaStream {
+  readonly __type: unique symbol;
+}
+export interface DecryptionErrorMessage {
+  readonly __type: unique symbol;
+}
+export interface DeleteBackupMediaStream {
+  readonly __type: unique symbol;
+}
+export interface ExpiringProfileKeyCredential {
+  readonly __type: unique symbol;
+}
+export interface ExpiringProfileKeyCredentialResponse {
+  readonly __type: unique symbol;
+}
+export interface FakeChatConnection {
+  readonly __type: unique symbol;
+}
+export interface FakeChatRemoteEnd {
+  readonly __type: unique symbol;
+}
+export interface FakeChatResponse {
+  readonly __type: unique symbol;
+}
+export interface FakeChatServer {
+  readonly __type: unique symbol;
+}
+export interface Fingerprint {
+  readonly __type: unique symbol;
+}
+export interface GroupMasterKey {
+  readonly __type: unique symbol;
+}
+export interface GroupPublicParams {
+  readonly __type: unique symbol;
+}
+export interface GroupSecretParams {
+  readonly __type: unique symbol;
+}
+export interface GrpcTestCaseBridgedResponse {
+  readonly __type: unique symbol;
+}
+export interface HsmEnclaveClient {
+  readonly __type: unique symbol;
+}
+export interface HttpRequest {
+  readonly __type: unique symbol;
+}
+export interface IncrementalMac {
+  readonly __type: unique symbol;
+}
+export interface KyberKeyPair {
+  readonly __type: unique symbol;
+}
+export interface KyberPreKeyRecord {
+  readonly __type: unique symbol;
+}
+export interface KyberPublicKey {
+  readonly __type: unique symbol;
+}
+export interface KyberSecretKey {
+  readonly __type: unique symbol;
+}
+export interface LookupRequest {
+  readonly __type: unique symbol;
+}
+export interface MessageBackupKey {
+  readonly __type: unique symbol;
+}
+export interface NonSuspendingBackgroundThreadRuntime {
+  readonly __type: unique symbol;
+}
+export interface OnlineBackupValidator {
+  readonly __type: unique symbol;
+}
+export interface OtherTestingHandleType {
+  readonly __type: unique symbol;
+}
+export interface PinHash {
+  readonly __type: unique symbol;
+}
+export interface PlaintextContent {
+  readonly __type: unique symbol;
+}
+export interface PreKeyBundle {
+  readonly __type: unique symbol;
+}
+export interface PreKeyRecord {
+  readonly __type: unique symbol;
+}
+export interface PreKeySignalMessage {
+  readonly __type: unique symbol;
+}
+export interface PrivateKey {
+  readonly __type: unique symbol;
+}
+export interface ProfileKey {
+  readonly __type: unique symbol;
+}
+export interface ProfileKeyCiphertext {
+  readonly __type: unique symbol;
+}
+export interface ProfileKeyCommitment {
+  readonly __type: unique symbol;
+}
+export interface ProfileKeyCredentialRequest {
+  readonly __type: unique symbol;
+}
+export interface ProfileKeyCredentialRequestContext {
+  readonly __type: unique symbol;
+}
+export interface ProtocolAddress {
+  readonly __type: unique symbol;
+}
+export interface ProvisioningChatConnection {
+  readonly __type: unique symbol;
+}
+export interface PublicKey {
+  readonly __type: unique symbol;
+}
+export interface ReceiptCredential {
+  readonly __type: unique symbol;
+}
+export interface ReceiptCredentialPresentation {
+  readonly __type: unique symbol;
+}
+export interface ReceiptCredentialRequest {
+  readonly __type: unique symbol;
+}
+export interface ReceiptCredentialRequestContext {
+  readonly __type: unique symbol;
+}
+export interface ReceiptCredentialResponse {
+  readonly __type: unique symbol;
+}
+export interface RegisterAccountRequest {
+  readonly __type: unique symbol;
+}
+export interface RegisterAccountResponse {
+  readonly __type: unique symbol;
+}
+export interface RegistrationAccountAttributes {
+  readonly __type: unique symbol;
+}
+export interface RegistrationService {
+  readonly __type: unique symbol;
+}
+export interface RegistrationSession {
+  readonly __type: unique symbol;
+}
+export interface SanitizedMetadata {
+  readonly __type: unique symbol;
+}
+export interface SealedSenderDecryptionResult {
+  readonly __type: unique symbol;
+}
+export interface SenderCertificate {
+  readonly __type: unique symbol;
+}
+export interface SenderKeyDistributionMessage {
+  readonly __type: unique symbol;
+}
+export interface SenderKeyMessage {
+  readonly __type: unique symbol;
+}
+export interface SenderKeyRecord {
+  readonly __type: unique symbol;
+}
+export interface ServerCertificate {
+  readonly __type: unique symbol;
+}
+export interface ServerMessageAck {
+  readonly __type: unique symbol;
+}
+export interface ServerPublicParams {
+  readonly __type: unique symbol;
+}
+export interface ServerSecretParams {
+  readonly __type: unique symbol;
+}
+export interface SessionRecord {
+  readonly __type: unique symbol;
+}
+export interface SgxClientState {
+  readonly __type: unique symbol;
+}
+export interface SignalMessage {
+  readonly __type: unique symbol;
+}
+export interface SignedPreKeyRecord {
+  readonly __type: unique symbol;
+}
+export interface Svr2BackupSession {
+  readonly __type: unique symbol;
+}
+export interface Svr2MigrationSession {
+  readonly __type: unique symbol;
+}
+export interface TestStream {
+  readonly __type: unique symbol;
+}
+export interface TestingFutureCancellationCounter {
+  readonly __type: unique symbol;
+}
+export interface TestingHandleType {
+  readonly __type: unique symbol;
+}
+export interface TestingIntBox {
+  readonly __type: unique symbol;
+}
+export interface TestingSemaphore {
+  readonly __type: unique symbol;
+}
+export interface TestingValueHolder {
+  readonly __type: unique symbol;
+}
+export interface TokioAsyncContext {
+  readonly __type: unique symbol;
+}
+export interface UnauthenticatedChatConnection {
+  readonly __type: unique symbol;
+}
+export interface UnidentifiedSenderMessageContent {
+  readonly __type: unique symbol;
+}
+export interface UuidCiphertext {
+  readonly __type: unique symbol;
+}
+export interface ValidatingMac {
+  readonly __type: unique symbol;
+}

@@ -3,9 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import * as Native from '../Native';
-import * as stream from 'stream';
-import { LibSignalErrorBase } from './Errors';
+import type { Bytes } from '@signalapp/types';
+import * as stream from 'node:stream';
+import { Buffer } from 'node:buffer';
+
+import * as Native from './Native.js';
+import {
+  IncrementalMacVerificationFailed,
+  LibSignalErrorBase,
+} from './Errors.js';
 
 type CallbackType = (error?: Error | null) => void;
 
@@ -24,9 +30,9 @@ export function inferChunkSize(dataSize: number): ChunkSizeChoice {
 class DigestingWritable extends stream.Writable {
   _nativeHandle: Native.IncrementalMac;
 
-  _digests: Uint8Array[] = [];
+  _digests: Bytes[] = [];
 
-  constructor(key: Uint8Array, sizeChoice: ChunkSizeChoice) {
+  constructor(key: Bytes, sizeChoice: ChunkSizeChoice) {
     super();
     this._nativeHandle = Native.IncrementalMac_Initialize(
       key,
@@ -34,14 +40,14 @@ class DigestingWritable extends stream.Writable {
     );
   }
 
-  getFinalDigest(): Uint8Array {
+  getFinalDigest(): Bytes {
     // Use Buffer.concat for convenience, but return a proper Uint8Array, both for the correct type
     // and to make an independent copy of a possibly-reused buffer.
     return new Uint8Array(Buffer.concat(this._digests));
   }
 
   _write(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     chunk: any,
     encoding: BufferEncoding,
     callback: CallbackType
@@ -69,7 +75,7 @@ class DigestingWritable extends stream.Writable {
 export class DigestingPassThrough extends stream.Transform {
   private digester: DigestingWritable;
 
-  constructor(key: Uint8Array, sizeChoice: ChunkSizeChoice) {
+  constructor(key: Bytes, sizeChoice: ChunkSizeChoice) {
     super();
     this.digester = new DigestingWritable(key, sizeChoice);
 
@@ -79,12 +85,12 @@ export class DigestingPassThrough extends stream.Transform {
     });
   }
 
-  getFinalDigest(): Uint8Array {
+  getFinalDigest(): Bytes {
     return this.digester.getFinalDigest();
   }
 
   public override _transform(
-    data: Uint8Array,
+    data: Bytes,
     enc: BufferEncoding,
     callback: CallbackType
   ): void {
@@ -113,17 +119,20 @@ class ValidatingWritable extends stream.Writable {
 
   _validatedBytes = 0;
 
-  constructor(
-    key: Uint8Array,
-    sizeChoice: ChunkSizeChoice,
-    digest: Uint8Array
-  ) {
+  constructor(key: Bytes, sizeChoice: ChunkSizeChoice, digest: Bytes) {
     super();
-    this._nativeHandle = Native.ValidatingMac_Initialize(
+    const handle = Native.ValidatingMac_Initialize(
       key,
       chunkSizeInBytes(sizeChoice),
       digest
     );
+    if (!handle) {
+      // Not sure why eslint isn't treating IncrementalMacVerificationFailed as an Error;
+      // standalone examples are not reproducing.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw makeVerificationError('Invalid configuration data');
+    }
+    this._nativeHandle = handle;
   }
 
   validatedSize(): number {
@@ -131,7 +140,7 @@ class ValidatingWritable extends stream.Writable {
   }
 
   _write(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     chunk: any,
     encoding: BufferEncoding,
     callback: CallbackType
@@ -165,13 +174,9 @@ class ValidatingWritable extends stream.Writable {
 
 export class ValidatingPassThrough extends stream.Transform {
   private validator: ValidatingWritable;
-  private buffer = new Array<Uint8Array>();
+  private buffer = new Array<Bytes>();
 
-  constructor(
-    key: Uint8Array,
-    sizeChoice: ChunkSizeChoice,
-    digest: Uint8Array
-  ) {
+  constructor(key: Bytes, sizeChoice: ChunkSizeChoice, digest: Bytes) {
     super();
     this.validator = new ValidatingWritable(key, sizeChoice, digest);
 
@@ -182,7 +187,7 @@ export class ValidatingPassThrough extends stream.Transform {
   }
 
   public override _transform(
-    data: Uint8Array,
+    data: Bytes,
     enc: BufferEncoding,
     callback: CallbackType
   ): void {
@@ -251,17 +256,17 @@ export function chunkSizeInBytes(sizeChoice: ChunkSizeChoice): number {
   switch (sizeChoice.kind) {
     case 'everyN':
       return sizeChoice.n;
-      break;
     case 'chunksOf':
       return Native.IncrementalMac_CalculateChunkSize(sizeChoice.dataSize);
-      break;
   }
 }
 
-function makeVerificationError(message: string): LibSignalErrorBase {
+function makeVerificationError(
+  message: string
+): IncrementalMacVerificationFailed {
   return new LibSignalErrorBase(
     message,
-    'VerificationFailed',
+    'IncrementalMacVerificationFailed',
     'incremental_mac'
-  );
+  ) as IncrementalMacVerificationFailed;
 }

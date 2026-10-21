@@ -11,14 +11,15 @@ use crate::protocol::CIPHERTEXT_MESSAGE_PRE_KYBER_VERSION;
 use crate::ratchet::{AliceSignalProtocolParameters, BobSignalProtocolParameters};
 use crate::state::GenericSignedPreKey;
 use crate::{
-    ratchet, CiphertextMessageType, Direction, IdentityKey, IdentityKeyStore, KeyPair,
-    KyberPreKeyId, KyberPreKeyStore, PreKeyBundle, PreKeyId, PreKeySignalMessage, PreKeyStore,
-    ProtocolAddress, Result, SessionRecord, SessionStore, SignalProtocolError, SignedPreKeyStore,
+    CiphertextMessageType, Direction, IdentityKey, IdentityKeyStore, KeyPair, KyberPreKeyId,
+    KyberPreKeyStore, PreKeyBundle, PreKeyId, PreKeySignalMessage, PreKeyStore, ProtocolAddress,
+    Result, SessionRecord, SessionStore, SignalProtocolError, SignedPreKeyId, SignedPreKeyStore,
+    ratchet,
 };
 
-#[derive(Default)]
 pub struct PreKeysUsed {
-    pub pre_key_id: Option<PreKeyId>,
+    pub one_time_ec_pre_key_id: Option<PreKeyId>,
+    pub signed_ec_pre_key_id: SignedPreKeyId,
     pub kyber_pre_key_id: Option<KyberPreKeyId>,
 }
 
@@ -45,13 +46,13 @@ free standing.
 pub async fn process_prekey<'a>(
     message: &'a PreKeySignalMessage,
     remote_address: &'a ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_record: &mut SessionRecord,
     identity_store: &dyn IdentityKeyStore,
     pre_key_store: &dyn PreKeyStore,
     signed_prekey_store: &dyn SignedPreKeyStore,
     kyber_prekey_store: &dyn KyberPreKeyStore,
-    use_pq_ratchet: ratchet::UsePQRatchet,
-) -> Result<(PreKeysUsed, IdentityToSave<'a>)> {
+) -> Result<(Option<PreKeysUsed>, IdentityToSave<'a>)> {
     let their_identity_key = message.identity_key();
 
     if !identity_store
@@ -66,12 +67,12 @@ pub async fn process_prekey<'a>(
     let pre_keys_used = process_prekey_impl(
         message,
         remote_address,
+        local_address,
         session_record,
         signed_prekey_store,
         kyber_prekey_store,
         pre_key_store,
         identity_store,
-        use_pq_ratchet,
     )
     .await?;
 
@@ -86,19 +87,36 @@ pub async fn process_prekey<'a>(
 async fn process_prekey_impl(
     message: &PreKeySignalMessage,
     remote_address: &ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_record: &mut SessionRecord,
     signed_prekey_store: &dyn SignedPreKeyStore,
     kyber_prekey_store: &dyn KyberPreKeyStore,
     pre_key_store: &dyn PreKeyStore,
     identity_store: &dyn IdentityKeyStore,
-    use_pq_ratchet: ratchet::UsePQRatchet,
-) -> Result<PreKeysUsed> {
+) -> Result<Option<PreKeysUsed>> {
     if session_record.promote_matching_session(
         message.message_version() as u32,
         &message.base_key().serialize(),
     )? {
-        // We've already set up a session for this message, we can exit early.
-        return Ok(Default::default());
+        // We've already set up a session for this message, we can exit early as long as the
+        // identity key hasn't changed. (Note that this is a constant-time comparison as long as the
+        // keys have the same type: see PublicKey's PartialEq.)
+        if !session_record
+            .session_state()
+            .expect("just promoted a session")
+            .remote_identity_key()?
+            .is_some_and(|stored| *message.identity_key() == stored)
+        {
+            // We return this as InvalidMessage rather than any other error because there's no
+            // expected recovery; barring data corruption, the peer has just decided to send us the
+            // wrong identity key for no apparent reason. (Of course, it's possible it's the local
+            // state that's wrong, but that's true for the eventual MAC check as well.)
+            return Err(SignalProtocolError::InvalidMessage(
+                CiphertextMessageType::PreKey,
+                "remote identity key not consistent with previously-established session".to_owned(),
+            ));
+        }
+        return Ok(None);
     }
 
     // Check this *after* looking for an existing session; since we have already performed XDH for
@@ -109,7 +127,7 @@ async fn process_prekey_impl(
         // one, and won't cause the sender and receiver to move over to a PQXDH session.
         return Err(SignalProtocolError::InvalidMessage(
             CiphertextMessageType::PreKey,
-            "X3DH no longer supported",
+            "X3DH no longer supported".to_owned(),
         ));
     }
 
@@ -126,7 +144,7 @@ async fn process_prekey_impl(
     } else {
         return Err(SignalProtocolError::InvalidMessage(
             CiphertextMessageType::PreKey,
-            "missing pq pre-key ID",
+            "missing pq pre-key ID".to_owned(),
         ));
     };
     let kyber_ciphertext =
@@ -134,7 +152,7 @@ async fn process_prekey_impl(
             .kyber_ciphertext()
             .ok_or(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::PreKey,
-                "missing pq ciphertext",
+                "missing pq ciphertext".to_owned(),
             ))?;
 
     let our_one_time_pre_key_pair = if let Some(pre_key_id) = message.pre_key_id() {
@@ -145,19 +163,24 @@ async fn process_prekey_impl(
         None
     };
 
+    let our_identity_key_pair = identity_store.get_identity_key_pair().await?;
     let parameters = BobSignalProtocolParameters::new(
-        identity_store.get_identity_key_pair().await?,
-        our_signed_pre_key_pair, // signed pre key
+        our_identity_key_pair,
+        our_signed_pre_key_pair,
         our_one_time_pre_key_pair,
-        our_signed_pre_key_pair, // ratchet key
         our_kyber_pre_key_pair,
         *message.identity_key(),
         *message.base_key(),
         kyber_ciphertext,
-        use_pq_ratchet,
+        our_identity_key_pair.identity_key().is_same_account(
+            local_address,
+            message.identity_key(),
+            remote_address,
+        ),
     );
 
-    let mut new_session = ratchet::initialize_bob_session(&parameters)?;
+    // The recipient's initial ratchet key is the signed pre-key.
+    let mut new_session = ratchet::initialize_bob_session(&parameters, &our_signed_pre_key_pair)?;
 
     new_session.set_local_registration_id(identity_store.get_local_registration_id().await?);
     new_session.set_remote_registration_id(message.registration_id());
@@ -165,20 +188,21 @@ async fn process_prekey_impl(
     session_record.promote_state(new_session);
 
     let pre_keys_used = PreKeysUsed {
-        pre_key_id: message.pre_key_id(),
+        one_time_ec_pre_key_id: message.pre_key_id(),
+        signed_ec_pre_key_id: message.signed_pre_key_id(),
         kyber_pre_key_id: message.kyber_pre_key_id(),
     };
-    Ok(pre_keys_used)
+    Ok(Some(pre_keys_used))
 }
 
 pub async fn process_prekey_bundle<R: Rng + CryptoRng>(
     remote_address: &ProtocolAddress,
+    local_address: &ProtocolAddress,
     session_store: &mut dyn SessionStore,
     identity_store: &mut dyn IdentityKeyStore,
     bundle: &PreKeyBundle,
     now: SystemTime,
     mut csprng: &mut R,
-    use_pq_ratchet: ratchet::UsePQRatchet,
 ) -> Result<()> {
     let their_identity_key = bundle.identity_key()?;
 
@@ -225,7 +249,11 @@ pub async fn process_prekey_bundle<R: Rng + CryptoRng>(
         their_signed_prekey,
         their_signed_prekey,
         their_kyber_prekey.clone(),
-        use_pq_ratchet,
+        our_identity_key_pair.identity_key().is_same_account(
+            local_address,
+            their_identity_key,
+            remote_address,
+        ),
     );
     if let Some(key) = bundle.pre_key_public()? {
         parameters.set_their_one_time_pre_key(key);

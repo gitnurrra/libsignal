@@ -22,6 +22,9 @@ import org.signal.libsignal.util.TestLogger;
 
 public class ChatServiceConnectTests {
   private static final String USER_AGENT = "test";
+  // A syntactically valid but non-existent ACI username for testing server rejection.
+  private static final String FAKE_USERNAME = "90c979fd-eab4-4a08-b6da-69dedeab9b29.1";
+  private static final String FAKE_PASSWORD = "password";
 
   private static class Listener implements ChatConnectionListener {
     CompletableFuture<ChatServiceException> disconnectReason = new CompletableFuture<>();
@@ -85,6 +88,23 @@ public class ChatServiceConnectTests {
   }
 
   @Test
+  public void testConnectAuthSmoke() throws Exception {
+    // Use the presence of the environment setting to know whether we should
+    // make network requests in our tests.
+    final String ENABLE_TEST = TestEnvironment.get("LIBSIGNAL_TESTING_RUN_NONHERMETIC_TESTS");
+    Assume.assumeNotNull(ENABLE_TEST);
+
+    final Network net = new Network(Network.Environment.STAGING, USER_AGENT);
+    final Listener listener = new Listener();
+
+    final var e =
+        assertThrows(
+            ExecutionException.class,
+            () -> net.connectAuthChat(FAKE_USERNAME, FAKE_PASSWORD, false, listener).get());
+    assertTrue(e.getCause() instanceof DeviceDeregisteredException);
+  }
+
+  @Test
   public void testPreconnectAuth() throws Exception {
     // Use the presence of the environment setting to know whether we should
     // make network requests in our tests.
@@ -101,7 +121,8 @@ public class ChatServiceConnectTests {
     // use preconnects.
     final var e =
         assertThrows(
-            ExecutionException.class, () -> net.connectAuthChat("", "", false, listener).get());
+            ExecutionException.class,
+            () -> net.connectAuthChat(FAKE_USERNAME, FAKE_PASSWORD, false, listener).get());
     assertTrue(e.getCause() instanceof DeviceDeregisteredException);
   }
 

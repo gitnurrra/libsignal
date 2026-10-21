@@ -11,12 +11,16 @@ import org.signal.libsignal.protocol.InvalidKeyException
 import org.signal.libsignal.protocol.SerializablePublicKey
 import java.util.Arrays
 
-public class KEMPublicKey : NativeHandleGuard.SimpleOwner, SerializablePublicKey {
+public class KEMPublicKey :
+  NativeHandleGuard.SimpleOwner,
+  SerializablePublicKey {
   @Deprecated("use the constructor that takes an offset and length")
   @Throws(InvalidKeyException::class)
   public constructor(serialized: ByteArray, offset: Int) :
     this(serialized, offset, length = serialized.size - offset)
 
+  // The Rust side checks that offset and length are in bounds, and throws IllegalArgumentException
+  // if they aren't.
   @Throws(InvalidKeyException::class)
   public constructor(serialized: ByteArray, offset: Int, length: Int) :
     super(Native.KyberPublicKey_DeserializeWithOffsetLength(serialized, offset, length))
@@ -30,12 +34,10 @@ public class KEMPublicKey : NativeHandleGuard.SimpleOwner, SerializablePublicKey
     Native.KyberPublicKey_Destroy(nativeHandle)
   }
 
-  public fun serialize(): ByteArray {
-    return guardedMapChecked(Native::KyberPublicKey_Serialize)
-  }
+  public fun serialize(): ByteArray = guardedMapChecked(Native::KyberPublicKey_Serialize)
 
-  public override fun equals(other: Any?): Boolean {
-    return when (other) {
+  public override fun equals(other: Any?): Boolean =
+    when (other) {
       null -> false
       is KEMPublicKey ->
         guardedMap { thisNativeHandle ->
@@ -45,9 +47,6 @@ public class KEMPublicKey : NativeHandleGuard.SimpleOwner, SerializablePublicKey
         }
       else -> false
     }
-  }
 
-  public override fun hashCode(): Int {
-    return Arrays.hashCode(this.serialize())
-  }
+  public override fun hashCode(): Int = Arrays.hashCode(this.serialize())
 }

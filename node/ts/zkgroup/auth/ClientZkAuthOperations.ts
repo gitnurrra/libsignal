@@ -3,17 +3,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { randomBytes } from 'crypto';
+import type { Bytes } from '@signalapp/types';
+import { randomBytes } from 'node:crypto';
 
-import * as Native from '../../../Native';
-import { RANDOM_LENGTH } from '../internal/Constants';
+import * as Native from '../../Native.js';
+import { RANDOM_LENGTH } from '../internal/Constants.js';
 
-import ServerPublicParams from '../ServerPublicParams';
-import AuthCredentialPresentation from './AuthCredentialPresentation';
-import AuthCredentialWithPni from './AuthCredentialWithPni';
-import AuthCredentialWithPniResponse from './AuthCredentialWithPniResponse';
-import GroupSecretParams from '../groups/GroupSecretParams';
-import { Aci, Pni } from '../../Address';
+import ServerPublicParams from '../ServerPublicParams.js';
+import AuthCredentialPresentation from './AuthCredentialPresentation.js';
+import AuthCredentialWithPni from './AuthCredentialWithPni.js';
+import AuthCredentialWithPniResponse from './AuthCredentialWithPniResponse.js';
+import GroupSecretParams from '../groups/GroupSecretParams.js';
+import { Aci, Pni } from '../../Address.js';
 
 export default class ClientZkAuthOperations {
   serverPublicParams: ServerPublicParams;
@@ -44,6 +45,30 @@ export default class ClientZkAuthOperations {
     );
   }
 
+  /**
+   * Produces the AuthCredentialWithPni from a server-generated AuthCredentialWithPniResponse,
+   * even though there's no expected PNI.
+   *
+   * @param authCredentialSalt - should have been provided by the server at registration/link time.
+   * @param redemptionTime - This is provided by the server as an integer, and should be passed through directly.
+   */
+  receiveAuthCredentialWithoutPni(
+    aci: Aci,
+    authCredentialSalt: Bytes,
+    redemptionTime: number,
+    authCredentialResponse: AuthCredentialWithPniResponse
+  ): AuthCredentialWithPni {
+    return new AuthCredentialWithPni(
+      Native.ServerPublicParams_ReceiveAuthCredentialZkcWithoutPni(
+        this.serverPublicParams,
+        aci.getServiceIdFixedWidthBinary(),
+        authCredentialSalt,
+        redemptionTime,
+        authCredentialResponse.getContents()
+      )
+    );
+  }
+
   createAuthCredentialWithPniPresentation(
     groupSecretParams: GroupSecretParams,
     authCredential: AuthCredentialWithPni
@@ -58,7 +83,7 @@ export default class ClientZkAuthOperations {
   }
 
   createAuthCredentialWithPniPresentationWithRandom(
-    random: Uint8Array,
+    random: Bytes,
     groupSecretParams: GroupSecretParams,
     authCredential: AuthCredentialWithPni
   ): AuthCredentialPresentation {

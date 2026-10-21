@@ -3,15 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { randomBytes } from 'crypto';
-import { RANDOM_LENGTH } from '../internal/Constants';
-import * as Native from '../../../Native';
+import type { Bytes } from '@signalapp/types';
+import { randomBytes } from 'node:crypto';
 
-import ServerSecretParams from '../ServerSecretParams';
-import AuthCredentialPresentation from './AuthCredentialPresentation';
-import AuthCredentialWithPniResponse from './AuthCredentialWithPniResponse';
-import GroupPublicParams from '../groups/GroupPublicParams';
-import { Aci, Pni } from '../../Address';
+import { RANDOM_LENGTH } from '../internal/Constants.js';
+import * as Native from '../../Native.js';
+
+import ServerSecretParams from '../ServerSecretParams.js';
+import AuthCredentialPresentation from './AuthCredentialPresentation.js';
+import AuthCredentialWithPniResponse from './AuthCredentialWithPniResponse.js';
+import GroupPublicParams from '../groups/GroupPublicParams.js';
+import { Aci, Pni } from '../../Address.js';
 
 export default class ServerZkAuthOperations {
   serverSecretParams: ServerSecretParams;
@@ -36,7 +38,7 @@ export default class ServerZkAuthOperations {
   }
 
   issueAuthCredentialWithPniZkcWithRandom(
-    random: Uint8Array,
+    random: Bytes,
     aci: Aci,
     pni: Pni,
     redemptionTime: number
@@ -47,6 +49,43 @@ export default class ServerZkAuthOperations {
         random,
         aci.getServiceIdFixedWidthBinary(),
         pni.getServiceIdFixedWidthBinary(),
+        redemptionTime
+      )
+    );
+  }
+
+  /**
+   * Issues an `AuthCredential` for an account without a PNI.
+   *
+   * @param authCredentialSalt should be generated per-account at registration time
+   */
+  issueAuthCredentialZkcWithoutPni(
+    aci: Aci,
+    authCredentialSalt: Bytes,
+    redemptionTime: number
+  ): AuthCredentialWithPniResponse {
+    const random = randomBytes(RANDOM_LENGTH);
+
+    return this.issueAuthCredentialZkcWithoutPniWithRandom(
+      random,
+      aci,
+      authCredentialSalt,
+      redemptionTime
+    );
+  }
+
+  issueAuthCredentialZkcWithoutPniWithRandom(
+    random: Bytes,
+    aci: Aci,
+    authCredentialSalt: Bytes,
+    redemptionTime: number
+  ): AuthCredentialWithPniResponse {
+    return new AuthCredentialWithPniResponse(
+      Native.ServerSecretParams_IssueAuthCredentialZkcWithoutPniDeterministic(
+        this.serverSecretParams,
+        random,
+        aci.getServiceIdFixedWidthBinary(),
+        authCredentialSalt,
         redemptionTime
       )
     );

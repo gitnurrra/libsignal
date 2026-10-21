@@ -3,9 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use std::io::{stdout, Write as _};
+use std::io::{Write as _, stdout};
 
-use aes::cipher::crypto_common::rand_core::{OsRng, RngCore};
 use clap::{ArgAction, Parser};
 use clap_stdin::FileOrStdin;
 use libsignal_cli_utils::read_file;
@@ -14,8 +13,10 @@ use libsignal_message_backup::export::{
     aes_cbc_encrypt, gzip_compress, hmac_checksum, pad_gzipped_bucketed,
 };
 use libsignal_message_backup::key::MessageBackupKey;
-use libsignal_svrb::proto::backup_metadata::{metadata_pb, MetadataPb};
 use libsignal_svrb::proto::Message as _;
+use libsignal_svrb::proto::backup_metadata::{MetadataPb, metadata_pb};
+use rand::TryRngCore as _;
+use rand::rngs::OsRng;
 
 #[path = "../src/bin/support/mod.rs"]
 mod support;
@@ -46,6 +47,10 @@ struct CliArgs {
     #[arg(long, default_value = "modern")]
     format: Format,
 
+    /// ignore the all-ASCII input check
+    #[arg(long, default_value_t = false)]
+    force: bool,
+
     #[command(flatten)]
     key_args: KeyArgs,
 }
@@ -56,6 +61,7 @@ fn main() {
         iv,
         pad_bucketed,
         format,
+        force,
         key_args,
     } = CliArgs::parse();
 
@@ -63,7 +69,9 @@ fn main() {
 
     let iv = iv.unwrap_or_else(|| {
         let mut iv = [0; 16];
-        OsRng.fill_bytes(&mut iv);
+        OsRng
+            .try_fill_bytes(&mut iv)
+            .expect("OS randomness available");
         iv
     });
 
@@ -71,6 +79,13 @@ fn main() {
 
     let contents = read_file(input);
     eprintln!("read {} bytes", contents.len());
+
+    if !force && contents.is_ascii() {
+        eprintln!(
+            "⚠️ encrypting a text file may not be what you want. Use --force if you mean it."
+        );
+        std::process::exit(-1);
+    }
 
     let mut compressed_contents = gzip_compress(futures::io::Cursor::new(contents));
     eprintln!("compressed to {} bytes", compressed_contents.len());
@@ -88,8 +103,8 @@ fn main() {
         let faux_metadata = MetadataPb {
             iv: b"iv_12_bytes_".to_vec(),
             pair: vec![metadata_pb::Pair {
-                ct: b"[ciphertext]".to_vec(),
-                pw_salt: b"[pw_salt]".to_vec(),
+                ct: [0xCC; 48].to_vec(),
+                pw_salt: [0x50; 32].to_vec(),
                 ..Default::default()
             }],
             ..Default::default()

@@ -22,18 +22,19 @@ public struct IdentityKey: Equatable, Sendable {
     }
 
     public func verifyAlternateIdentity<Bytes: ContiguousBytes>(_ other: IdentityKey, signature: Bytes) throws -> Bool {
-        var result = false
-        try withAllBorrowed(publicKey, other.publicKey, .bytes(signature)) { selfHandle, otherHandle, signatureBuffer in
-            try checkError(
+        return try withAllBorrowed(publicKey, other.publicKey, .bytes(signature)) {
+            selfHandle,
+            otherHandle,
+            signatureBuffer in
+            try invokeFnReturningBool {
                 signal_identitykey_verify_alternate_identity(
-                    &result,
+                    $0,
                     selfHandle.const(),
                     otherHandle.const(),
                     signatureBuffer
                 )
-            )
+            }
         }
-        return result
     }
 }
 
@@ -41,26 +42,26 @@ public struct IdentityKeyPair: Sendable {
     public let publicKey: PublicKey
     public let privateKey: PrivateKey
 
+    public init(publicKey: PublicKey, privateKey: PrivateKey) {
+        self.publicKey = publicKey
+        self.privateKey = privateKey
+    }
+
+    public init<Bytes: ContiguousBytes>(bytes: Bytes) throws {
+        let out = try bytes.withUnsafeBorrowedBuffer { bytes in
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_identitykeypair_deserialize($0, bytes)
+            }
+        }
+
+        self.publicKey = PublicKey(owned: NonNull(out.first)!)
+        self.privateKey = PrivateKey(owned: NonNull(out.second)!)
+    }
+
     public static func generate() -> IdentityKeyPair {
         let privateKey = PrivateKey.generate()
         let publicKey = privateKey.publicKey
         return IdentityKeyPair(publicKey: publicKey, privateKey: privateKey)
-    }
-
-    public init<Bytes: ContiguousBytes>(bytes: Bytes) throws {
-        var pubkeyPtr = SignalMutPointerPublicKey()
-        var privkeyPtr = SignalMutPointerPrivateKey()
-        try bytes.withUnsafeBorrowedBuffer {
-            try checkError(signal_identitykeypair_deserialize(&privkeyPtr, &pubkeyPtr, $0))
-        }
-
-        self.publicKey = PublicKey(owned: NonNull(pubkeyPtr)!)
-        self.privateKey = PrivateKey(owned: NonNull(privkeyPtr)!)
-    }
-
-    public init(publicKey: PublicKey, privateKey: PrivateKey) {
-        self.publicKey = publicKey
-        self.privateKey = privateKey
     }
 
     public func serialize() -> Data {

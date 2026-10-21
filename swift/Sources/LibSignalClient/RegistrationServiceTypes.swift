@@ -97,30 +97,44 @@ public class RegisterAccountResponse: NativeHandleOwner<SignalMutPointerRegister
     }
 
     public var aci: Aci {
-        return failOnError {
+        let uuid = failOnError {
             try self.withNativeHandle { native in
-                try invokeFnReturningServiceId {
-                    signal_register_account_response_get_identity($0, native.const(), ServiceIdKind.aci.rawValue)
+                try invokeFnReturningUuid {
+                    signal_register_account_response_get_aci($0, native.const())
                 }
             }
         }
+        return Aci(fromUUID: uuid)
     }
 
-    public var pni: Pni {
+    /// `nil` for an account with no phone number.
+    public var pni: Pni? {
         return failOnError {
             try self.withNativeHandle { native in
-                try invokeFnReturningServiceId {
-                    signal_register_account_response_get_identity($0, native.const(), ServiceIdKind.pni.rawValue)
+                try invokeFnReturningOptionalUuid {
+                    signal_register_account_response_get_pni($0, native.const())
                 }
             }
-        }
+        }.map { Pni(fromUUID: $0) }
     }
 
-    public var number: String {
+    /// `nil` for an account with no phone number.
+    public var number: String? {
         return failOnError {
             try self.withNativeHandle { native in
-                try invokeFnReturningString {
+                try invokeFnReturningOptionalString {
                     signal_register_account_response_get_number($0, native.const())
+                }
+            }
+        }
+    }
+
+    /// Non-`nil` only for an account with no phone number.
+    public var authCredentialSalt: Data? {
+        return failOnError {
+            try self.withNativeHandle { native in
+                try invokeFnReturningOptionalArray {
+                    signal_register_account_response_get_auth_credential_salt($0, native.const())
                 }
             }
         }
@@ -181,18 +195,42 @@ public class RegisterAccountResponse: NativeHandleOwner<SignalMutPointerRegister
     }
 }
 
-public struct BadgeEntitlement: Equatable {
+public struct BadgeEntitlement: Equatable, Sendable {
     public let id: String
     public let visible: Bool
     public let expiration: TimeInterval
+
+    public init(id: String, visible: Bool, expiration: TimeInterval) {
+        self.id = id
+        self.visible = visible
+        self.expiration = expiration
+    }
+
+    public init(id: String, visible: Bool, expiration: Date) {
+        self.init(id: id, visible: visible, expiration: expiration.timeIntervalSince1970)
+    }
+
+    // Extension for by-value bridging.
+    internal init(badgeId: String, expiration: Date, visible: Bool) {
+        self.init(id: badgeId, visible: visible, expiration: expiration)
+    }
+
+    public var expirationDate: Date {
+        Date(timeIntervalSince1970: expiration)
+    }
 }
 
-public struct BackupEntitlement: Equatable {
+public struct BackupEntitlement: Equatable, Sendable {
     public let expiration: TimeInterval
     public let level: UInt64
+
     public init(expiration: TimeInterval, level: UInt64) {
         self.expiration = expiration
         self.level = level
+    }
+
+    public init(expiration: Date, level: UInt64) {
+        self.init(expiration: expiration.timeIntervalSince1970, level: level)
     }
 
     fileprivate init?(fromResponse native: SignalConstPointerRegisterAccountResponse) throws {
@@ -210,6 +248,15 @@ public struct BackupEntitlement: Equatable {
             return nil
         }
         self.init(expiration: TimeInterval(expiration), level: level)
+    }
+
+    // Extension for by-value bridging.
+    internal init(level: Int64, expiration: Date) {
+        self.init(expiration: expiration, level: UInt64(bitPattern: level))
+    }
+
+    public var expirationDate: Date {
+        Date(timeIntervalSince1970: expiration)
     }
 }
 
@@ -264,10 +311,9 @@ public class RegisterAccountAttributes: NativeHandleOwner<SignalMutPointerRegist
                 try registrationLock.withCString { registrationLock in
                     try withUnsafePointer(to: &uak) { unidentifiedAccessKey in
                         try capabilities.withUnsafeBorrowedBytestringArray { capabilities in
-                            var nativeHandle = SignalMutPointerRegistrationAccountAttributes()
-                            try checkError(
+                            try invokeFnReturningValueByPointer(.init()) {
                                 signal_registration_account_attributes_create(
-                                    &nativeHandle,
+                                    $0,
                                     recoveryPassword,
                                     aciRegistrationId,
                                     pniRegistrationId,
@@ -277,8 +323,7 @@ public class RegisterAccountAttributes: NativeHandleOwner<SignalMutPointerRegist
                                     capabilities,
                                     discoverableByPhoneNumber
                                 )
-                            )
-                            return nativeHandle
+                            }
                         }
                     }
                 }
@@ -332,10 +377,9 @@ private func invokeFnReturningOptionalInteger<Result: FixedWidthInteger & Unsign
 }
 
 private func invokeFnReturningBadgeEntitlementArray(
-    fn: (_ out: UnsafeMutablePointer<SignalOwnedBufferOfFfiRegisterResponseBadge>) -> SignalFfiErrorRef?
+    fn: (_ out: UnsafeMutablePointer<SignalOwnedBufferOfFfiRegisterResponseBadge>?) -> SignalFfiErrorRef?
 ) throws -> [BadgeEntitlement] {
-    var out = SignalOwnedBufferOfFfiRegisterResponseBadge()
-    try checkError(fn(&out))
+    let out = try invokeFnReturningValueByPointer(.init(), fn: fn)
     defer { signal_free_list_of_register_response_badges(out) }
 
     return UnsafeBufferPointer(start: out.base, count: out.length).map {

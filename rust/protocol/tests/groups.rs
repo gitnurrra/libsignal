@@ -24,16 +24,18 @@ fn group_no_send_session() -> Result<(), SignalProtocolError> {
 
     let mut alice_store = test_in_memory_protocol_store()?;
 
-    assert!(group_encrypt(
-        &mut alice_store,
-        &sender_address,
-        distribution_id,
-        "space camp?".as_bytes(),
-        &mut csprng,
-    )
-    .now_or_never()
-    .expect("sync")
-    .is_err());
+    assert!(
+        group_encrypt(
+            &mut alice_store,
+            &sender_address,
+            distribution_id,
+            "space camp?".as_bytes(),
+            &mut csprng,
+        )
+        .now_or_never()
+        .expect("sync")
+        .is_err()
+    );
 
     Ok(())
 }
@@ -174,23 +176,23 @@ fn group_sealed_sender() -> Result<(), SignalProtocolError> {
 
         process_prekey_bundle(
             &bob_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
         process_prekey_bundle(
             &carol_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &carol_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -388,34 +390,34 @@ fn group_sealed_sender_multiple_devices() -> Result<(), SignalProtocolError> {
 
         process_prekey_bundle(
             &bob_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
         process_prekey_bundle(
             &carol_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &carol_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
         process_prekey_bundle(
             &carol2_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &carol2_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -626,34 +628,34 @@ fn group_sealed_sender_multiple_devices_and_excluded_recipients() -> Result<(), 
 
         process_prekey_bundle(
             &bob_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
         process_prekey_bundle(
             &carol_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &carol_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
         process_prekey_bundle(
             &carol2_uuid_address,
+            &alice_uuid_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &carol2_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -1204,13 +1206,15 @@ fn group_too_far_in_the_future() -> Result<(), SignalProtocolError> {
         )
         .await?;
 
-        assert!(group_decrypt(
-            alice_ciphertext.serialized(),
-            &mut bob_store,
-            &sender_address,
-        )
-        .await
-        .is_err());
+        assert!(
+            group_decrypt(
+                alice_ciphertext.serialized(),
+                &mut bob_store,
+                &sender_address,
+            )
+            .await
+            .is_err()
+        );
 
         Ok(())
     }

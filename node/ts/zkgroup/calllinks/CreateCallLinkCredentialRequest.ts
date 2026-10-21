@@ -3,20 +3,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { randomBytes } from 'crypto';
+import type { Bytes } from '@signalapp/types';
+import { randomBytes } from 'node:crypto';
 
-import ByteArray from '../internal/ByteArray';
-import { RANDOM_LENGTH } from '../internal/Constants';
-import * as Native from '../../../Native';
+import ByteArray from '../internal/ByteArray.js';
+import { RANDOM_LENGTH } from '../internal/Constants.js';
+import * as Native from '../../Native.js';
 
-import CreateCallLinkCredentialResponse from './CreateCallLinkCredentialResponse';
-import GenericServerSecretParams from '../GenericServerSecretParams';
-import { Aci } from '../../Address';
+import CreateCallLinkCredentialResponse from './CreateCallLinkCredentialResponse.js';
+import GenericServerSecretParams from '../GenericServerSecretParams.js';
+import { Aci } from '../../Address.js';
 
 export default class CreateCallLinkCredentialRequest extends ByteArray {
   private readonly __type?: never;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, Native.CreateCallLinkCredentialRequest_CheckValidContents);
   }
 
@@ -33,7 +34,7 @@ export default class CreateCallLinkCredentialRequest extends ByteArray {
     userId: Aci,
     timestamp: number,
     params: GenericServerSecretParams,
-    random: Uint8Array
+    random: Bytes
   ): CreateCallLinkCredentialResponse {
     return new CreateCallLinkCredentialResponse(
       Native.CreateCallLinkCredentialRequest_IssueDeterministic(

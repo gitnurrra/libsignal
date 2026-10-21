@@ -47,16 +47,18 @@ public struct ChatRequest: Equatable, Sendable {
     // Exposed for testing
     internal class InternalRequest: NativeHandleOwner<SignalMutPointerHttpRequest> {
         convenience init(_ request: ChatRequest) throws {
-            var handle = SignalMutPointerHttpRequest(untyped: nil)
-            if let body = request.body {
-                try body.withUnsafeBorrowedBuffer { body in
-                    try checkError(
-                        signal_http_request_new_with_body(&handle, request.method, request.pathAndQuery, body)
-                    )
+            let handle =
+                if let body = request.body {
+                    try body.withUnsafeBorrowedBuffer { body in
+                        try invokeFnReturningValueByPointer(.init()) {
+                            signal_http_request_new_with_body($0, request.method, request.pathAndQuery, body)
+                        }
+                    }
+                } else {
+                    try invokeFnReturningValueByPointer(.init()) {
+                        signal_http_request_new_without_body($0, request.method, request.pathAndQuery)
+                    }
                 }
-            } else {
-                try checkError(signal_http_request_new_without_body(&handle, request.method, request.pathAndQuery))
-            }
             // Make sure we clean up the handle if there are any errors adding headers.
             self.init(owned: NonNull(handle)!)
 
@@ -116,6 +118,25 @@ public struct ChatRequest: Equatable, Sendable {
                     return headers
                 }
             }
+        }
+
+        internal static func getNextGrpcMessageData(_ body: inout Data) -> Data {
+            var messageOffsets = SignalPairOfu32u32()
+            body.withBorrowed { body in
+                failOnError(
+                    signal_testing_fake_chat_remote_end_next_grpc_message(&messageOffsets, body, 0)
+                )
+            }
+            let message = body.prefix(Int(messageOffsets.second)).dropFirst(Int(messageOffsets.first))
+            body = body.dropFirst(Int(messageOffsets.second))
+            return message
+        }
+
+        internal func getSingleGrpcMessageData() -> Data {
+            var body = self.body
+            let result = InternalRequest.getNextGrpcMessageData(&body)
+            precondition(body.isEmpty, "message had trailing data, use getNextGrpcMessageData instead")
+            return result
         }
         #endif
     }
@@ -189,13 +210,7 @@ public struct ChatResponse: Equatable, Sendable {
         )
 
         // Avoid copying the body when possible!
-        self.body = Data(
-            bytesNoCopy: rawResponse.body.base,
-            count: rawResponse.body.length,
-            deallocator: .custom { base, length in
-                signal_free_buffer(base, length)
-            }
-        )
+        self.body = Data(consuming: rawResponse.body)
         // Clear it out so it doesn't get freed eagerly.
         rawResponse.body = .init()
 

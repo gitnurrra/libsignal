@@ -4,29 +4,40 @@
 //
 
 import type { ReadonlyDeep } from 'type-fest';
+import type { Bytes } from '@signalapp/types';
 
-import * as Native from '../../Native';
-import { LibSignalError, RateLimitedError } from '../Errors';
-import { type Net, type TokioAsyncContext } from '../net';
-import { PublicKey } from '../EcKeys';
-import { Aci, Pni, ServiceIdKind } from '../Address';
-import { SignedKyberPublicPreKey, SignedPublicPreKey } from '..';
-import { newNativeHandle } from '../internal';
+import * as Native from '../Native.js';
+import {
+  LibSignalError,
+  RateLimitedError,
+  RegistrationOneTimePasswordRequiredError,
+  RegistrationRecoveryPasswordRequiredError,
+  RegistrationRecoveryVerificationFailedError,
+  RegisterAccountRequestRejectedError,
+  RegistrationInvalidReceiptError,
+} from '../Errors.js';
+import type { Net, TokioAsyncContext } from '../net.js';
+import { PublicKey } from '../EcKeys.js';
+import { Aci, Pni, ServiceIdKind } from '../Address.js';
+import {
+  SignedKyberPublicPreKey,
+  SignedPublicPreKey,
+} from '../ProtocolTypes.js';
+import { newNativeHandle } from '../internal.js';
+import {
+  convertNativeRegistrationSessionState,
+  RegistrationSessionState,
+} from './RegistrationSession.js';
+import { FakeChatRemote } from './FakeChat.js';
+import ReceiptCredentialPresentation from '../zkgroup/receipts/ReceiptCredentialPresentation.js';
+
+export type { RegistrationSessionState };
 
 type ConnectionManager = Native.Wrapper<Native.ConnectionManager>;
 
 type RegistrationOptions = {
   tokioAsyncContext: TokioAsyncContext;
   connectionManager: ConnectionManager;
-};
-
-export type RegistrationSessionState = {
-  allowedToRequestCode: boolean;
-  verified: boolean;
-  nextSmsSecs?: number;
-  nextCallSecs?: number;
-  nextVerificationAttemptSecs?: number;
-  requestedInformation: Set<'pushChallenge' | 'captcha'>;
 };
 
 type CreateSessionArgs = Readonly<{
@@ -38,12 +49,73 @@ type ResumeSessionArgs = Readonly<{
   e164: string;
 }>;
 
+/** Inputs shared by every flow that registers or re-registers an account. */
+export type CommonRegisterAccountArgs = {
+  accountPassword: string;
+  skipDeviceTransfer: boolean;
+  accountAttributes: AccountAttributes;
+  aciPublicKey: PublicKey;
+  aciSignedPreKey: SignedPublicPreKey;
+  aciPqLastResortPreKey: SignedKyberPublicPreKey;
+};
+
+/**
+ * The PNI key material required by the flows that register a phone number.
+ *
+ * The server requires all of it to be present or all of it to be absent, so the
+ * flows for an account with no phone number do not accept any of it.
+ */
+export type PniKeyArgs = {
+  pniPublicKey: PublicKey;
+  pniSignedPreKey: SignedPublicPreKey;
+  pniPqLastResortPreKey: SignedKyberPublicPreKey;
+};
+
+/** Inputs to {@link RegistrationService.registerAccount}. */
+export type RegisterAccountArgs = CommonRegisterAccountArgs & PniKeyArgs;
+
+/** Inputs to {@link Net.reregisterAccount}. */
+export type ReregisterAccountArgs = RegisterAccountArgs & { e164: string };
+
+/** Inputs to {@link Net.registerAccountWithoutNumber}. */
+export type RegisterAccountWithoutNumberArgs = CommonRegisterAccountArgs & {
+  receiptCredentialPresentation: ReceiptCredentialPresentation;
+};
+
+/** Inputs to {@link Net.reregisterAccountWithoutNumber}. */
+export type ReregisterAccountWithoutNumberArgs = CommonRegisterAccountArgs & {
+  aci: Aci;
+  oneTimePassword?: number;
+};
+
 export type Svr2CredentialResult = 'match' | 'no-match' | 'invalid';
 
 /**
  * A client for the Signal registration service.
  *
  * This wraps a {@link Net} to provide a reliable registration service client.
+ *
+ * There are four ways to register, along two axes: whether the account has a
+ * phone number, and whether it already exists. Only {@link
+ * RegistrationService.registerAccount} needs a session, since proving control of
+ * a phone number is an interactive process. The other three authenticate with
+ * something the caller already holds and are called through {@link Net}:
+ * {@link Net.reregisterAccount}, {@link Net.registerAccountWithoutNumber}, and
+ * {@link Net.reregisterAccountWithoutNumber}.
+ *
+ * @example
+ * ```ts
+ * const service = await net.createRegistrationSession({ e164 });
+ *
+ * // sessionState.requestedInformation may name a push challenge, but these
+ * // bindings expose no push-challenge API. Only submitCaptcha() is available;
+ * // loop until sessionState.allowedToRequestCode is true.
+ *
+ * await service.requestVerification({ transport: 'sms', client, languages });
+ * const verified = await service.verifySession(codeFromUser);
+ *
+ * const response = await service.registerAccount(args);
+ * ```
  */
 export class RegistrationService {
   private constructor(
@@ -184,17 +256,14 @@ export class RegistrationService {
     );
   }
 
-  public async registerAccount(inputs: {
-    accountPassword: string;
-    skipDeviceTransfer: boolean;
-    accountAttributes: AccountAttributes;
-    aciPublicKey: PublicKey;
-    pniPublicKey: PublicKey;
-    aciSignedPreKey: SignedPublicPreKey;
-    pniSignedPreKey: SignedPublicPreKey;
-    aciPqLastResortPreKey: SignedKyberPublicPreKey;
-    pniPqLastResortPreKey: SignedKyberPublicPreKey;
-  }): Promise<RegisterAccountResponse> {
+  /**
+   * Registers an account that has a phone number.
+   *
+   * The session must already be verified.
+   */
+  public async registerAccount(
+    inputs: Readonly<RegisterAccountArgs>
+  ): Promise<RegisterAccountResponse> {
     const request = new RegisterAccountRequest(inputs);
     return new RegisterAccountResponse(
       await Native.RegistrationService_RegisterAccount(
@@ -206,20 +275,15 @@ export class RegistrationService {
     );
   }
 
+  /**
+   * Re-registers an account that has a phone number.
+   *
+   * Clients should not use this method directly, but should instead call
+   * {@link Net.reregisterAccount}.
+   */
   public static async reregisterAccount(
     options: ReadonlyDeep<RegistrationOptions>,
-    inputs: {
-      e164: string;
-      accountPassword: string;
-      skipDeviceTransfer: boolean;
-      accountAttributes: AccountAttributes;
-      aciPublicKey: PublicKey;
-      pniPublicKey: PublicKey;
-      aciSignedPreKey: SignedPublicPreKey;
-      pniSignedPreKey: SignedPublicPreKey;
-      aciPqLastResortPreKey: SignedKyberPublicPreKey;
-      pniPqLastResortPreKey: SignedKyberPublicPreKey;
-    }
+    inputs: Readonly<ReregisterAccountArgs>
   ): Promise<RegisterAccountResponse> {
     const { tokioAsyncContext, connectionManager } = options;
     const request = new RegisterAccountRequest(inputs);
@@ -235,44 +299,104 @@ export class RegistrationService {
   }
 
   /**
+   * Registers a new account that has no phone number.
+   *
+   * `accountAttributes.recoveryPassword` must not be empty: a recovery
+   * password is the only way an account with no phone number can ever be
+   * recovered.
+   *
+   * Clients should not use this method directly, but should instead call
+   * {@link Net.registerAccountWithoutNumber}.
+   *
+   * @throws {RegistrationRecoveryPasswordRequiredError} if the recovery
+   * password is empty.
+   * @throws {RegisterAccountRequestRejectedError} if the server rejects the
+   * request, including when the receipt credential presentation can't be
+   * parsed.
+   * @throws {RegistrationInvalidReceiptError} if the receipt credential
+   * presentation fails verification, has expired, or has already been
+   * redeemed.
+   */
+  public static async registerAccountWithoutNumber(
+    options: ReadonlyDeep<RegistrationOptions>,
+    inputs: Readonly<RegisterAccountWithoutNumberArgs>
+  ): Promise<RegisterAccountResponse> {
+    const { tokioAsyncContext, connectionManager } = options;
+    const request = new RegisterAccountRequest(inputs);
+    return new RegisterAccountResponse(
+      await Native.RegistrationService_RegisterAccountWithoutNumber(
+        tokioAsyncContext,
+        connectionManager,
+        inputs.receiptCredentialPresentation.contents,
+        request,
+        inputs.accountAttributes
+      )
+    );
+  }
+
+  /**
+   * Re-registers an account that has no phone number, identified by its ACI.
+   *
+   * The counterpart to {@link RegistrationService.reregisterAccount} for an account with no phone
+   * number. No PNI keys are accepted here; libsignal generates the PNI material
+   * the server requires and then discards.
+   *
+   * `accountAttributes.recoveryPassword` must not be empty, since a recovery
+   * password is the only way such an account can ever be re-registered.
+   *
+   * `oneTimePassword` is sent as a number, so `012345` becomes `12345`. Can be
+   * omitted if no TOTP was set up for the account.
+   *
+   * Clients should not use this method directly, but should instead call
+   * {@link Net.reregisterAccountWithoutNumber}.
+   *
+   * @throws {RegistrationRecoveryPasswordRequiredError} if the recovery
+   * password is empty.
+   * @throws {RegistrationOneTimePasswordRequiredError} if no valid one-time
+   * password was given.
+   * @throws {RegistrationRecoveryVerificationFailedError} if the recovery
+   * password could not be verified.
+   * @throws {RegisterAccountRequestRejectedError} if the server rejects the
+   * request.
+   */
+  public static async reregisterAccountWithoutNumber(
+    options: ReadonlyDeep<RegistrationOptions>,
+    inputs: Readonly<ReregisterAccountWithoutNumberArgs>
+  ): Promise<RegisterAccountResponse> {
+    const { tokioAsyncContext, connectionManager } = options;
+    const request = new RegisterAccountRequest(inputs);
+    return new RegisterAccountResponse(
+      await Native.RegistrationService_ReregisterAccountWithoutNumber(
+        tokioAsyncContext,
+        connectionManager,
+        inputs.aci.getServiceIdFixedWidthBinary(),
+        request,
+        inputs.accountAttributes
+      )
+    );
+  }
+
+  /**
    *  Internal, only public for testing
    */
   public static _convertNativeSessionState(
     session: Native.Wrapper<Native.RegistrationSession>
   ): RegistrationSessionState {
-    const nextCallSecs = Native.RegistrationSession_GetNextCallSeconds(session);
-    const nextSmsSecs = Native.RegistrationSession_GetNextSmsSeconds(session);
-    const nextVerificationAttemptSecs =
-      Native.RegistrationSession_GetNextVerificationAttemptSeconds(session);
-
-    return {
-      allowedToRequestCode:
-        Native.RegistrationSession_GetAllowedToRequestCode(session),
-      verified: Native.RegistrationSession_GetVerified(session),
-      nextCallSecs: nextCallSecs != null ? nextCallSecs : undefined,
-      nextSmsSecs: nextSmsSecs != null ? nextSmsSecs : undefined,
-      nextVerificationAttemptSecs:
-        nextVerificationAttemptSecs != null
-          ? nextVerificationAttemptSecs
-          : undefined,
-      requestedInformation: new Set(
-        Native.RegistrationSession_GetRequestedInformation(session)
-      ),
-    };
+    return convertNativeRegistrationSessionState(session);
   }
 
   /**
    * Create a registration client that sends requests to the returned fake chat.
    *
-   * Calling code will need to retrieve the first fake remote from the fake chat
-   * server and respond in order for the returned Promise to resolve.
+   * Calling code will need to await and use the returned fake chat remote
+   * to respond in order for the returned Promise<RegistrationService> to resolve.
    *
    * Internal, only public for testing
    */
   static fakeCreateSession(
     tokio: TokioAsyncContext,
     { e164 }: CreateSessionArgs
-  ): [Promise<RegistrationService>, Native.Wrapper<Native.FakeChatServer>] {
+  ): [Promise<RegistrationService>, Promise<FakeChatRemote>] {
     const server = newNativeHandle(Native.TESTING_FakeChatServer_Create());
     const registration = async () => {
       const handle = await Native.TESTING_FakeRegistrationSession_CreateSession(
@@ -283,7 +407,14 @@ export class RegistrationService {
       return new RegistrationService(handle, tokio);
     };
 
-    return [registration(), server];
+    const remote = async () => {
+      return new FakeChatRemote(
+        tokio,
+        await Native.TESTING_FakeChatServer_GetNextRemote(tokio, server)
+      );
+    };
+
+    return [registration(), remote()];
   }
 }
 
@@ -310,11 +441,11 @@ export class AccountAttributes {
     capabilities,
     discoverableByPhoneNumber,
   }: {
-    recoveryPassword: Uint8Array;
+    recoveryPassword: Bytes;
     aciRegistrationId: number;
     pniRegistrationId: number;
     registrationLock: string | null;
-    unidentifiedAccessKey: Uint8Array;
+    unidentifiedAccessKey: Bytes;
     unrestrictedUnidentifiedAccess: boolean;
     capabilities: Set<string>;
     discoverableByPhoneNumber: boolean;
@@ -338,25 +469,29 @@ export class RegisterAccountResponse {
   public constructor(readonly _nativeHandle: Native.RegisterAccountResponse) {}
 
   public get aci(): Aci {
-    return new Aci(
-      Native.RegisterAccountResponse_GetIdentity(this, ServiceIdKind.Aci)
-    );
+    return Aci.fromUuidBytes(Native.RegisterAccountResponse_GetAci(this));
   }
 
-  public get pni(): Pni {
-    return new Pni(
-      Native.RegisterAccountResponse_GetIdentity(this, ServiceIdKind.Pni)
-    );
+  /** `null` for an account with no phone number. */
+  public get pni(): Pni | null {
+    const pni = Native.RegisterAccountResponse_GetPni(this);
+    return pni == null ? null : Pni.fromUuidBytes(pni);
   }
 
-  public get number(): string {
+  /** `null` for an account with no phone number. */
+  public get number(): string | null {
     return Native.RegisterAccountResponse_GetNumber(this);
   }
 
-  public get usernameHash(): Uint8Array | null {
+  /** Set only for an account with no phone number. */
+  public get authCredentialSalt(): Bytes | null {
+    return Native.RegisterAccountResponse_GetAuthCredentialSalt(this);
+  }
+
+  public get usernameHash(): Bytes | null {
     return Native.RegisterAccountResponse_GetUsernameHash(this);
   }
-  public get usernameLinkHandle(): Uint8Array | null {
+  public get usernameLinkHandle(): Bytes | null {
     return Native.RegisterAccountResponse_GetUsernameLinkHandle(this);
   }
 
@@ -400,16 +535,18 @@ class RegisterAccountRequest {
   public constructor(inputs: {
     accountPassword: string;
     skipDeviceTransfer: boolean;
+    oneTimePassword?: number;
     aciPublicKey: PublicKey;
-    pniPublicKey: PublicKey;
+    pniPublicKey?: PublicKey;
     aciSignedPreKey: SignedPublicPreKey;
-    pniSignedPreKey: SignedPublicPreKey;
+    pniSignedPreKey?: SignedPublicPreKey;
     aciPqLastResortPreKey: SignedKyberPublicPreKey;
-    pniPqLastResortPreKey: SignedKyberPublicPreKey;
+    pniPqLastResortPreKey?: SignedKyberPublicPreKey;
   }) {
     const {
       accountPassword,
       skipDeviceTransfer,
+      oneTimePassword,
       aciPublicKey,
       pniPublicKey,
       aciSignedPreKey,
@@ -422,36 +559,45 @@ class RegisterAccountRequest {
     if (skipDeviceTransfer) {
       Native.RegisterAccountRequest_SetSkipDeviceTransfer(this);
     }
+    if (oneTimePassword !== undefined) {
+      Native.RegisterAccountRequest_SetOneTimePassword(this, oneTimePassword);
+    }
     Native.RegisterAccountRequest_SetIdentityPublicKey(
       this,
       ServiceIdKind.Aci,
       aciPublicKey
     );
-    Native.RegisterAccountRequest_SetIdentityPublicKey(
-      this,
-      ServiceIdKind.Pni,
-      pniPublicKey
-    );
+    if (pniPublicKey !== undefined) {
+      Native.RegisterAccountRequest_SetIdentityPublicKey(
+        this,
+        ServiceIdKind.Pni,
+        pniPublicKey
+      );
+    }
 
     Native.RegisterAccountRequest_SetIdentitySignedPreKey(
       this,
       ServiceIdKind.Aci,
       toBridgedPublicPreKey(aciSignedPreKey)
     );
-    Native.RegisterAccountRequest_SetIdentitySignedPreKey(
-      this,
-      ServiceIdKind.Pni,
-      toBridgedPublicPreKey(pniSignedPreKey)
-    );
+    if (pniSignedPreKey !== undefined) {
+      Native.RegisterAccountRequest_SetIdentitySignedPreKey(
+        this,
+        ServiceIdKind.Pni,
+        toBridgedPublicPreKey(pniSignedPreKey)
+      );
+    }
     Native.RegisterAccountRequest_SetIdentityPqLastResortPreKey(
       this,
       ServiceIdKind.Aci,
       toBridgedPublicPreKey(aciPqLastResortPreKey)
     );
-    Native.RegisterAccountRequest_SetIdentityPqLastResortPreKey(
-      this,
-      ServiceIdKind.Pni,
-      toBridgedPublicPreKey(pniPqLastResortPreKey)
-    );
+    if (pniPqLastResortPreKey !== undefined) {
+      Native.RegisterAccountRequest_SetIdentityPqLastResortPreKey(
+        this,
+        ServiceIdKind.Pni,
+        toBridgedPublicPreKey(pniPqLastResortPreKey)
+      );
+    }
   }
 }

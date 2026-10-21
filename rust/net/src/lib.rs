@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+#![warn(clippy::unwrap_used)]
+
 pub mod auth;
 pub mod cdsi;
 pub mod certs;
@@ -12,6 +14,7 @@ pub mod enclave;
 pub mod env;
 pub mod proto;
 pub mod svr;
+pub mod svr2;
 pub mod svrb;
 pub mod ws;
 

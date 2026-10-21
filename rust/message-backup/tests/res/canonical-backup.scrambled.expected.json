@@ -40,7 +40,24 @@
       "default_chat_style": null,
       "custom_chat_colors": {},
       "optimize_on_device_storage": false,
-      "backup_level": null
+      "backup_level": null,
+      "default_sent_media_quality": "Standard",
+      "auto_download_settings": null,
+      "screen_lock_timeout": null,
+      "pin_reminders": null,
+      "app_theme": "System",
+      "calls_use_less_data_setting": "MobileDataOnly",
+      "allow_sealed_sender_from_anyone": false,
+      "allow_automatic_key_verification": false,
+      "has_seen_admin_delete_education_dialog": false,
+      "unread_badge_type": "UnreadChats",
+      "include_muted_chats_in_badge": true,
+      "reaction_notifications": false,
+      "notify_for_calls_if_muted": true,
+      "notify_for_mentions_if_muted": false,
+      "notify_for_replies_if_muted": false,
+      "show_unread_reminders": false,
+      "notify_when_contact_joins": true
     },
     "avatar_url_path": "",
     "donation_subscription": {
@@ -49,7 +66,15 @@
       "manually_canceled": true
     },
     "backup_subscription": null,
-    "svr_pin": ""
+    "svr_pin": "",
+    "android_specific_settings": {
+      "use_system_emoji": true,
+      "screenshot_security": true,
+      "navigation_bar_size": "Normal"
+    },
+    "ios_specific_settings": null,
+    "bio_text": "",
+    "bio_emoji": ""
   },
   "recipients": [
     {
@@ -82,6 +107,8 @@
   "ad_hoc_calls": [],
   "pinned_chats": [],
   "sticker_packs": [],
+  "hidden_sticker_packs": [],
+  "favorite_stickers": [],
   "notification_profiles": [],
   "chat_folders": []
 }

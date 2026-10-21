@@ -5,6 +5,7 @@
 
 package org.signal.libsignal.protocol.state
 
+import org.signal.libsignal.internal.CalledFromNative
 import org.signal.libsignal.internal.Native
 import org.signal.libsignal.internal.NativeHandleGuard
 import org.signal.libsignal.protocol.IdentityKey
@@ -16,20 +17,25 @@ import org.signal.libsignal.protocol.kem.KEMPublicKey
  *
  * @author Moxie Marlinspike
  */
-public class PreKeyBundle(
-  registrationId: Int,
-  deviceId: Int,
-  preKeyId: Int,
-  preKeyPublic: ECPublicKey?,
-  signedPreKeyId: Int,
-  signedPreKeyPublic: ECPublicKey,
-  signedPreKeySignature: ByteArray,
-  identityKey: IdentityKey,
-  kyberPreKeyId: Int,
-  kyberPreKeyPublic: KEMPublicKey,
-  kyberPreKeySignature: ByteArray,
-) :
-  NativeHandleGuard.SimpleOwner(
+public class PreKeyBundle : NativeHandleGuard.SimpleOwner {
+  public companion object {
+    // -1 is treated as Option<u32>::None by the bridging layer
+    public const val NULL_PRE_KEY_ID: Int = -1
+  }
+
+  public constructor(
+    registrationId: Int,
+    deviceId: Int,
+    preKeyId: Int,
+    preKeyPublic: ECPublicKey?,
+    signedPreKeyId: Int,
+    signedPreKeyPublic: ECPublicKey,
+    signedPreKeySignature: ByteArray,
+    identityKey: IdentityKey,
+    kyberPreKeyId: Int,
+    kyberPreKeyPublic: KEMPublicKey,
+    kyberPreKeySignature: ByteArray,
+  ) : this(
     createNativeFrom(
       registrationId,
       deviceId,
@@ -44,10 +50,11 @@ public class PreKeyBundle(
       kyberPreKeySignature,
     ),
   ) {
+  }
 
-  public companion object {
-    // -1 is treated as Option<u32>::None by the bridging layer
-    public const val NULL_PRE_KEY_ID: Int = -1
+  // Native calls this through reflection, so this doesn't need to be public
+  @CalledFromNative
+  internal constructor(handle: Long) : super(handle) {
   }
 
   protected override fun release(nativeHandle: Long) {
@@ -67,10 +74,11 @@ public class PreKeyBundle(
     get() = guardedMapChecked(Native::PreKeyBundle_GetPreKeyId)
 
   public val preKey: ECPublicKey?
-    get() = guardedMapChecked(Native::PreKeyBundle_GetPreKeyPublic).let {
-      if (it == 0L) { return null }
-      ECPublicKey(it)
-    }
+    get() =
+      guardedMapChecked(Native::PreKeyBundle_GetPreKeyPublic).let {
+        if (it == 0L) return null
+        ECPublicKey(it)
+      }
 
   /**
    * @return the unique key ID for this signed prekey.
@@ -94,11 +102,12 @@ public class PreKeyBundle(
    * @return the [IdentityKey] of this PreKey's owner.
    */
   public val identityKey: IdentityKey
-    get() = IdentityKey(
-      ECPublicKey(
-        guardedMapChecked(Native::PreKeyBundle_GetIdentityKey),
-      ),
-    )
+    get() =
+      IdentityKey(
+        ECPublicKey(
+          guardedMapChecked(Native::PreKeyBundle_GetIdentityKey),
+        ),
+      )
 
   /**
    * @return the registration ID associated with this PreKey.
@@ -137,8 +146,8 @@ private fun createNativeFrom(
   kyberPreKeyId: Int,
   kyberPreKeyPublic: KEMPublicKey,
   kyberPreKeySignature: ByteArray,
-): Long {
-  return NativeHandleGuard(preKeyPublic).use { preKeyPublicGuard ->
+): Long =
+  NativeHandleGuard(preKeyPublic).use { preKeyPublicGuard ->
     signedPreKeyPublic.guardedMap { signedPreKeyPublicHandle ->
       identityKey.getPublicKey().guardedMap { identityKeyHandle ->
         kyberPreKeyPublic.guardedMap { kyberPreKeyPublicHandle ->
@@ -159,4 +168,3 @@ private fun createNativeFrom(
       }
     }
   }
-}

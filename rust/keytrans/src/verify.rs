@@ -6,38 +6,46 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use itertools::Itertools as _;
 use sha2::{Digest, Sha256};
 
 use crate::commitments::verify as verify_commitment;
 use crate::guide::{InvalidState, ProofGuide};
 use crate::implicit::{full_monitoring_path, monitoring_path};
 use crate::log::{evaluate_batch_proof, verify_consistency_proof};
-use crate::prefix::{evaluate as evaluate_prefix, MalformedProof};
+use crate::prefix::{MalformedProof, evaluate as evaluate_prefix};
 use crate::proto::{
-    AuditorTreeHead as SingleSignatureTreeHead, CondensedTreeSearchResponse, FullTreeHead,
-    MonitorKey, MonitorProof, MonitorRequest, MonitorResponse, ProofStep, TreeHead,
+    CondensedTreeSearchResponse, FullTreeHead, MonitorKey, MonitorProof, MonitorRequest,
+    MonitorResponse, ProofStep, TreeHead,
 };
 use crate::{
-    guide, log, vrf, DeploymentMode, FullSearchResponse, LastTreeHead, MonitorContext,
-    MonitorStateUpdate, MonitoringData, PublicConfig, SearchContext, SearchStateUpdate,
-    SlimSearchRequest, TreeRoot,
+    DeploymentMode, FullSearchResponse, LastTreeHead, MonitorContext, MonitorStateUpdate,
+    MonitoringData, PublicConfig, SearchContext, SearchStateUpdate, SlimSearchRequest, TreeRoot,
+    VerifiableTreeHead, guide, log, vrf,
 };
 
 /// The range of allowed timestamp values relative to "now".
 /// The timestamps will have to be in [now - max_behind .. now + max_ahead]
 const ALLOWED_TIMESTAMP_RANGE: &TimestampRange = &TimestampRange {
     max_behind: Duration::from_secs(24 * 60 * 60),
-    max_ahead: Duration::from_secs(10),
+    max_ahead: Duration::from_secs(24 * 60 * 60),
 };
 
 /// The range of allowed timestamp values relative to "now" used for auditor.
 const ALLOWED_AUDITOR_TIMESTAMP_RANGE: &TimestampRange = &TimestampRange {
     max_behind: Duration::from_secs(7 * 24 * 60 * 60),
-    max_ahead: Duration::from_secs(10),
+    max_ahead: Duration::from_secs(24 * 60 * 60),
 };
 const ENTRIES_MAX_BEHIND: u64 = 10_000_000;
 
-#[derive(Debug, displaydoc::Display)]
+/// Upper bound on `tree_size` accepted from the server.
+///
+/// Tree math in [`crate::implicit`] and [`crate::log`] performs arithmetic
+/// like `2*(n-1)+1` that would overflow for `n > 2^63`. Bounding `tree_size`
+/// at `2^62` keeps all such arithmetic safely within `u64`.
+const MAX_TREE_SIZE: u64 = 1u64 << 62;
+
+#[derive(Clone, Debug, displaydoc::Display)]
 pub enum Error {
     /// Required field '{0}' not found
     RequiredFieldMissing(&'static str),
@@ -87,38 +95,6 @@ fn get_hash_proof(proof: &[Vec<u8>]) -> Result<Vec<[u8; 32]>> {
         .map_err(|_| Error::BadData("proof element is wrong size".to_string()))
 }
 
-fn serialize_key(buffer: &mut Vec<u8>, key_material: &[u8], key_kind: &str) {
-    let key_len = u16::try_from(key_material.len())
-        .unwrap_or_else(|_| panic!("{} {}", key_kind, "key is too long to be encoded"));
-    buffer.extend_from_slice(&key_len.to_be_bytes());
-    buffer.extend_from_slice(key_material);
-}
-
-fn marshal_tree_head_tbs(
-    tree_size: u64,
-    timestamp: i64,
-    root: &[u8; 32],
-    config: &PublicConfig,
-) -> Result<Vec<u8>> {
-    let mut buf = vec![];
-
-    buf.extend_from_slice(&[0, 0]); // Ciphersuite
-    buf.push(config.mode.byte()); // Deployment mode
-
-    serialize_key(&mut buf, config.signature_key.as_bytes(), "signature");
-    serialize_key(&mut buf, config.vrf_key.as_bytes(), "VRF");
-
-    if let Some(key) = config.mode.get_associated_key() {
-        serialize_key(&mut buf, key.as_bytes(), "third party signature")
-    }
-
-    buf.extend_from_slice(&tree_size.to_be_bytes()); // Tree size
-    buf.extend_from_slice(&timestamp.to_be_bytes()); // Timestamp
-    buf.extend_from_slice(root); // Root hash
-
-    Ok(buf)
-}
-
 fn marshal_update_value(value: &[u8]) -> Result<Vec<u8>> {
     let mut buf = vec![];
 
@@ -142,15 +118,16 @@ fn leaf_hash(prefix_root: &[u8; 32], commitment: &[u8; 32]) -> [u8; 32] {
 /// Checks the signature on the provided transparency tree head using the given key
 fn verify_tree_head_signature(
     config: &PublicConfig,
-    head: &SingleSignatureTreeHead,
+    head: &impl VerifiableTreeHead,
     root: &[u8; 32],
     verifying_key: &VerifyingKey,
+    maybe_auditor_key: Option<&VerifyingKey>,
 ) -> Result<()> {
-    let raw = marshal_tree_head_tbs(head.tree_size, head.timestamp, root, config)?;
-    let signature = Signature::from_slice(&head.signature)
+    let to_be_signed = head.to_signable_header(root, config, maybe_auditor_key);
+    let signature = Signature::from_slice(head.signature_bytes())
         .map_err(|_| Error::BadData("signature has wrong size".to_string()))?;
     verifying_key
-        .verify(&raw, &signature)
+        .verify(&to_be_signed, &signature)
         .map_err(|_| Error::VerificationFailed("failed to verify tree head signature".to_string()))
 }
 
@@ -184,12 +161,18 @@ fn verify_full_tree_head(
         }
     }
 
-    // 2. Verify the signature in TreeHead.signature.
+    // 2. Verify the signatures in TreeHead.signature.
     {
-        let single_sig_tree_head = tree_head
-            .to_single_signature_tree_head(config)
-            .ok_or(Error::RequiredFieldMissing("server signature"))?;
-        verify_tree_head_signature(config, &single_sig_tree_head, &root, &config.signature_key)?;
+        for (key, head) in
+            &tree_head
+                .to_single_signature_tree_heads(config)
+                .ok_or(Error::BadData(
+                    "server signatures are either missing or not available for all auditors"
+                        .to_string(),
+                ))?
+        {
+            verify_tree_head_signature(config, head, &root, &config.signature_key, Some(key))?;
+        }
     }
 
     // 3. Verify that the timestamp in TreeHead is sufficiently recent.
@@ -200,68 +183,88 @@ fn verify_full_tree_head(
         now,
     )?;
 
-    // 4. If third-party auditing is used, verify auditor_tree_head with the
+    // 4. If third-party auditing is used, verify every auditor_tree_head with the
     //    steps described in Section 11.2.
-    if let DeploymentMode::ThirdPartyAuditing(auditor_key) = config.mode {
-        let auditor_tree_head = fth
-            .select_auditor_tree_head(&auditor_key)
-            .ok_or(Error::RequiredFieldMissing("auditor tree head"))?;
-        let auditor_head = get_proto_field(&auditor_tree_head.tree_head, "tree_head")?;
+    if let DeploymentMode::ThirdPartyAuditing(auditor_keys) = &config.mode {
+        let key_head_pairs = fth
+            .auditor_tree_heads(auditor_keys.iter())
+            .ok_or(Error::BadData(
+                "auditor tree heads are either missing or not available for all auditors"
+                    .to_string(),
+            ))?;
 
-        // 2. Verify that TreeHead.timestamp is sufficiently recent.
-        verify_timestamp(
-            Qualifier::Validator,
-            auditor_head.timestamp,
-            ALLOWED_AUDITOR_TIMESTAMP_RANGE,
-            now,
-        )?;
+        for (verifying_key, auditor_tree_head) in key_head_pairs.iter() {
+            let auditor_head = get_proto_field(&auditor_tree_head.tree_head, "tree_head")?;
 
-        // 3. Verify that TreeHead.tree_size is sufficiently close to the most
-        //    recent tree head from the service operator.
-        if auditor_head.tree_size > tree_head.tree_size {
-            return Err(Error::BadData(
-                "auditor tree head may not be further along than service tree head".to_string(),
-            ));
-        }
-        if tree_head.tree_size - auditor_head.tree_size > ENTRIES_MAX_BEHIND {
-            return Err(Error::BadData(
-                "auditor tree head is too far behind service tree head".to_string(),
-            ));
-        }
-        // 4. Verify the consistency proof between this tree head and the most
-        //    recent tree head from the service operator.
-        // 1. Verify the signature in TreeHead.signature.
-        if tree_head.tree_size > auditor_head.tree_size {
-            let auditor_root: &[u8; 32] =
-                get_proto_field(&auditor_tree_head.root_value, "root_value")?
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::BadData("auditor tree head is malformed".to_string()))?;
-            let proof = get_hash_proof(&auditor_tree_head.consistency)?;
-            verify_consistency_proof(
-                auditor_head.tree_size,
-                tree_head.tree_size,
-                &proof,
-                auditor_root,
-                &root,
+            // 2. Verify that TreeHead.timestamp is sufficiently recent.
+            verify_timestamp(
+                Qualifier::Validator,
+                auditor_head.timestamp,
+                ALLOWED_AUDITOR_TIMESTAMP_RANGE,
+                now,
             )?;
-            verify_tree_head_signature(config, auditor_head, auditor_root, &auditor_key)?;
-        } else {
-            if !auditor_tree_head.consistency.is_empty() {
+
+            // 3. Verify that TreeHead.tree_size is sufficiently close to the most
+            //    recent tree head from the service operator.
+            if auditor_head.tree_size > tree_head.tree_size {
                 return Err(Error::BadData(
-                    "consistency proof provided when not expected".to_string(),
+                    "auditor tree head may not be further along than service tree head".to_string(),
                 ));
             }
-            if auditor_tree_head.root_value.is_some() {
+            if tree_head.tree_size - auditor_head.tree_size > ENTRIES_MAX_BEHIND {
                 return Err(Error::BadData(
-                    "explicit root value provided when not expected".to_string(),
+                    "auditor tree head is too far behind service tree head".to_string(),
                 ));
             }
-            verify_tree_head_signature(config, auditor_head, &root, &auditor_key)?;
+            // 4. Verify the consistency proof between this tree head and the most
+            //    recent tree head from the service operator.
+            // 1. Verify the signature in TreeHead.signature.
+            if tree_head.tree_size > auditor_head.tree_size {
+                let auditor_root: &[u8; 32] =
+                    get_proto_field(&auditor_tree_head.root_value, "root_value")?
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| {
+                            Error::BadData("auditor tree head is malformed".to_string())
+                        })?;
+                let proof = get_hash_proof(&auditor_tree_head.consistency)?;
+                verify_consistency_proof(
+                    auditor_head.tree_size,
+                    tree_head.tree_size,
+                    &proof,
+                    auditor_root,
+                    &root,
+                )?;
+                verify_tree_head_signature(
+                    config,
+                    auditor_head,
+                    auditor_root,
+                    verifying_key,
+                    Some(verifying_key),
+                )?;
+            } else {
+                if !auditor_tree_head.consistency.is_empty() {
+                    return Err(Error::BadData(
+                        "consistency proof provided when not expected".to_string(),
+                    ));
+                }
+                if auditor_tree_head.root_value.is_some() {
+                    return Err(Error::BadData(
+                        "explicit root value provided when not expected".to_string(),
+                    ));
+                }
+                verify_tree_head_signature(
+                    config,
+                    auditor_head,
+                    &root,
+                    verifying_key,
+                    Some(verifying_key),
+                )?;
+            }
         }
     }
 
-    Ok((tree_head.clone(), root))
+    Ok(LastTreeHead(tree_head.clone(), root))
 }
 
 /// Checks if the consistency proof against the baseline tree head needs to be
@@ -292,7 +295,7 @@ fn check_consistency_metadata<'a>(
             };
             Ok(None)
         }
-        Some((last, last_root)) if last.tree_size == current_head.tree_size => {
+        Some(LastTreeHead(last, last_root)) if last.tree_size == current_head.tree_size => {
             if current_root != last_root {
                 return Err(Error::BadData(
                     "root is different but tree size is same".to_string(),
@@ -310,7 +313,7 @@ fn check_consistency_metadata<'a>(
             }
             Ok(None)
         }
-        Some((last_head, last_root)) => {
+        Some(LastTreeHead(last_head, last_root)) => {
             if current_head.tree_size < last_head.tree_size {
                 return Err(Error::BadData(
                     "current tree size is less than previous tree size".to_string(),
@@ -390,15 +393,15 @@ pub fn verify_distinguished(
         return Ok(());
     }
     let root = match last_tree_head {
-        Some((tree_head, root)) if tree_head.tree_size == tree_size => root,
+        Some(LastTreeHead(tree_head, root)) if tree_head.tree_size == tree_size => root,
         _ => {
             return Err(Error::BadData(
                 "expected tree head not found in storage".to_string(),
-            ))
+            ));
         }
     };
 
-    let (
+    let LastTreeHead(
         TreeHead {
             tree_size: distinguished_size,
             timestamp: _,
@@ -469,6 +472,19 @@ fn verify_search_internal(
         tree_head.tree_size
     };
     let search_proof = get_proto_field(&search, "search")?;
+
+    // Validate server-controlled tree parameters before any tree math, which
+    // would otherwise panic on out-of-range values.
+    if tree_size == 0 || tree_size > MAX_TREE_SIZE {
+        return Err(Error::VerificationFailed(
+            "tree_size out of range".to_string(),
+        ));
+    }
+    if search_proof.pos >= tree_size {
+        return Err(Error::VerificationFailed(
+            "search proof pos must be less than tree_size".to_string(),
+        ));
+    }
 
     let guide = ProofGuide::new(version, search_proof.pos, tree_size);
 
@@ -605,6 +621,14 @@ pub fn verify_monitor<'a>(
     let tree_head = get_proto_field(&full_tree_head.tree_head, "tree_head")?;
     let tree_size = tree_head.tree_size;
 
+    // Validate server-controlled tree_size before any tree math, which would
+    // otherwise panic on out-of-range values.
+    if tree_size == 0 || tree_size > MAX_TREE_SIZE {
+        return Err(Error::VerificationFailed(
+            "tree_size out of range".to_string(),
+        ));
+    }
+
     let MonitorContext {
         last_tree_head,
         last_distinguished_tree_head,
@@ -625,7 +649,7 @@ pub fn verify_monitor<'a>(
             _ => {
                 return Err(Error::VerificationFailed(
                     "monitoring response is malformed: inclusion proof should be root".to_string(),
-                ))
+                ));
             }
         }
     } else {
@@ -762,6 +786,10 @@ impl MonitoringDataWrapper {
         }
     }
 
+    fn into_data_update(self) -> Option<MonitoringData> {
+        self.inner
+    }
+
     /// Adds a key to the database of keys to monitor, if it's not already
     /// present.
     fn start_monitoring(
@@ -778,6 +806,8 @@ impl MonitoringDataWrapper {
                 pos: zero_pos,
                 ptrs: HashMap::from([(ver_pos, version)]),
                 owned,
+                search_key: vec![],
+                max_observed_version: version,
             });
         }
     }
@@ -831,6 +861,10 @@ impl MonitoringDataWrapper {
             }
         }
 
+        if version > data.max_observed_version {
+            data.max_observed_version = version;
+        }
+
         if !data.owned && owned {
             data.owned = true;
         }
@@ -847,53 +881,110 @@ impl MonitoringDataWrapper {
             return Ok(());
         };
 
-        let mut changed = false;
-        let mut ptrs = HashMap::new();
+        let first_pos = data.pos;
+        let tree_mapping = VersionExtractor(entries);
 
-        for (entry, ver) in data.ptrs.iter() {
-            let mut entry = *entry;
-            let mut ver = *ver;
+        let mut ptrs = HashMap::with_capacity(data.ptrs.len());
+        data.ptrs
+            .iter()
+            .map(|(pos, ver)| {
+                // Find an updated (pos, ver) pair for each of the entries in data.ptrs
+                Self::find_updated_mapping((*pos, *ver), first_pos, tree_size, |position| {
+                    tree_mapping.get(position)
+                })
+                // If no updated pair is found - keep the existing one.
+                .map(|maybe_updated| maybe_updated.unwrap_or((*pos, *ver)))
+            })
+            .process_results(|iter| {
+                // Make sure that if there are multiple positions in the updated pairs,
+                // they all correspond to the same version.
+                Self::collect_ensuring_consistency(&mut ptrs, iter)
+            })??;
 
-            for x in monitoring_path(entry, data.pos, tree_size) {
-                match entries.get(&x) {
-                    None => break,
-                    Some(step) => {
-                        let ctr = get_proto_field(&step.prefix, "prefix")?.counter;
-                        if ctr < ver {
-                            return Err(Error::VerificationFailed(
-                                "prefix tree has unexpectedly low version counter".to_string(),
-                            ));
-                        }
-                        changed = true;
-                        entry = x;
-                        ver = ctr;
-                    }
-                }
-            }
+        data.ptrs = ptrs;
 
-            match ptrs.get(&entry) {
-                Some(other) => {
-                    if ver != *other {
-                        return Err(Error::VerificationFailed(
-                            "inconsistent versions found".to_string(),
-                        ));
-                    }
-                }
-                None => {
-                    ptrs.insert(entry, ver);
-                }
-            };
-        }
-
-        if changed {
-            data.ptrs = ptrs;
+        // Keep the max_observed_version up to date and tracking the maximum
+        // version across _all_ nodes, not just the ancestor ones used for
+        // `ptrs`.
+        if let Some(max_version) = tree_mapping.versions().flatten().max()
+            && max_version > data.max_observed_version
+        {
+            data.max_observed_version = max_version;
         }
 
         Ok(())
     }
 
-    fn into_data_update(self) -> Option<MonitoringData> {
-        self.inner
+    /// Try to find an updated position->version mapping from the tree response.
+    ///
+    /// Where position is the position in the log, and version (also known as counter)
+    /// is the version of search key value at this position.
+    ///
+    /// Returns Ok(None) if no update has been found, and the stored mapping is
+    /// current.
+    fn find_updated_mapping(
+        stored_mapping: (u64, u32),
+        first_pos: u64,
+        tree_size: u64,
+        get_version_by_position: impl Fn(u64) -> Result<Option<u32>>,
+    ) -> Result<Option<(u64, u32)>> {
+        let (stored_pos, stored_ver) = stored_mapping;
+        let mut updated_mapping = None;
+        // Bubbling up the monitoring path in search of the top-most position
+        // where version is greater or equal to the stored version.
+        for intermediate_pos in monitoring_path(stored_pos, first_pos, tree_size) {
+            match get_version_by_position(intermediate_pos)? {
+                None => break,
+                Some(new_version) if new_version < stored_ver => {
+                    return Err(Error::VerificationFailed(
+                        "prefix tree has unexpectedly low version counter".to_string(),
+                    ));
+                }
+                Some(new_version) => updated_mapping = Some((intermediate_pos, new_version)),
+            }
+        }
+        Ok(updated_mapping)
+    }
+
+    fn collect_ensuring_consistency(
+        out: &mut HashMap<u64, u32>,
+        mappings: impl IntoIterator<Item = (u64, u32)>,
+    ) -> Result<()> {
+        for (pos, ver) in mappings.into_iter() {
+            match out.get(&pos) {
+                Some(existing_ver) if ver != *existing_ver => {
+                    return Err(Error::VerificationFailed(
+                        "inconsistent versions found".to_string(),
+                    ));
+                }
+                Some(_) => (), // the right entry is already present in the map
+                None => {
+                    out.insert(pos, ver);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Effectively maps a HashMap<u64, ProofStep> to HashMap<u64, u32>,
+/// where value is a version (counter) taken from the ProofStep.
+struct VersionExtractor<'a>(&'a HashMap<u64, ProofStep>);
+
+impl VersionExtractor<'_> {
+    pub fn get(&self, key: u64) -> Result<Option<u32>> {
+        self.0
+            .get(&key)
+            .map(|step| Ok(get_proto_field(&step.prefix, "prefix")?.counter))
+            .transpose()
+    }
+
+    pub fn versions(&self) -> impl Iterator<Item = Option<u32>> {
+        self.0.values().map(|step| {
+            get_proto_field(&step.prefix, "prefix")
+                .ok()
+                .map(|x| x.counter)
+        })
     }
 }
 
@@ -906,12 +997,10 @@ fn into_sorted_pairs<K: Ord + Copy, V>(map: HashMap<K, V>) -> (Vec<K>, Vec<V>) {
 #[cfg(test)]
 mod test {
     use assert_matches::assert_matches;
-    use const_str::hex;
-    use prost::Message as _;
     use test_case::test_case;
 
     use super::*;
-    use crate::ChatSearchResponse;
+    use crate::proto::PrefixProof;
 
     const MAX_AHEAD: Duration = Duration::from_secs(42);
     const MAX_BEHIND: Duration = Duration::from_secs(42);
@@ -945,91 +1034,6 @@ mod test {
         assert_matches!(
             verify_timestamp(Qualifier::Server, ts, TIMESTAMP_RANGE, SystemTime::now()),
             Ok(())
-        );
-    }
-
-    #[test]
-    fn can_verify_search_response() {
-        let sig_key = VerifyingKey::from_bytes(&hex!(
-            "ac0de1fd7f33552bbeb6ebc12b9d4ea10bf5f025c45073d3fb5f5648955a749e"
-        ))
-        .unwrap();
-        let vrf_key = vrf::PublicKey::try_from(hex!(
-            "ec3a268237cf5c47115cf222405d5f90cc633ebe05caf82c0dd5acf9d341dadb"
-        ))
-        .unwrap();
-        let auditor_key = VerifyingKey::from_bytes(&hex!(
-            "1123b13ee32479ae6af5739e5d687b51559abf7684120511f68cde7a21a0e755"
-        ))
-        .unwrap();
-        let aci = uuid::uuid!("90c979fd-eab4-4a08-b6da-69dedeab9b29");
-        let request = SlimSearchRequest::new([b"a", aci.as_bytes().as_slice()].concat());
-
-        let (response_tree_head, condensed_response) = {
-            let bytes = include_bytes!("../res/chat_search_response.dat");
-            let response =
-                ChatSearchResponse::decode(bytes.as_slice()).expect("can decode chat response");
-
-            let mut head = response.tree_head.expect("has tree head");
-            // we don't expect these fields to be present in the verification that follows
-            head.distinguished = vec![];
-            head.last = vec![];
-
-            (head, response.aci.expect("has ACI condensed response"))
-        };
-        let response = FullSearchResponse {
-            condensed: condensed_response,
-            tree_head: &response_tree_head,
-        };
-
-        let valid_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1746042060);
-        let config = PublicConfig {
-            mode: DeploymentMode::ThirdPartyAuditing(auditor_key),
-            signature_key: sig_key,
-            vrf_key,
-        };
-
-        let last_root = hex!("87d59202bfd679c7d5753c6e5ad241852abbc2c45650de114b02620ed6098a07");
-        let expected_data_update = MonitoringData {
-            index: hex!("3901c94081c4e6321e92b3e434dcaf788f5326913e7bdcab47b4fd2ae7a6848a"),
-            pos: 35,
-            ptrs: HashMap::from([(16777215, 2)]),
-            owned: true,
-        };
-
-        assert_matches!(
-            verify_search_internal(&config, request.clone(), response.clone(), SearchContext::default(), true, valid_at),
-            Ok(update) => {
-                assert_eq!(&update.tree_head, response_tree_head.tree_head.as_ref().expect("has tree head"));
-                assert_eq!(update.tree_root, last_root);
-                assert_eq!(update.monitoring_data, Some(expected_data_update.clone()));
-            }
-        );
-        // Verification result should always include the monitoring data field, even if it has not changed.
-        let last_tree_head = response_tree_head.tree_head.as_ref().unwrap();
-        let last_tree = (last_tree_head.clone(), last_root);
-        let context = SearchContext {
-            last_tree_head: Some(&last_tree),
-            data: Some(expected_data_update.clone()),
-            ..SearchContext::default()
-        };
-
-        assert_matches!(
-            verify_search_internal(&config, request.clone(), response.clone(), context, true, valid_at),
-            Ok(update) => {
-                assert_eq!(&update.tree_head, last_tree_head);
-                assert_eq!(update.tree_root, last_root);
-                assert_eq!(update.monitoring_data, Some(expected_data_update));
-            }
-        );
-        assert_matches!(
-            verify_search_internal(&config, request, response, SearchContext::default(), false, valid_at),
-            Ok(update) => {
-                assert_eq!(&update.tree_head, last_tree_head);
-                assert_eq!(update.tree_root, last_root);
-                // When monitor == false there should be no data update
-                assert!(update.monitoring_data.is_none());
-            }
         );
     }
 
@@ -1076,7 +1080,7 @@ mod test {
         let baseline = {
             let head = current_head.clone();
             let root = [0u8; 32];
-            let mut baseline = Some((head, root));
+            let mut baseline = Some(LastTreeHead(head, root));
 
             for baseline_mod in baseline_mods {
                 let Some(result) = baseline.as_mut() else {
@@ -1111,5 +1115,290 @@ mod test {
             VerifierOutcome::Error => assert!(result.is_err()),
             VerifierOutcome::Verifier => assert!(matches!(result, Ok(Some(_)))),
         }
+    }
+
+    // Create ProofStep instance for the MonitoringDataWrapper tests,
+    // where proof and commitment fields don't matter.
+    fn make_proof_step(ver: u32) -> ProofStep {
+        ProofStep {
+            prefix: Some(PrefixProof {
+                proof: vec![],
+                counter: ver,
+            }),
+            commitment: vec![],
+        }
+    }
+
+    fn proof_steps(mappings: impl IntoIterator<Item = (u64, u32)>) -> HashMap<u64, ProofStep> {
+        HashMap::from_iter(
+            mappings
+                .into_iter()
+                .map(|(pos, ver)| (pos, make_proof_step(ver))),
+        )
+    }
+
+    #[test]
+    fn monitoring_data_update_with_real_data() {
+        let mut wrapper = MonitoringDataWrapper::new(Some(MonitoringData {
+            index: [0; 32],
+            pos: 35,
+            // This value is obtained from the hardcoded test account data:
+            // See test_stored_account_data in rust/net/chat/src/api/keytrans.rs
+            ptrs: HashMap::from_iter([(16777215, 2)]),
+            owned: true,
+            search_key: vec![],
+            max_observed_version: 2,
+        }));
+        // These values were obtained by running the integration test in
+        // rust/net/chat/src/api/keytrans.rs and extracting positions and versions
+        // from MonitorProof message.
+        let steps = proof_steps([
+            (70627367, 2),
+            (3621503, 2),
+            (3621455, 2),
+            (8388607, 2),
+            (70627372, 2),
+            (3624959, 2),
+            (70627327, 2),
+            (3407871, 1),
+            (16777215, 2),
+            (67108863, 2),
+            (70627371, 2),
+            (70516735, 2),
+            (3621471, 2),
+            (3621447, 1),
+            (3621439, 1),
+            (3621453, 1),
+            (3621375, 1),
+            (3621454, 2),
+            (3620863, 1),
+            (3145727, 0),
+            (3621887, 2),
+            (3670015, 2),
+            (3621631, 2),
+            (69206015, 2),
+            (3629055, 2),
+            (3637247, 2),
+            (33554431, 2),
+            (70615039, 2),
+            (3622911, 2),
+            (70254591, 2),
+            (3538943, 1),
+            (3604479, 1),
+            (4194303, 2),
+            (70627359, 2),
+            (3621451, 1),
+            (2097151, 0),
+            (70582271, 2),
+            (70623231, 2),
+        ]);
+
+        wrapper.update(70627373, &steps).expect("can update");
+
+        assert_eq!(
+            HashMap::from_iter([(67108863, 2)]),
+            wrapper.inner.expect("valid data").ptrs
+        );
+    }
+
+    // The following tests consider this tree:
+    //                                                [15]
+    //                                                  |
+    //                                +-----------------+---------------+
+    //                                |                                 |
+    //                              [07]                                |
+    //                                |                                 |
+    //              +-----------------+-----------------+               |
+    //              |                                   |               |
+    //             [03]                               [11]              |
+    //              |                                   |               |
+    //      +-------+-------+                   +-------+-------+       |
+    //      |               |                   |               |       |
+    //     [01]           [05]                [09]            [13]      |
+    //      |               |                   |               |       |
+    //   +--+--+         +--+--+             +--+--+         +--+--+    |
+    //   |     |         |     |             |     |         |     |    |
+    //  [00]  [02]      [04]  [06]          [08]  [10]      [12]  [14] [16]
+
+    #[test]
+    fn monitoring_data_update_success() {
+        let mut wrapper = MonitoringDataWrapper::new(Some(MonitoringData {
+            index: [0; 32],
+            pos: 10, // The search key is introduced here
+            ptrs: HashMap::from([(10, 1)]),
+            owned: true,
+            search_key: vec![],
+            max_observed_version: 1,
+        }));
+
+        let steps = proof_steps([(11, 1), (15, 2)]);
+        wrapper.update(16, &steps).expect("can update");
+        assert_eq!(
+            HashMap::from_iter([(15, 2)]),
+            wrapper.inner.expect("valid data").ptrs,
+        )
+    }
+
+    #[test]
+    fn monitoring_data_update_bad_version() {
+        let mut wrapper = MonitoringDataWrapper::new(Some(MonitoringData {
+            index: [0; 32],
+            pos: 10, // The search key is introduced here
+            ptrs: HashMap::from([(10, 1)]),
+            owned: true,
+            search_key: vec![],
+            max_observed_version: 1,
+        }));
+        // later position contains a smaller version
+        let steps = proof_steps([(11, 0)]);
+
+        let result = wrapper.update(16, &steps);
+        assert_matches!(result, Err(Error::VerificationFailed(s)) => assert!(s.contains("low version")));
+    }
+
+    #[test]
+    fn monitoring_data_update_unchanged() {
+        let mut wrapper = MonitoringDataWrapper::new(Some(MonitoringData {
+            index: [0; 32],
+            pos: 10, // The search key is introduced here
+            ptrs: HashMap::from([(10, 1)]),
+            owned: true,
+            search_key: vec![],
+            max_observed_version: 1,
+        }));
+
+        let steps = HashMap::from_iter([
+            // no updates
+        ]);
+        wrapper.update(16, &steps).expect("can update");
+        assert_eq!(
+            HashMap::from_iter([(10, 1)]),
+            wrapper.inner.expect("valid data").ptrs,
+        )
+    }
+
+    #[test]
+    fn monitoring_data_update_inconsistent_versions() {
+        let mut wrapper = MonitoringDataWrapper::new(Some(MonitoringData {
+            index: [0; 32],
+            pos: 10, // The search key is introduced here
+            ptrs: HashMap::from([(10, 1), (11, 2)]),
+            owned: true,
+            search_key: vec![],
+            max_observed_version: 2,
+        }));
+        let steps = proof_steps([(11, 3)]);
+        let result = wrapper.update(16, &steps);
+        assert_matches!(result, Err(Error::VerificationFailed(s)) => assert!(s.contains("inconsistent")));
+    }
+
+    #[test_case([], true ; "empty")]
+    #[test_case([(1, 2), (2, 3)], true ; "distinct")]
+    #[test_case([(1, 2), (1, 2)], true ; "consistent")]
+    #[test_case([(1, 2), (1, 3)], false ; "inconsistent")]
+    fn collect_ensuring_consistency(items: impl IntoIterator<Item = (u64, u32)>, is_ok: bool) {
+        let mut out = HashMap::new();
+        let result = MonitoringDataWrapper::collect_ensuring_consistency(&mut out, items);
+        if is_ok {
+            result.expect("consistent data");
+        } else {
+            assert_matches!(result, Err(Error::VerificationFailed(s)) => assert!(s.contains("inconsistent")));
+        }
+    }
+
+    struct LowVersionError;
+
+    #[test_case((0, 1), [], Ok(None) ; "no changes in log")]
+    #[test_case((6, 1), [(7, 2), (15, 3)], Ok(Some((15, 3))) ; "multiple updates")]
+    #[test_case((6, 1), [(7, 2), (16, 3)], Ok(Some((7, 2))) ; "not on path")]
+    #[test_case((6, 1), [(7, 2), (15, 0)], Err(LowVersionError) ; "lower version")]
+    fn find_updated_mapping(
+        stored: (u64, u32),
+        tree_items: impl IntoIterator<Item = (u64, u32)>,
+        expected: std::result::Result<Option<(u64, u32)>, LowVersionError>,
+    ) {
+        let tree_items: HashMap<u64, u32> = HashMap::from_iter(tree_items);
+
+        let result = MonitoringDataWrapper::find_updated_mapping(stored, 0, 16, |pos| {
+            Ok(tree_items.get(&pos).cloned())
+        });
+
+        match expected {
+            Ok(maybe_updated) => {
+                assert_eq!(result.expect("valid versions"), maybe_updated);
+            }
+            Err(_) => {
+                assert_matches!(result, Err(Error::VerificationFailed(s)) => assert!(s.contains("low version counter")));
+            }
+        };
+    }
+
+    #[test_case(1, Some(2) ; "found")]
+    #[test_case(42, None ; "not found")]
+    fn version_extractor_success(key: u64, expected: Option<u32>) {
+        let steps = proof_steps([(1, 2), (3, 4)]);
+
+        let extractor = VersionExtractor(&steps);
+
+        let actual = extractor.get(key).expect("valid data");
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn version_extractor_bad_proof_step() {
+        let misstep = ProofStep {
+            prefix: None,
+            commitment: vec![],
+        };
+
+        let steps = HashMap::from_iter([(1, misstep)]);
+        let extractor = VersionExtractor(&steps);
+
+        let result = extractor.get(1);
+        assert_matches!(result, Err(Error::RequiredFieldMissing(s)) => assert!(s.contains("prefix")));
+    }
+
+    // A counter increment that's only visible at a frontier proof (e.g. a
+    // recent tombstone for a contact's old E.164) must still be reflected in
+    // `MonitoringData::greatest_version`, so that the version-change detector
+    // in `monitor_then_search` triggers a follow-up search.
+    //
+    // For a tree of size 20 with `first_pos = 0`:
+    // ```text
+    //   root(0, 20)                = 15
+    //   monitoring_path(10, 0, 20) = [11, 15]      (ancestors > 10)
+    //   full_monitoring_path       = [11, 15, 19]  (adds frontier node 19)
+    // ```
+    // A tombstone at log position 17 is not yet in the prefix tree at sizes
+    // 12 or 16, so the ancestor proofs at positions 11 and 15 report the
+    // stored counter (0). It _is_ in the prefix tree at size 20, so the
+    // frontier proof at position 19 reports the updated counter (1). The
+    // ancestor-only walk in `find_updated_mapping` never visits the frontier
+    // node, so `ptrs` does not change. The greatest known version of
+    // the search key, however, should reflect the higher counter so that
+    // version change detection still works.
+    #[test]
+    fn frontier_only_version_increment_is_detected() {
+        let mut wrapper = MonitoringDataWrapper::new(Some(MonitoringData {
+            index: [0; 32],
+            pos: 0,
+            ptrs: HashMap::from([(10, 0)]),
+            owned: false,
+            search_key: vec![],
+            max_observed_version: 0,
+        }));
+
+        let steps = proof_steps([
+            // Ancestor nodes
+            (11, 0),
+            (15, 0),
+            // Frontier node with updated version counter
+            (19, 1),
+        ]);
+
+        wrapper.update(20, &steps).expect("valid test data");
+        let data = wrapper.inner.expect("valid test data");
+
+        assert_eq!(1, data.greatest_version(),);
     }
 }

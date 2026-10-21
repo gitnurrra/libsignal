@@ -9,6 +9,7 @@ import java.lang.ref.WeakReference;
 import java.net.MalformedURLException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.BiFunction;
 import org.signal.libsignal.internal.CalledFromNative;
 import org.signal.libsignal.internal.CompletableFuture;
 import org.signal.libsignal.internal.FilterExceptions;
@@ -25,7 +26,7 @@ import org.signal.libsignal.net.internal.BridgeChatListener;
  * registered listener will not receive any events until {@link #start()} is called.
  */
 public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
-  private final TokioAsyncContext tokioAsyncContext;
+  final TokioAsyncContext tokioAsyncContext;
   private final ChatConnectionListener chatListener;
 
   protected ChatConnection(
@@ -35,6 +36,21 @@ public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
     super(nativeHandle);
     this.tokioAsyncContext = tokioAsyncContext;
     this.chatListener = chatListener;
+  }
+
+  /**
+   * Executes a function with both the chat connection handle and async context handle properly
+   * guarded. This ensures that neither object is finalized while the function is executing.
+   *
+   * @param function the function to execute with the guarded handles
+   * @param <T> the return type of the function
+   * @return the result of the function
+   */
+  <T> T runWithContextAndConnectionHandles(BiFunction<Long, Long, T> function) {
+    try (final NativeHandleGuard asyncContextHandle = new NativeHandleGuard(tokioAsyncContext);
+        final NativeHandleGuard chatConnectionHandle = new NativeHandleGuard(this)) {
+      return function.apply(asyncContextHandle.nativeHandle(), chatConnectionHandle.nativeHandle());
+    }
   }
 
   protected static class ListenerBridge implements BridgeChatListener {
@@ -48,21 +64,18 @@ public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
       this.chat = new WeakReference<>(chat);
     }
 
-    public void onIncomingMessage(
+    public void receivedIncomingMessage(
         byte[] envelope, long serverDeliveryTimestamp, long sendAckHandle) {
 
+      var ack = new ChatConnectionListener.ServerMessageAck(sendAckHandle);
       ChatConnection chat = this.chat.get();
       if (chat == null) return;
       if (chat.chatListener == null) return;
 
-      chat.chatListener.onIncomingMessage(
-          chat,
-          envelope,
-          serverDeliveryTimestamp,
-          new ChatConnectionListener.ServerMessageAck(chat.tokioAsyncContext, sendAckHandle));
+      chat.chatListener.onIncomingMessage(chat, envelope, serverDeliveryTimestamp, ack);
     }
 
-    public void onQueueEmpty() {
+    public void receivedQueueEmpty() {
       ChatConnection chat = this.chat.get();
       if (chat == null) return;
       if (chat.chatListener == null) return;
@@ -70,7 +83,7 @@ public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
       chat.chatListener.onQueueEmpty(chat);
     }
 
-    public void onReceivedAlerts(String[] alerts) {
+    public void receivedAlerts(String[] alerts) {
       ChatConnection chat = this.chat.get();
       if (chat == null) return;
       if (chat.chatListener == null) return;
@@ -78,7 +91,15 @@ public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
       chat.chatListener.onReceivedAlerts(chat, alerts);
     }
 
-    public void onConnectionInterrupted(Throwable disconnectReason) {
+    public void receivedServerTimestamp(long timestamp) {
+      ChatConnection chat = this.chat.get();
+      if (chat == null) return;
+      if (chat.chatListener == null) return;
+
+      chat.chatListener.onServerTimestamp(chat, timestamp);
+    }
+
+    public void connectionInterrupted(Throwable disconnectReason) {
       ChatConnection chat = this.chat.get();
       if (chat == null) return;
       if (chat.chatListener == null) return;
@@ -103,19 +124,20 @@ public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
     void setChat(ChatConnection chat) {
       this.chat = new WeakReference<>(chat);
       if (savedAlerts != null) {
-        super.onReceivedAlerts(savedAlerts);
+        super.receivedAlerts(savedAlerts);
         savedAlerts = null;
       }
     }
 
-    public void onReceivedAlerts(String[] alerts) {
+    @Override
+    public void receivedAlerts(String[] alerts) {
       // This callback can happen before setChat, so we might need to replay it later.
       if (this.chat.get() == null) {
         savedAlerts = alerts;
         return;
       }
 
-      super.onReceivedAlerts(alerts);
+      super.receivedAlerts(alerts);
     }
   }
 
@@ -171,10 +193,60 @@ public abstract class ChatConnection extends NativeHandleGuard.SimpleOwner {
     }
   }
 
+  /**
+   * Produces information about the established connection.
+   *
+   * <p>The result is a snapshot taken when the connection was established; it does not change if
+   * the connection is later interrupted.
+   */
+  public ConnectionInfo info() {
+    return new ConnectionInfo(guardedMap(this::infoWrapper));
+  }
+
+  /** Information about an established {@link ChatConnection}. */
+  public static final class ConnectionInfo extends NativeHandleGuard.SimpleOwner {
+    private ConnectionInfo(long nativeHandle) {
+      super(nativeHandle);
+    }
+
+    @Override
+    protected void release(long nativeHandle) {
+      Native.ChatConnectionInfo_Destroy(nativeHandle);
+    }
+
+    /** The local port used by the connection. */
+    public int getLocalPort() {
+      return guardedMap(Native::ChatConnectionInfo_local_port);
+    }
+
+    /** The IP addressing version used by the connection. */
+    public IpType getIpType() {
+      int rawValue = guardedMap(Native::ChatConnectionInfo_ip_version);
+      IpType[] values = IpType.values();
+      return rawValue < values.length ? values[rawValue] : IpType.UNKNOWN;
+    }
+
+    /**
+     * Whether the connection was made directly to the Signal service, rather than through a
+     * censorship-circumvention reflector or a user-configured proxy.
+     */
+    public boolean isDirect() {
+      return guardedMap(Native::ChatConnectionInfo_is_direct);
+    }
+
+    /** A developer-facing description of the connection. */
+    @Override
+    public String toString() {
+      return guardedMap(Native::ChatConnectionInfo_description);
+    }
+  }
+
   // These are meant to be thin wrappers around the correct call to Native.ChatConnection_* calls
   //   for each of the concrete implementing classes.
   protected abstract CompletableFuture disconnectWrapper(
       long nativeAsyncContextHandle, long nativeChatConnectionHandle);
+
+  protected abstract long infoWrapper(long nativeChatConnectionHandle);
 
   protected abstract CompletableFuture<Object> sendWrapper(
       long nativeAsyncContextHandle,

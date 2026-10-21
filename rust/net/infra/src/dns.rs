@@ -17,25 +17,27 @@ use crate::certs::RootCertificates;
 use crate::dns::custom_resolver::CustomDnsResolver;
 use crate::dns::dns_errors::Error;
 use crate::dns::dns_lookup::{DnsLookup, DnsLookupRequest, StaticDnsMap, SystemDnsLookup};
-use crate::dns::dns_transport_doh::{DohTransportConnectorFactory, CLOUDFLARE_IPS};
+use crate::dns::dns_transport_doh::{CLOUDFLARE_IPS, DohTransportConnectorFactory};
 use crate::dns::dns_types::ResourceType;
 use crate::dns::dns_utils::log_safe_domain;
 use crate::dns::lookup_result::LookupResult;
 use crate::host::Host;
 use crate::route::{
-    HttpRouteFragment, HttpsTlsRoute, TcpRoute, TlsRoute, TlsRouteFragment, DEFAULT_HTTPS_PORT,
+    DEFAULT_HTTPS_PORT, HttpRouteFragment, HttpVersion, HttpsTlsRoute, TcpRoute, TlsRoute,
+    TlsRouteFragment,
 };
-use crate::timeouts::{DNS_SYSTEM_LOOKUP_TIMEOUT, DOH_FALLBACK_LOOKUP_TIMEOUT};
-use crate::utils::oneshot_broadcast::{self, Receiver};
+use crate::timeouts::{
+    DNS_LATER_RESPONSE_GRACE_PERIOD, DNS_SYSTEM_LOOKUP_TIMEOUT, DOH_FALLBACK_LOOKUP_TIMEOUT,
+};
 use crate::utils::NetworkChangeEvent;
-use crate::{utils, Alpn};
+use crate::utils::oneshot_broadcast::{self, Receiver};
+use crate::{Alpn, OverrideNagleAlgorithm, utils};
 
 pub mod custom_resolver;
 mod dns_errors;
 pub mod dns_lookup;
 mod dns_message;
 pub mod dns_transport_doh;
-pub mod dns_transport_udp;
 mod dns_types;
 pub(crate) mod dns_utils;
 pub mod lookup_result;
@@ -94,6 +96,7 @@ struct LookupOption {
 
 pub fn build_custom_resolver_cloudflare_doh(
     network_change_event: &NetworkChangeEvent,
+    secondary_request_grace_period: Duration,
 ) -> CustomDnsResolver<HttpsTlsRoute<TlsRoute<TcpRoute<IpAddr>>>, DohTransportConnectorFactory> {
     let (v4, v6) = CLOUDFLARE_IPS;
     let targets = [IpAddr::V6(v6), IpAddr::V4(v4)].map(|ip_addr| {
@@ -103,6 +106,7 @@ pub fn build_custom_resolver_cloudflare_doh(
                 path_prefix: "".into(),
                 front_name: None,
                 host_header: Arc::from(host.to_string()),
+                http_version: Some(HttpVersion::Http2),
             },
             inner: TlsRoute {
                 fragment: TlsRouteFragment {
@@ -114,6 +118,7 @@ pub fn build_custom_resolver_cloudflare_doh(
                 inner: TcpRoute {
                     address: ip_addr,
                     port: DEFAULT_HTTPS_PORT,
+                    override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
                 },
             },
         }
@@ -122,6 +127,7 @@ pub fn build_custom_resolver_cloudflare_doh(
         targets.into(),
         DohTransportConnectorFactory,
         network_change_event,
+        secondary_request_grace_period,
     )
 }
 
@@ -149,8 +155,8 @@ impl DnsResolver {
 
     /// Creates a DNS resolver that will only use a provided static map
     /// to resolve DNS lookups
-    #[cfg_attr(feature = "test-util", visibility::make(pub))]
-    pub(crate) fn new_from_static_map(static_map: HashMap<&'static str, LookupResult>) -> Self {
+    #[cfg(feature = "test-util")]
+    pub fn new_from_static_map(static_map: HashMap<&'static str, LookupResult>) -> Self {
         DnsResolver {
             lookup_options: Arc::new([LookupOption {
                 lookup: Box::new(StaticDnsMap(static_map)),
@@ -167,11 +173,15 @@ impl DnsResolver {
         static_map: HashMap<&'static str, LookupResult>,
         network_change_event: &NetworkChangeEvent,
     ) -> Self {
-        let cloudflare_doh = Box::new(build_custom_resolver_cloudflare_doh(network_change_event));
+        let cloudflare_doh = Box::new(build_custom_resolver_cloudflare_doh(
+            network_change_event,
+            DNS_LATER_RESPONSE_GRACE_PERIOD,
+        ));
 
         let known_good_results = Arc::new(
             static_map
                 .iter()
+                .filter(|(_host, result)| !result.is_empty())
                 .map(|(host, result)| (*host, HashSet::from_iter(result)))
                 .collect(),
         );

@@ -24,8 +24,7 @@ public protocol ChatConnection: AnyObject {
 public class ConnectionInfo: NativeHandleOwner<SignalMutPointerChatConnectionInfo>, CustomStringConvertible {
     override class func destroyNativeHandle(_ handle: NonNull<SignalMutPointerChatConnectionInfo>) -> SignalFfiErrorRef?
     {
-        // ChatConnectionInfo is an alias for ConnectionInfo, but Swift doesn't know that.
-        return signal_connection_info_destroy(SignalMutPointerConnectionInfo(raw: handle.opaque))
+        return signal_chat_connection_info_destroy(handle.pointer)
     }
 
     /// The local port used by the connection.
@@ -49,6 +48,18 @@ public class ConnectionInfo: NativeHandleOwner<SignalMutPointerChatConnectionInf
             }
         }
         return IpType(rawValue: rawValue) ?? .unknown
+    }
+
+    /// Whether the connection was made directly to the Signal service, rather than through a
+    /// reflector or a user-configured proxy.
+    public var isDirect: Bool {
+        withNativeHandle { connectionInfo in
+            failOnError {
+                try invokeFnReturningBool {
+                    signal_chat_connection_info_is_direct($0, connectionInfo.const())
+                }
+            }
+        }
     }
 
     /// A developer-facing description of the connection.
@@ -185,7 +196,7 @@ public class AuthenticatedChatConnection: NativeHandleOwner<
 
     /// Sends a request to the Chat Service over an authenticated channel.
     ///
-    /// - Throws: ``SignalError/chatServiceInactive(_:)`` if you haven't called ``start()``
+    /// - Throws: ``SignalError/chatServiceInactive(_:)`` if you haven't called ``start(listener:)``
     /// - Throws: Other ``SignalError``s for other kinds of failures.
     public func send(_ request: Request) async throws -> Response {
         let internalRequest = try Request.InternalRequest(request)
@@ -243,7 +254,7 @@ extension SignalConstPointerAuthenticatedChatConnection: SignalConstPointer {
 
 /// Represents an unauthenticated connection to the Chat Service.
 ///
-/// An instance of this object is obtained via call to ``Net/connectUnauthenticatedChat()``.
+/// An instance of this object is obtained via call to ``Net/connectUnauthenticatedChat(languages:)``.
 /// Before an obtained instance can be used, it must be started by calling ``UnauthenticatedChatConnection/start(listener:)``.
 public class UnauthenticatedChatConnection: NativeHandleOwner<
     SignalMutPointerUnauthenticatedChatConnection
@@ -338,7 +349,7 @@ public class UnauthenticatedChatConnection: NativeHandleOwner<
 
     /// Sends request to the Chat Service over an authenticated channel.
     ///
-    /// - Throws: ``SignalError/chatServiceInactive(_:)`` if you haven't called ``start()``.
+    /// - Throws: ``SignalError/chatServiceInactive(_:)`` if you haven't called ``start(listener:)``.
     /// - Throws: Other ``SignalError``s for other kinds of failures.
     public func send(_ request: Request) async throws -> Response {
         let internalRequest = try Request.InternalRequest(request)

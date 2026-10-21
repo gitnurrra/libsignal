@@ -3,20 +3,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import * as Native from '../../Native';
 import { config, expect, use } from 'chai';
-import * as chaiAsPromised from 'chai-as-promised';
-import * as util from './util';
-import { UnauthenticatedChatConnection, Environment, Net } from '../net';
-import { Aci } from '../Address';
-import { PublicKey } from '../EcKeys';
+import chaiAsPromised from 'chai-as-promised';
+import type { Bytes } from '@signalapp/types';
+import { Buffer } from 'node:buffer';
+
+import * as Native from '../Native.js';
+import * as util from './util.js';
+import {
+  UnauthenticatedChatConnection,
+  Environment,
+  Net,
+  TokioAsyncContext,
+} from '../net.js';
+import { Aci } from '../Address.js';
+import { PublicKey } from '../EcKeys.js';
 import {
   ErrorCode,
   KeyTransparencyError,
   KeyTransparencyVerificationFailed,
   LibSignalErrorBase,
-} from '../Errors';
-import * as KT from '../net/KeyTransparency';
+} from '../Errors.js';
+import * as KT from '../net/KeyTransparency.js';
 
 use(chaiAsPromised);
 
@@ -30,18 +38,18 @@ const userAgent = 'libsignal-kt-test';
 const testAci = Aci.fromUuid('90c979fd-eab4-4a08-b6da-69dedeab9b29');
 const testIdentityKey = PublicKey.deserialize(
   Buffer.from(
-    '05111f9464c1822c6a2405acf1c5a4366679dc3349fc8eb015c8d7260e3f771177',
+    '05cdcbb178067f0ddfd258bb21d006e0aa9c7ab132d9fb5e8b027de07d947f9d0c',
     'hex'
   )
 );
 const testE164 = '+18005550100';
 const testUnidentifiedAccessKey = Buffer.from(
-  'c6f7c258c24d69538ea553b4a943c8d9',
+  '108d84b71be307bdf101e380a1d7f2a2',
   'hex'
 );
 
 const testUsernameHash = Buffer.from(
-  'd237a4b83b463ca7da58d4a16bf6a3ba104506eb412b235eb603ea10f467c655',
+  'dc711808c2cf66d5e6a33ce41f27d69d942d2e1ff4db22d39b42d2eff8d09746',
   'hex'
 );
 
@@ -52,6 +60,7 @@ const testRequest = {
     unidentifiedAccessKey: testUnidentifiedAccessKey,
   },
   usernameHash: testUsernameHash,
+  mode: 'contact' as const,
 };
 
 describe('KeyTransparency bridging', () => {
@@ -82,9 +91,90 @@ describe('KeyTransparency bridging', () => {
   });
 });
 
+describe('KeyTransparency.resetField', () => {
+  it('throws on corrupt data', async () => {
+    const store = new InMemoryKtStore();
+    await store.setAccountData(testAci, new Uint8Array([1, 2, 3]));
+    await expect(
+      KT.resetField(testAci, KT.AccountDataField.E164, store)
+    ).to.be.rejectedWith(TypeError);
+  });
+
+  it('is a noop when data is missing', async () => {
+    const store = new InMemoryKtStore();
+    await KT.resetField(testAci, KT.AccountDataField.E164, store);
+    expect(store.storage.get(testAci)).to.equal(undefined);
+  });
+
+  it('updates store on success', async () => {
+    const store = new InMemoryKtStore();
+    await store.setAccountData(
+      testAci,
+      Native.TESTING_KeyTransStoredAccountData()
+    );
+    expect(store.storage.get(testAci)).to.have.lengthOf(1);
+    await KT.resetField(testAci, KT.AccountDataField.E164, store);
+    expect(store.storage.get(testAci)).to.have.lengthOf(2);
+  });
+});
+
+describe('KeyTransparency network errors', () => {
+  it('can bridge network errors', async () => {
+    async function run(statusCode: number, headers: string[] = []) {
+      const tokio = new TokioAsyncContext(Native.TokioAsyncContext_new());
+      const [unauth, remote] = UnauthenticatedChatConnection.fakeConnect(
+        tokio,
+        {
+          onConnectionInterrupted: () => {},
+          onIncomingMessage: () => {},
+          onReceivedAlerts: () => {},
+          onQueueEmpty: () => {},
+        },
+        // Use WS implementation
+        ['KeyTransparencyQueryServiceSearchV2']
+      );
+      const client = new KT.ClientImpl(
+        tokio,
+        unauth._chatService,
+        Environment.Staging
+      );
+      const promise = client.check(testRequest, new InMemoryKtStore(), {});
+
+      const request = await remote.assertReceiveIncomingRequest();
+
+      remote.sendReplyTo(request, {
+        status: statusCode,
+        headers: headers,
+      });
+      return promise;
+    }
+
+    // 429 without a retry-after header is a generic error
+    await expect(run(429)).to.be.rejected.and.eventually.have.property(
+      'code',
+      ErrorCode.IoError
+    );
+    await expect(
+      run(429, ['retry-after: 42'])
+    ).to.be.rejected.and.eventually.have.property(
+      'code',
+      ErrorCode.RateLimitedError
+    );
+    await expect(run(500)).to.be.rejected.and.eventually.have.property(
+      'code',
+      ErrorCode.IoError
+    );
+  });
+});
+
 describe('KeyTransparency Integration', function (this: Mocha.Suite) {
+  // Avoid timing out due to slow network or KT environment
+  this.timeout(5000);
+
   before(() => {
-    if (!process.env.LIBSIGNAL_TESTING_RUN_NONHERMETIC_TESTS) {
+    const ignoreKtTests =
+      typeof process.env.LIBSIGNAL_TESTING_IGNORE_KT_TESTS !== 'undefined';
+    if (!process.env.LIBSIGNAL_TESTING_RUN_NONHERMETIC_TESTS || ignoreKtTests) {
       this.ctx.skip();
     }
   });
@@ -105,54 +195,61 @@ describe('KeyTransparency Integration', function (this: Mocha.Suite) {
     await chat.disconnect();
   });
 
-  it('can search for a test account', async () => {
+  it('check account (initial search)', async () => {
     const store = new InMemoryKtStore();
-    await kt.search(testRequest, store, {});
+    await kt.check(testRequest, store, {});
   });
 
-  it('can monitor the test account', async () => {
+  it('check account (monitor)', async () => {
     const store = new InMemoryKtStore();
 
-    // Search first to populate the store with account data
-    await kt.search(testRequest, store, {});
+    // Initial search first to populate the store with account data
+    await kt.check(testRequest, store, {});
 
     const accountDataHistory = store.storage.get(testAci) ?? null;
-    expect(accountDataHistory).to.not.be.null;
+    if (accountDataHistory === null) {
+      expect.fail('accountDataHistory is null');
+    }
 
-    expect(accountDataHistory!.length).to.equal(1);
+    expect(accountDataHistory.length).to.equal(1);
+    expect(store.distinguished.length).to.equal(1);
 
-    await kt.monitor(testRequest, store, {});
-    expect(accountDataHistory!.length).to.equal(2);
+    await kt.check(testRequest, store, {});
+    expect(accountDataHistory.length).to.equal(2);
+    // Distinguished tree should not have been updated
+    expect(store.distinguished.length).to.equal(1);
   });
 });
 
 class InMemoryKtStore implements KT.Store {
-  storage: Map<Readonly<Aci>, Array<Readonly<Uint8Array>>>;
-  distinguished: Readonly<Uint8Array> | null;
+  storage: Map<Readonly<Aci>, Array<Readonly<Bytes>>>;
+  distinguished: Array<Readonly<Bytes>>;
 
   constructor() {
-    this.storage = new Map<Aci, Array<Readonly<Uint8Array>>>();
-    this.distinguished = null;
+    this.storage = new Map<Aci, Array<Readonly<Bytes>>>();
+    this.distinguished = new Array<Bytes>();
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async getLastDistinguishedTreeHead(): Promise<Uint8Array | null> {
-    return this.distinguished;
+  async getLastDistinguishedTreeHead(): Promise<Bytes | null> {
+    return this.distinguished.at(-1) ?? null;
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async setLastDistinguishedTreeHead(bytes: Readonly<Uint8Array> | null) {
-    this.distinguished = bytes;
+  async setLastDistinguishedTreeHead(bytes: Readonly<Bytes> | null) {
+    if (bytes !== null) {
+      this.distinguished.push(bytes);
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async getAccountData(aci: Aci): Promise<Uint8Array | null> {
+  async getAccountData(aci: Aci): Promise<Bytes | null> {
     const allVersions = this.storage.get(aci) ?? [];
     return allVersions.at(-1) ?? null;
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async setAccountData(aci: Aci, bytes: Readonly<Uint8Array>) {
+  async setAccountData(aci: Aci, bytes: Readonly<Bytes>) {
     const allVersions = this.storage.get(aci) ?? [];
     allVersions.push(bytes);
     this.storage.set(aci, allVersions);

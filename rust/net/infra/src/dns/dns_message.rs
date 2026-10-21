@@ -14,8 +14,8 @@ use bitstream_io::{
 };
 use tokio::time::Instant;
 
-use crate::dns::dns_types::Expiring;
 use crate::dns::ResourceType;
+use crate::dns::dns_types::Expiring;
 
 pub(crate) const QCLASS_IN: u16 = 1;
 const POINTER_MASK: u8 = 0xC0;
@@ -24,9 +24,15 @@ const POINTER_MASK: u8 = 0xC0;
 // https://datatracker.ietf.org/doc/html/rfc1035#section-2.3.4
 pub(crate) const MAX_DNS_LABEL_LEN: usize = 63;
 pub(crate) const MAX_DNS_NAME_LEN: usize = 255;
-pub(crate) const MAX_DNS_UDP_MESSAGE_LEN: usize = 512;
+
+const MAX_DNS_ANSWERS_TO_PARSE: u16 = 1024;
+// Maximum number of pointer indirections to follow while parsing names.
+// Value is chosen arbitrarily to be sufficiently large in practice yet
+// not cause stack exhaustion due to recursion.
+const MAX_POINTER_FOLLOWS: usize = 127;
 
 #[derive(displaydoc::Display, Debug, thiserror::Error, Clone)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub enum Error {
     /// Invalid domain name (a label is longer than {MAX_DNS_LABEL_LEN:?} octets)
     ProtocolErrorLabelTooLong,
@@ -56,20 +62,22 @@ impl From<io::Error> for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Creates a DNS request for the given request id, domain name, and resource type.
+/// Creates a DNS request for the given domain name and resource type.
 ///
 /// In this simple case, we only have one question and it's always recursive.
 /// This way, a big portion of the message is filled with a predefined data.
 ///
+/// The message ID is always 0. Our only transport is DNS-over-HTTPS, where
+/// responses are correlated with requests by the HTTP layer rather than by the
+/// DNS message ID, and RFC 8484 says clients SHOULD send an ID of 0 so that
+/// identical queries are cache-friendly.
+///
+/// [DoH message ID](https://datatracker.ietf.org/doc/html/rfc8484#section-4.1)
 /// [Header section](https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.1)
 /// [Question section](https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.2)
 /// [UDP usage](https://datatracker.ietf.org/doc/html/rfc1035#section-4.2.1)
 /// [TCP usage](https://datatracker.ietf.org/doc/html/rfc1035#section-4.2.2)
-pub fn create_request_with_id(
-    request_id: u16,
-    domain: &str,
-    resource_type: ResourceType,
-) -> Result<Vec<u8>> {
+pub fn create_request(domain: &str, resource_type: ResourceType) -> Result<Vec<u8>> {
     // the information hardcoded in this section is that the message is a request
     // and that the request is recursive
     const RECURSIVE_REQUEST_WITH_ONE_QUESTION: [u8; 10] = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
@@ -83,8 +91,8 @@ pub fn create_request_with_id(
 
     // Header section
 
-    // request ID
-    writer.write_from(request_id)?;
+    // request ID, always 0 for DoH (see above)
+    writer.write_from(0u16)?;
     // the rest of the header
     writer.write_bytes(RECURSIVE_REQUEST_WITH_ONE_QUESTION.as_slice())?;
 
@@ -97,13 +105,6 @@ pub fn create_request_with_id(
     writer.write_from(QCLASS_IN)?;
 
     Ok(writer.into_writer())
-}
-
-pub fn get_id(message: &[u8]) -> Result<u16> {
-    match message {
-        [a, b, ..] => Ok(((*a as u16) << 8) | *b as u16),
-        _ => Err(Error::ProtocolErrorInvalidMessage),
-    }
 }
 
 pub fn parse_a_record(bytes_vec: &[u8]) -> Result<Ipv4Addr> {
@@ -153,9 +154,15 @@ pub fn parse_response<T>(
     let _data_type = reader.read_to::<u16>()?;
     let _data_class = reader.read_to::<u16>()?;
 
-    let mut results = Vec::with_capacity(answers_count.into());
+    let answers_to_parse = answers_count.min(MAX_DNS_ANSWERS_TO_PARSE);
+    if answers_count > MAX_DNS_ANSWERS_TO_PARSE {
+        log::warn!(
+            "DNS response ANCOUNT {answers_count} exceeds limit {MAX_DNS_ANSWERS_TO_PARSE}; truncating"
+        );
+    }
+    let mut results = Vec::with_capacity(answers_to_parse.into());
     let mut min_ttl = u32::MAX;
-    for _ in 0..answers_count {
+    for _ in 0..answers_to_parse {
         let _name = read_name(&mut reader, message)?;
         let data_type = reader.read_to::<u16>()?;
         let _data_class = reader.read_to::<u16>()?;
@@ -229,36 +236,48 @@ fn read_name_to_vec<R: io::Read>(
     preceding_bytes: &[u8],
     dst: &mut Vec<u8>,
 ) -> Result<()> {
-    let mut buf: [u8; u8::MAX as usize] = [0; u8::MAX as usize];
-    loop {
-        let label_len = reader.read::<u8>()?;
-        if label_len == 0 {
-            return Ok(());
+    fn read_recursive<R: io::Read>(
+        reader: &mut ByteReader<R, BigEndian>,
+        preceding_bytes: &[u8],
+        dst: &mut Vec<u8>,
+        hops_left: usize,
+    ) -> Result<()> {
+        if hops_left == 0 {
+            return Err(Error::ProtocolErrorInvalidMessage);
         }
-        if label_len & POINTER_MASK == POINTER_MASK {
-            let byte2 = reader.read::<u8>()? as u16;
-            let byte1 = (label_len & !POINTER_MASK) as u16;
-            let offset = ((byte1 << 8) | byte2) as usize;
-            // offset can only be referring to a preceding location
-            if offset >= preceding_bytes.len() {
-                return Err(Error::ProtocolErrorInvalidMessage);
+        let mut buf: [u8; u8::MAX as usize] = [0; u8::MAX as usize];
+        loop {
+            let label_len = reader.read::<u8>()?;
+            if label_len == 0 {
+                return Ok(());
             }
-            // every time we make a recursive call,
-            // we're shrinking the slice of `preceding_bytes`
-            // so that recursion will eventually stop
-            return read_name_to_vec(
-                &mut ByteReader::endian(Cursor::new(&preceding_bytes[offset..]), BigEndian),
-                &preceding_bytes[..offset],
-                dst,
-            );
+            if label_len & POINTER_MASK == POINTER_MASK {
+                let byte2 = reader.read::<u8>()? as u16;
+                let byte1 = (label_len & !POINTER_MASK) as u16;
+                let offset = ((byte1 << 8) | byte2) as usize;
+                // offset can only be referring to a preceding location
+                if offset >= preceding_bytes.len() {
+                    return Err(Error::ProtocolErrorInvalidMessage);
+                }
+                // every time we make a recursive call,
+                // we're shrinking the slice of `preceding_bytes`
+                // so that recursion will eventually stop
+                return read_recursive(
+                    &mut ByteReader::endian(Cursor::new(&preceding_bytes[offset..]), BigEndian),
+                    &preceding_bytes[..offset],
+                    dst,
+                    hops_left - 1,
+                );
+            }
+            if !dst.is_empty() {
+                dst.push(b'.');
+            }
+            let label_len = label_len as usize;
+            reader.read_bytes(&mut buf[..label_len])?;
+            dst.extend_from_slice(&buf[..label_len]);
         }
-        if !dst.is_empty() {
-            dst.push(b'.');
-        }
-        let label_len = label_len as usize;
-        reader.read_bytes(&mut buf[..label_len])?;
-        dst.extend_from_slice(&buf[..label_len]);
     }
+    read_recursive(reader, preceding_bytes, dst, MAX_POINTER_FOLLOWS + 1)
 }
 
 #[cfg(test)]
@@ -269,11 +288,12 @@ mod test {
 
     use assert_matches::assert_matches;
     use const_str::{concat_bytes, ip_addr};
-    use hickory_proto::op::{MessageType, ResponseCode};
+    use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
     use hickory_proto::rr::rdata::{A, CNAME};
-    use hickory_proto::rr::{Name, RData, RecordType};
+    use hickory_proto::rr::{Name, RecordType};
     use hickory_proto::serialize::binary::BinEncodable;
     use itertools::Itertools;
+    use test_case::test_case;
     use tokio::time::Instant;
 
     use super::*;
@@ -285,22 +305,17 @@ mod test {
     #[test]
     fn valid_requests_identical() {
         // build a query using a 3rd-party crate
-        let mut header = hickory_proto::op::Header::new();
-        header
-            .set_message_type(MessageType::Query)
-            .set_id(REQUEST_ID)
-            .set_recursion_desired(true);
+        let mut hickory_message = Message::new(0, MessageType::Query, OpCode::Query);
+        hickory_message.metadata.recursion_desired = true;
         let mut query = hickory_proto::op::Query::new();
         query
             .set_name(Name::from_str(VALID_DOMAIN).expect("valid name"))
             .set_query_type(RecordType::A);
-        let mut hickory_message = hickory_proto::op::message::Message::new();
-        hickory_message.set_header(header).add_query(query);
+        hickory_message.add_query(query);
         let hickory_message = hickory_message.to_bytes().expect("valid message");
 
         // build our own query
-        let query = create_request_with_id(REQUEST_ID, VALID_DOMAIN, ResourceType::A)
-            .expect("valid request");
+        let query = create_request(VALID_DOMAIN, ResourceType::A).expect("valid request");
 
         assert_eq!(hickory_message, query);
     }
@@ -308,12 +323,10 @@ mod test {
     #[test]
     fn request_allows_dot_at_the_end() {
         // build our own query
-        let query1 = create_request_with_id(REQUEST_ID, VALID_DOMAIN, ResourceType::A)
-            .expect("valid request");
+        let query1 = create_request(VALID_DOMAIN, ResourceType::A).expect("valid request");
 
         let with_dot = format!("{VALID_DOMAIN}.");
-        let query2 =
-            create_request_with_id(REQUEST_ID, &with_dot, ResourceType::A).expect("valid request");
+        let query2 = create_request(&with_dot, ResourceType::A).expect("valid request");
 
         assert_eq!(query1, query2);
     }
@@ -323,14 +336,11 @@ mod test {
         // 127 labels produces a domain name of length 254,
         // which, with a '.' suffix, is exactly the maximum allowed name length
         let mut long_name = iter::repeat_n('a', 127).join(".");
-        assert_matches!(
-            create_request_with_id(REQUEST_ID, &long_name, ResourceType::A),
-            Ok(_)
-        );
+        assert_matches!(create_request(&long_name, ResourceType::A), Ok(_));
         // with one more character the name becomes too long
         long_name.push('a');
         assert_matches!(
-            create_request_with_id(REQUEST_ID, &long_name, ResourceType::A),
+            create_request(&long_name, ResourceType::A),
             Err(Error::ProtocolErrorNameTooLong)
         );
     }
@@ -339,7 +349,7 @@ mod test {
     fn invalid_name_empty_label() {
         for name in ["", ".", "chat..signal.org", ".chat.signal.org"] {
             assert_matches!(
-                create_request_with_id(REQUEST_ID, name, ResourceType::A),
+                create_request(name, ResourceType::A),
                 Err(Error::ProtocolErrorLabelEmpty)
             );
         }
@@ -349,15 +359,12 @@ mod test {
     fn invalid_name_label_too_long() {
         let mut long_label = iter::repeat_n('a', MAX_DNS_LABEL_LEN).join("");
         let name = format!("{long_label}.signal.org");
-        assert_matches!(
-            create_request_with_id(REQUEST_ID, &name, ResourceType::A),
-            Ok(_)
-        );
+        assert_matches!(create_request(&name, ResourceType::A), Ok(_));
 
         long_label.push('a');
         let name = format!("{long_label}.signal.org");
         assert_matches!(
-            create_request_with_id(REQUEST_ID, &name, ResourceType::A),
+            create_request(&name, ResourceType::A),
             Err(Error::ProtocolErrorLabelTooLong)
         );
     }
@@ -375,12 +382,12 @@ mod test {
         let response_message = response_bytes(RecordType::A, |message| {
             for ip_and_ttl in expected_ips_and_ttls {
                 let (ip, ttl) = ip_and_ttl;
-                let mut rr = hickory_proto::rr::Record::<RData>::new();
-                rr.set_name(name.clone())
-                    .set_record_type(RecordType::A)
-                    .set_ttl(ttl.as_secs().try_into().unwrap())
-                    .set_data(Some(RData::A(A::from(ip))));
-                message.add_answer(rr);
+                let rr = hickory_proto::rr::Record::from_rdata(
+                    name.clone(),
+                    ttl.as_secs().try_into().unwrap(),
+                    A::from(ip),
+                );
+                message.add_answer(rr.into_record_of_rdata());
             }
         });
 
@@ -388,18 +395,11 @@ mod test {
         let response = parse_response(response_message.as_slice(), ResourceType::A, parse_a_record)
             .expect("parsed result");
 
-        assert_matches!(get_id(response_message.as_slice()), Ok(REQUEST_ID));
         assert_eq!(
             &expected_ips_and_ttls.map(|p| p.0),
             response.data.as_slice()
         );
         assert_eq!(Instant::now() + shorter_ttl, response.expiration);
-    }
-
-    #[test]
-    fn invalid_message_error_parsing_id() {
-        assert_matches!(get_id(&[]), Err(Error::ProtocolErrorInvalidMessage));
-        assert_matches!(get_id(&[0]), Err(Error::ProtocolErrorInvalidMessage));
     }
 
     #[test]
@@ -453,7 +453,7 @@ mod test {
     fn error_response_code_handled_correctly() {
         let expected_response_code = 2;
         let response_message = response_bytes(RecordType::A, |message| {
-            message.set_response_code(ResponseCode::from_low(expected_response_code));
+            message.metadata.response_code = ResponseCode::from_low(expected_response_code);
         });
 
         // parsing response message
@@ -483,27 +483,19 @@ mod test {
         let response_message = response_bytes(RecordType::A, |message| {
             // add CNAME record
             let cname = Name::from_str("cname.signal.org").unwrap();
-            let mut rr = hickory_proto::rr::Record::<RData>::new();
-            rr.set_name(name.clone())
-                .set_record_type(RecordType::CNAME)
-                .set_ttl(ttl_sec)
-                .set_data(Some(RData::CNAME(CNAME(cname))));
-            message.add_answer(rr);
+            let rr = hickory_proto::rr::Record::from_rdata(name.clone(), ttl_sec, CNAME(cname));
+            message.add_answer(rr.into_record_of_rdata());
 
             // add A record
-            let mut rr = hickory_proto::rr::Record::<RData>::new();
-            rr.set_name(name.clone())
-                .set_record_type(RecordType::A)
-                .set_ttl(ttl_sec)
-                .set_data(Some(RData::A(A::from(expected_ip))));
-            message.add_answer(rr);
+            let rr =
+                hickory_proto::rr::Record::from_rdata(name.clone(), ttl_sec, A::from(expected_ip));
+            message.add_answer(rr.into_record_of_rdata());
         });
 
         // parsing response message
         let response = parse_response(response_message.as_slice(), ResourceType::A, parse_a_record)
             .expect("parsed result");
 
-        assert_matches!(get_id(response_message.as_slice()), Ok(REQUEST_ID));
         assert_eq!(&[expected_ip], response.data.as_slice());
     }
 
@@ -515,20 +507,17 @@ mod test {
         let ip_to_simulate_error = ip_addr!(v4, "192.0.2.2");
         let response_message = response_bytes(RecordType::A, move |message| {
             // add invalid record
-            let mut rr = hickory_proto::rr::Record::<RData>::new();
-            rr.set_name(name.clone())
-                .set_record_type(RecordType::A)
-                .set_ttl(ttl_sec)
-                .set_data(Some(RData::A(A::from(ip_to_simulate_error))));
-            message.add_answer(rr);
+            let rr = hickory_proto::rr::Record::from_rdata(
+                name.clone(),
+                ttl_sec,
+                A::from(ip_to_simulate_error),
+            );
+            message.add_answer(rr.into_record_of_rdata());
 
             // add A record
-            let mut rr = hickory_proto::rr::Record::<RData>::new();
-            rr.set_name(name.clone())
-                .set_record_type(RecordType::A)
-                .set_ttl(ttl_sec)
-                .set_data(Some(RData::A(A::from(EXPECTED_IP))));
-            message.add_answer(rr);
+            let rr =
+                hickory_proto::rr::Record::from_rdata(name.clone(), ttl_sec, A::from(EXPECTED_IP));
+            message.add_answer(rr.into_record_of_rdata());
         });
 
         // parsing response message
@@ -549,26 +538,49 @@ mod test {
         )
         .expect("parsed result");
 
-        assert_matches!(get_id(response_message.as_slice()), Ok(REQUEST_ID));
         assert_eq!(&[EXPECTED_IP], response.data.as_slice());
+    }
+
+    fn make_dns_pointer(offset: u16) -> [u8; 2] {
+        // DNS pointer: top 2 bits set, remaining 14 bits are the offset.
+        [POINTER_MASK | ((offset >> 8) as u8), (offset & 0xFF) as u8]
+    }
+
+    fn pointer_chain(hops: usize) -> (Vec<u8>, u16) {
+        let mut message = vec![0x01, b'a', 0x00];
+        // Each pointer is at offset (3 + 2*k) points back to: 0, 3, 5, 7, ...
+        let targets = iter::once(0u16).chain((0u16..).map(|k| 3 + 2 * k));
+        message.extend(targets.take(hops).flat_map(make_dns_pointer));
+        let last_offset = u16::try_from(message.len() - 2).expect("chain fits in u16");
+        (message, last_offset)
+    }
+
+    #[test_case(MAX_POINTER_FOLLOWS-1 => Ok(()); "at the limit")]
+    #[test_case(MAX_POINTER_FOLLOWS => Err(Error::ProtocolErrorInvalidMessage); "over the limit")]
+    fn compressed_name_pointer_depth_limit(hops: usize) -> Result<()> {
+        let (preceding, last_offset) = pointer_chain(hops);
+        let ptr = make_dns_pointer(last_offset);
+        let mut reader = ByteReader::endian(Cursor::new(ptr.as_slice()), BigEndian);
+        let mut dst = vec![];
+        let res = read_name_to_vec(&mut reader, &preceding, &mut dst);
+        if let Ok(()) = res {
+            assert_eq!(dst, b"a");
+        }
+        res
     }
 
     fn response_bytes<F>(record_type: RecordType, builder: F) -> Vec<u8>
     where
-        F: FnOnce(&mut hickory_proto::op::message::Message),
+        F: FnOnce(&mut Message),
     {
-        let mut header = hickory_proto::op::Header::new();
-        header
-            .set_message_type(MessageType::Response)
-            .set_id(REQUEST_ID)
-            .set_recursion_desired(true);
+        let mut hickory_message = Message::new(REQUEST_ID, MessageType::Response, OpCode::Query);
+        hickory_message.metadata.recursion_desired = true;
 
         let name = Name::from_str(VALID_DOMAIN).expect("valid name");
         let mut query = hickory_proto::op::Query::new();
         query.set_name(name.clone()).set_query_type(record_type);
 
-        let mut hickory_message = hickory_proto::op::message::Message::new();
-        hickory_message.set_header(header).add_query(query);
+        hickory_message.add_query(query);
 
         builder(&mut hickory_message);
 

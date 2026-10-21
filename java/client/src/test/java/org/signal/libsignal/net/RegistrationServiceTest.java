@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import kotlin.io.encoding.Base64;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
@@ -30,7 +31,6 @@ import org.signal.libsignal.protocol.ecc.ECPublicKey;
 import org.signal.libsignal.protocol.kem.KEMKeyPair;
 import org.signal.libsignal.protocol.kem.KEMKeyType;
 import org.signal.libsignal.protocol.kem.KEMPublicKey;
-import org.signal.libsignal.util.Base64;
 
 public class RegistrationServiceTest {
 
@@ -97,6 +97,19 @@ public class RegistrationServiceTest {
         response.getBackupEntitlement(),
         new RegisterAccountResponse.BackupEntitlement(123, Duration.ofSeconds(888888)));
     assertEquals(response.isReregistration(), true);
+    assertNull(response.getAuthCredentialSalt());
+  }
+
+  @Test
+  public void testConvertRegistrationResponseWithoutPhoneNumber() throws Exception {
+    var response =
+        new RegisterAccountResponse(
+            NativeTesting.TESTING_RegisterAccountResponse_CreateTestValueWithoutPhoneNumber());
+    assertNull(response.getNumber());
+    assertNull(response.getPni());
+    assertEquals(
+        response.getAci(), ServiceId.Aci.parseFromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+    assertArrayEquals(response.getAuthCredentialSalt(), "auth-credential-salt".getBytes());
   }
 
   @Test
@@ -229,6 +242,26 @@ public class RegistrationServiceTest {
         "RegistrationLockFor50Seconds",
         RegistrationLockException.class,
         NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
+    assertRegistrationSessionErrorIs(
+        "RequestRejected",
+        RegisterAccountRequestRejectedException.class,
+        NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
+    assertRegistrationSessionErrorIs(
+        "InvalidSession",
+        RegistrationInvalidSessionException.class,
+        NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
+    assertRegistrationSessionErrorIs(
+        "InvalidReceipt",
+        RegistrationInvalidReceiptException.class,
+        NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
+    assertRegistrationSessionErrorIs(
+        "RecoveryPasswordRequired",
+        RegistrationRecoveryPasswordRequiredException.class,
+        NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
+    assertRegistrationSessionErrorIs(
+        "OneTimePasswordRequired",
+        RegistrationOneTimePasswordRequiredException.class,
+        NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
     assertIsRetryAfterError(NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
     assertIsTimeoutError(NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
     assertIsUnknownError(NativeTesting::TESTING_RegistrationService_RegisterAccountErrorConvert);
@@ -266,11 +299,18 @@ public class RegistrationServiceTest {
   }
 
   private static void assertIsPushChallengeError(ThrowingConsumer<String> throwError) {
-    RateLimitChallengeException e =
+    final RateLimitChallengeException e =
         assertRegistrationSessionErrorIs(
             "PushChallenge", RateLimitChallengeException.class, throwError);
     assertEquals(e.getToken(), "token");
     assertEquals(e.getOptions(), EnumSet.of(ChallengeOption.PUSH_CHALLENGE));
+    assertEquals(e.getRetryLater(), null);
+    final RateLimitChallengeException e2 =
+        assertRegistrationSessionErrorIs(
+            "PushChallengeRetryAfter42Seconds", RateLimitChallengeException.class, throwError);
+    assertEquals(e2.getToken(), "token42");
+    assertEquals(e2.getOptions(), EnumSet.of(ChallengeOption.PUSH_CHALLENGE));
+    assertEquals(e2.getRetryLater(), Duration.ofSeconds(42));
   }
 
   @Test
@@ -285,13 +325,13 @@ public class RegistrationServiceTest {
     var fakeRemote = fakeServer.getNextRemote().get();
     var firstRequestAndId = fakeRemote.getNextIncomingRequest().get();
     assertNotNull(firstRequestAndId);
-    var firstRequest = firstRequestAndId.first();
+    var firstRequest = firstRequestAndId.getFirst();
 
     assertEquals(firstRequest.getMethod(), "POST");
     assertEquals(firstRequest.getPathAndQuery(), "/v1/verification/session");
 
     fakeRemote.sendResponse(
-        firstRequestAndId.second(),
+        firstRequestAndId.getSecond(),
         200,
         "OK",
         new String[] {"content-type: application/json"},
@@ -322,7 +362,7 @@ public class RegistrationServiceTest {
 
     var secondRequestAndId = fakeRemote.getNextIncomingRequest().get();
     assertNotNull(secondRequestAndId);
-    var secondRequest = secondRequestAndId.first();
+    var secondRequest = secondRequestAndId.getFirst();
 
     assertEquals(secondRequest.getMethod(), "POST");
     assertEquals(secondRequest.getPathAndQuery(), "/v1/verification/session/fake-session-A/code");
@@ -335,7 +375,7 @@ public class RegistrationServiceTest {
         Map.of("content-type", "application/json", "accept-language", "fr-CA"));
 
     fakeRemote.sendResponse(
-        secondRequestAndId.second(),
+        secondRequestAndId.getSecond(),
         200,
         "OK",
         new String[] {"content-type: application/json"},
@@ -350,6 +390,145 @@ public class RegistrationServiceTest {
             .getBytes());
 
     requestVerification.get();
+  }
+
+  @Test
+  public void testFakeRemoteSessionStateRefreshedFromErrors()
+      throws ExecutionException, InterruptedException {
+    var tokio = new TokioAsyncContext();
+    var fakeServer = new FakeChatServer(tokio);
+    var createSession =
+        RegistrationService.fakeCreateSession(
+            fakeServer,
+            new RegistrationService.CreateSession("+18005550123", "myPushToken", null, null));
+
+    var fakeRemote = fakeServer.getNextRemote().get();
+    var createRequestAndId = fakeRemote.getNextIncomingRequest().get();
+    assertNotNull(createRequestAndId);
+    fakeRemote.sendResponse(
+        createRequestAndId.getSecond(),
+        200,
+        "OK",
+        new String[] {"content-type: application/json"},
+        """
+        {
+            "allowedToRequestCode": true,
+            "verified": false,
+            "requestedInformation": ["pushChallenge"],
+            "id": "fake-session-A"
+        }
+        """
+            .getBytes());
+    var session = createSession.get();
+
+    // A failed requestVerificationCode whose body carries updated session state
+    // refreshes the service's cached session state across the bridge, even
+    // though the request fails.
+    var requestVerification =
+        session.requestVerificationCode(
+            RegistrationService.VerificationTransport.VOICE,
+            "libsignal test",
+            Locale.CANADA_FRENCH);
+    var sendCodeRequestAndId = fakeRemote.getNextIncomingRequest().get();
+    assertNotNull(sendCodeRequestAndId);
+    fakeRemote.sendResponse(
+        sendCodeRequestAndId.getSecond(),
+        418,
+        "Send failed",
+        new String[] {"content-type: application/json"},
+        """
+        {
+            "allowedToRequestCode": false,
+            "verified": false,
+            "nextSms": 42,
+            "requestedInformation": ["captcha"]
+        }
+        """
+            .getBytes());
+    var sendFailure = assertThrows(ExecutionException.class, () -> requestVerification.get());
+    assertTrue(sendFailure.getCause() instanceof RegistrationSessionSendCodeException);
+
+    var afterSendFailed = session.getSessionState();
+    assertEquals(false, afterSendFailed.getAllowedToRequestCode());
+    assertEquals(false, afterSendFailed.getVerified());
+    assertEquals(Duration.ofSeconds(42), afterSendFailed.getNextSms());
+    // Fields absent from the error body must be unset, not carried over from the
+    // previous session state.
+    assertNull(afterSendFailed.getNextCall());
+    assertNull(afterSendFailed.getNextVerificationAttempt());
+    assertEquals(Set.of(ChallengeOption.CAPTCHA), afterSendFailed.getRequestedInformation());
+
+    // Same for a failed submitVerificationCode (NotReadyForVerification).
+    var submitVerification = session.submitVerificationCode("123456");
+    var submitCodeRequestAndId = fakeRemote.getNextIncomingRequest().get();
+    assertNotNull(submitCodeRequestAndId);
+    fakeRemote.sendResponse(
+        submitCodeRequestAndId.getSecond(),
+        409,
+        "Not ready",
+        new String[] {"content-type: application/json"},
+        """
+        {
+            "allowedToRequestCode": true,
+            "verified": false,
+            "nextVerificationAttempt": 37,
+            "requestedInformation": []
+        }
+        """
+            .getBytes());
+    var submitFailure = assertThrows(ExecutionException.class, () -> submitVerification.get());
+    assertTrue(submitFailure.getCause() instanceof RegistrationSessionNotReadyException);
+
+    var afterNotReady = session.getSessionState();
+    assertEquals(true, afterNotReady.getAllowedToRequestCode());
+    assertEquals(false, afterNotReady.getVerified());
+    assertEquals(Duration.ofSeconds(37), afterNotReady.getNextVerificationAttempt());
+    // Fields absent from the error body must be unset, not carried over from the
+    // previous (send-failed) session state, which had nextSms set.
+    assertNull(afterNotReady.getNextSms());
+    assertNull(afterNotReady.getNextCall());
+    assertEquals(Set.of(), afterNotReady.getRequestedInformation());
+
+    // A 429 (rate limited) response also carries session state in its body, but
+    // comes back as a RetryLaterException rather than a typed error. The cached
+    // session state is still refreshed.
+    var rateLimited =
+        session.requestVerificationCode(
+            RegistrationService.VerificationTransport.VOICE,
+            "libsignal test",
+            Locale.CANADA_FRENCH);
+    var rateLimitedRequestAndId = fakeRemote.getNextIncomingRequest().get();
+    assertNotNull(rateLimitedRequestAndId);
+    fakeRemote.sendResponse(
+        rateLimitedRequestAndId.getSecond(),
+        429,
+        "Too many requests",
+        new String[] {"content-type: application/json", "retry-after: 60"},
+        """
+        {
+            "allowedToRequestCode": true,
+            "verified": false,
+            "nextCall": 99,
+            "requestedInformation": []
+        }
+        """
+            .getBytes());
+    var rateLimitedFailure = assertThrows(ExecutionException.class, () -> rateLimited.get());
+    assertTrue(rateLimitedFailure.getCause() instanceof RetryLaterException);
+
+    var afterRateLimited = session.getSessionState();
+    assertEquals(true, afterRateLimited.getAllowedToRequestCode());
+    assertEquals(false, afterRateLimited.getVerified());
+    assertEquals(Duration.ofSeconds(99), afterRateLimited.getNextCall());
+    // Fields absent from the error body must be unset, not carried over from the
+    // previous (not-ready) session state, which had nextVerificationAttempt set.
+    assertNull(afterRateLimited.getNextSms());
+    assertNull(afterRateLimited.getNextVerificationAttempt());
+    assertEquals(Set.of(), afterRateLimited.getRequestedInformation());
+  }
+
+  private static String encodeBase64(byte[] input) {
+    return Base64.Default.encode(input, 0, input.length);
   }
 
   @Test
@@ -368,7 +547,7 @@ public class RegistrationServiceTest {
 
     // Send a response to allow the request to complete.
     fakeRemote.sendResponse(
-        firstRequestAndId.second(),
+        firstRequestAndId.getSecond(),
         200,
         "OK",
         new String[] {"content-type: application/json"},
@@ -412,7 +591,7 @@ public class RegistrationServiceTest {
 
     var secondRequestAndId = fakeRemote.getNextIncomingRequest().get();
     assertNotNull(secondRequestAndId);
-    var secondRequest = secondRequestAndId.first();
+    var secondRequest = secondRequestAndId.getFirst();
 
     assertEquals("POST", secondRequest.getMethod());
     assertEquals("/v1/registration", secondRequest.getPathAndQuery());
@@ -422,7 +601,7 @@ public class RegistrationServiceTest {
             "content-type",
             "application/json",
             "authorization",
-            "Basic " + Base64.encodeToString("+18005550123:account password".getBytes())),
+            "Basic " + encodeBase64("+18005550123:account password".getBytes())),
         secondRequest.getHeaders());
 
     var secondRequestJson =
@@ -449,28 +628,26 @@ public class RegistrationServiceTest {
         secondRequestJson.get("accountAttributes"));
 
     assertEquals(
-        Base64.encodeToString(aciKeys.publicKey.serialize()),
-        secondRequestJson.get("aciIdentityKey"));
+        encodeBase64(aciKeys.publicKey.serialize()), secondRequestJson.get("aciIdentityKey"));
     assertEquals(
-        Base64.encodeToString(pniKeys.publicKey.serialize()),
-        secondRequestJson.get("pniIdentityKey"));
+        encodeBase64(pniKeys.publicKey.serialize()), secondRequestJson.get("pniIdentityKey"));
 
     // We don't need to check all the keys, just one of each kind is enough.
     assertEquals(
         Map.of(
-            "signature", Base64.encodeToString("EC signature".getBytes()),
+            "signature", encodeBase64("EC signature".getBytes()),
             "keyId", 1L,
-            "publicKey", Base64.encodeToString(aciKeys.signedPreKey.publicKey().serialize())),
+            "publicKey", encodeBase64(aciKeys.signedPreKey.publicKey().serialize())),
         secondRequestJson.get("aciSignedPreKey"));
     assertEquals(
         Map.of(
-            "signature", Base64.encodeToString("KEM signature".getBytes()),
+            "signature", encodeBase64("KEM signature".getBytes()),
             "keyId", 2L,
-            "publicKey", Base64.encodeToString(aciKeys.pqLastResortPreKey.publicKey().serialize())),
+            "publicKey", encodeBase64(aciKeys.pqLastResortPreKey.publicKey().serialize())),
         secondRequestJson.get("aciPqLastResortPreKey"));
 
     fakeRemote.sendResponse(
-        secondRequestAndId.second(),
+        secondRequestAndId.getSecond(),
         200,
         "OK",
         new String[] {"content-type: application/json"},

@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use libcrux_ml_kem::SHARED_SECRET_SIZE;
 use libcrux_ml_kem::mlkem1024::{
     self, MlKem1024Ciphertext, MlKem1024PrivateKey, MlKem1024PublicKey,
 };
-use libcrux_ml_kem::SHARED_SECRET_SIZE;
 use rand::Rng as _;
 
 use super::{
@@ -16,7 +16,7 @@ use super::{
 pub(crate) struct Parameters;
 
 impl super::Parameters for Parameters {
-    const KEY_TYPE: KeyType = KeyType::Kyber1024;
+    const KEY_TYPE: KeyType = KeyType::MLKEM1024;
     const PUBLIC_KEY_LENGTH: usize = MlKem1024PublicKey::LENGTH;
     const SECRET_KEY_LENGTH: usize = MlKem1024PrivateKey::LENGTH;
     const CIPHERTEXT_LENGTH: usize = MlKem1024Ciphertext::LENGTH;
@@ -25,6 +25,7 @@ impl super::Parameters for Parameters {
     fn generate<R: rand::CryptoRng + ?Sized>(
         csprng: &mut R,
     ) -> (KeyMaterial<Public>, KeyMaterial<Secret>) {
+        let _trace = libsignal_debug::trace_block!("Parameters::generate");
         let (sk, pk) = mlkem1024::generate_key_pair(csprng.random()).into_parts();
         (KeyMaterial::from(pk), KeyMaterial::from(sk))
     }
@@ -33,6 +34,7 @@ impl super::Parameters for Parameters {
         pub_key: &KeyMaterial<Public>,
         csprng: &mut R,
     ) -> Result<(Box<[u8]>, Box<[u8]>), BadKEMKeyLength> {
+        let _trace = libsignal_debug::trace_block!("Parameters::encapsulate");
         let mlkem_pk =
             MlKem1024PublicKey::try_from(pub_key.as_ref()).map_err(|_| BadKEMKeyLength)?;
         let (mlkem_ct, mlkem_ss) = mlkem1024::encapsulate(&mlkem_pk, csprng.random());
@@ -43,6 +45,7 @@ impl super::Parameters for Parameters {
         secret_key: &KeyMaterial<Secret>,
         ciphertext: &[u8],
     ) -> Result<Box<[u8]>, DecapsulateError> {
+        let _trace = libsignal_debug::trace_block!("Parameters::decapsulate");
         let mlkem_sk = MlKem1024PrivateKey::try_from(secret_key.as_ref())
             .map_err(|_| DecapsulateError::BadKeyLength)?;
         let mlkem_ct = MlKem1024Ciphertext::try_from(ciphertext)

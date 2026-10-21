@@ -6,16 +6,15 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
-use libsignal_bridge_macros::*;
+use futures_util::future::BoxFuture;
+use libsignal_bridge_types::net::TokioAsyncContext;
 use libsignal_bridge_types::net::registration::{
     ConnectChatBridge, RegistrationCreateSessionRequest, RegistrationService,
 };
-use libsignal_bridge_types::net::TokioAsyncContext;
 use libsignal_net::auth::Auth;
-use libsignal_net::chat::fake::FakeChatRemote;
 use libsignal_net::chat::ChatConnection;
+use libsignal_net::chat::fake::FakeChatRemote;
 use libsignal_net::infra::errors::RetryLater;
 use libsignal_net_chat::api::registration::*;
 use libsignal_net_chat::api::{ChallengeOption, RateLimitChallenge, Unauth};
@@ -39,8 +38,8 @@ pub fn TESTING_RegistrationSessionInfoConvert() -> RegistrationSession {
 }
 
 #[bridge_fn]
-pub fn TESTING_RegistrationService_CheckSvr2CredentialsResponseConvert(
-) -> CheckSvr2CredentialsResponse {
+pub fn TESTING_RegistrationService_CheckSvr2CredentialsResponseConvert()
+-> CheckSvr2CredentialsResponse {
     CheckSvr2CredentialsResponse {
         matches: [
             ("username:pass-match", Svr2CredentialsResult::Match),
@@ -78,11 +77,12 @@ impl ConnectUnauthChat for ConnectFakeChat {
         let mut on_disconnect = Some(on_disconnect);
         let listener = move |event| match event {
             libsignal_net::chat::ws::ListenerEvent::Finished(_) => drop(on_disconnect.take()),
-            libsignal_net::chat::ws::ListenerEvent::ReceivedAlerts(_)
+            libsignal_net::chat::ws::ListenerEvent::ServerTimestamp(_)
+            | libsignal_net::chat::ws::ListenerEvent::ReceivedAlerts(_)
             | libsignal_net::chat::ws::ListenerEvent::ReceivedMessage(_, _) => (),
         };
 
-        let (chat, remote) = ChatConnection::new_fake(self.0.clone(), Box::new(listener), []);
+        let (chat, remote) = ChatConnection::new_fake(self.0.clone(), Box::new(listener), [], []);
 
         std::future::ready(
             self.1
@@ -111,8 +111,8 @@ async fn TESTING_FakeRegistrationSession_CreateSession(
 fn TESTING_RegisterAccountResponse_CreateTestValue() -> RegisterAccountResponse {
     RegisterAccountResponse {
         aci: uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").into(),
-        number: "+18005550123".to_owned(),
-        pni: uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").into(),
+        number: Some("+18005550123".to_owned()),
+        pni: Some(uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").into()),
         username_hash: Some((*b"username-hash").into()),
         username_link_handle: Some(uuid!("55555555-5555-5555-5555-555555555555")),
         storage_capable: true,
@@ -136,25 +136,34 @@ fn TESTING_RegisterAccountResponse_CreateTestValue() -> RegisterAccountResponse 
             }),
         },
         reregistration: true,
+        auth_credential_salt: None,
+    }
+}
+
+#[bridge_fn]
+fn TESTING_RegisterAccountResponse_CreateTestValueWithoutPhoneNumber() -> RegisterAccountResponse {
+    RegisterAccountResponse {
+        aci: uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").into(),
+        number: None,
+        pni: None,
+        username_hash: None,
+        username_link_handle: None,
+        storage_capable: false,
+        entitlements: RegisterResponseEntitlements::default(),
+        reregistration: false,
+        auth_credential_salt: Some((*b"auth-credential-salt").into()),
     }
 }
 
 // Use aliases so that places that refer to syntactic argument names (e.g.
 // jni::jni_arg and friends) aren't ambiguous.
-/// cbindgen:ignore
 type TestingCreateSessionRequestError = TestingRequestError<TestingCreateSessionError>;
-/// cbindgen:ignore
 type TestingResumeSessionRequestError = TestingRequestError<TestingResumeSessionError>;
-/// cbindgen:ignore
 type TestingUpdateSessionRequestError = TestingRequestError<TestingUpdateSessionError>;
-/// cbindgen:ignore
 type TestingRequestVerificationCodeRequestError =
     TestingRequestError<TestingRequestVerificationCodeError>;
-/// cbindgen:ignore
 type TestingSubmitVerificationRequestError = TestingRequestError<TestingSubmitVerificationError>;
-/// cbindgen:ignore
 type TestingRegisterAccountRequestError = TestingRequestError<TestingRegisterAccountError>;
-/// cbindgen:ignore
 type TestingCheckSvr2CredentialsRequestError =
     TestingRequestError<TestingCheckSvr2CredentialsError>;
 
@@ -163,15 +172,7 @@ struct TestingRequestError<E>(RequestError<E>);
 impl<TestE> TestingRequestError<TestE> {
     fn map_into_error<E>(self, f: impl FnOnce(TestE) -> E) -> RequestError<E> {
         let TestingRequestError(inner) = self;
-        match inner {
-            RequestError::Timeout => RequestError::Timeout,
-            RequestError::Unexpected { log_safe } => RequestError::Unexpected { log_safe },
-            RequestError::Other(e) => RequestError::Other(f(e)),
-            RequestError::RetryLater(retry_later) => RequestError::RetryLater(retry_later),
-            RequestError::Challenge(challenge) => RequestError::Challenge(challenge),
-            RequestError::ServerSideError => RequestError::ServerSideError,
-            RequestError::Disconnected(d) => match d {},
-        }
+        inner.flat_map_other(|e| RequestError::Other(f(e)))
     }
 }
 
@@ -197,6 +198,12 @@ impl<TestE: for<'a> TryFrom<&'a str, Error = strum::ParseError>> TryFrom<String>
             "PushChallenge" => RequestError::Challenge(RateLimitChallenge {
                 token: "token".to_owned(),
                 options: vec![ChallengeOption::PushChallenge],
+                retry_later: None,
+            }),
+            "PushChallengeRetryAfter42Seconds" => RequestError::Challenge(RateLimitChallenge {
+                token: "token42".to_owned(),
+                options: vec![ChallengeOption::PushChallenge],
+                retry_later: Some(RETRY_AFTER_42_SECONDS),
             }),
             "ServerSideError" => RequestError::ServerSideError,
             _ => TestE::try_from(&value)
@@ -272,8 +279,20 @@ make_error_testing_enum!(
         NotReadyForVerification => NotReadyForVerification,
         SendFailed => SendFailed,
         CodeNotDeliverable => CodeNotDeliverable,
+        ; SendFailedNoSessionState, NotReadyForVerificationNoSessionState,
     }
 );
+
+fn test_registration_session() -> RegistrationSession {
+    RegistrationSession {
+        allowed_to_request_code: false,
+        verified: false,
+        next_sms: Some(Duration::from_secs(3)),
+        next_call: Some(Duration::from_secs(14)),
+        next_verification_attempt: Some(Duration::from_secs(15)),
+        requested_information: HashSet::from_iter([ChallengeOption::Captcha]),
+    }
+}
 
 /// Return an error matching the requested description.
 #[bridge_fn]
@@ -291,10 +310,18 @@ fn TESTING_RegistrationService_RequestVerificationCodeErrorConvert(
                 RequestVerificationCodeError::SessionNotFound
             }
             TestingRequestVerificationCodeError::NotReadyForVerification => {
-                RequestVerificationCodeError::NotReadyForVerification
+                RequestVerificationCodeError::NotReadyForVerification(Some(
+                    test_registration_session(),
+                ))
+            }
+            TestingRequestVerificationCodeError::NotReadyForVerificationNoSessionState => {
+                RequestVerificationCodeError::NotReadyForVerification(None)
             }
             TestingRequestVerificationCodeError::SendFailed => {
-                RequestVerificationCodeError::SendFailed
+                RequestVerificationCodeError::SendFailed(Some(test_registration_session()))
+            }
+            TestingRequestVerificationCodeError::SendFailedNoSessionState => {
+                RequestVerificationCodeError::SendFailed(None)
             }
             TestingRequestVerificationCodeError::CodeNotDeliverable => {
                 RequestVerificationCodeError::CodeNotDeliverable(VerificationCodeNotDeliverable {
@@ -310,6 +337,7 @@ make_error_testing_enum!(
         InvalidSessionId => InvalidSessionId,
         SessionNotFound => SessionNotFound,
         NotReadyForVerification => NotReadyForVerification,
+        ; NotReadyForVerificationNoSessionState,
     }
 );
 
@@ -329,7 +357,10 @@ fn TESTING_RegistrationService_SubmitVerificationErrorConvert(
                 SubmitVerificationError::SessionNotFound
             }
             TestingSubmitVerificationError::NotReadyForVerification => {
-                SubmitVerificationError::NotReadyForVerification
+                SubmitVerificationError::NotReadyForVerification(Some(test_registration_session()))
+            }
+            TestingSubmitVerificationError::NotReadyForVerificationNoSessionState => {
+                SubmitVerificationError::NotReadyForVerification(None)
             }
         }))
 }
@@ -360,6 +391,11 @@ make_error_testing_enum!(
         DeviceTransferIsPossibleButNotSkipped => DeviceTransferIsPossibleButNotSkipped,
         RegistrationRecoveryVerificationFailed => RegistrationRecoveryVerificationFailed,
         RegistrationLock => RegistrationLockFor50Seconds,
+        RequestRejected => RequestRejected,
+        InvalidSession => InvalidSession,
+        InvalidReceipt => InvalidReceipt,
+        RecoveryPasswordRequired => RecoveryPasswordRequired,
+        OneTimePasswordRequired => OneTimePasswordRequired,
     }
 );
 
@@ -381,11 +417,20 @@ fn TESTING_RegistrationService_RegisterAccountErrorConvert(
             TestingRegisterAccountError::RegistrationLockFor50Seconds => {
                 RegisterAccountError::RegistrationLock(RegistrationLock {
                     time_remaining: Duration::from_secs(50),
-                    svr2_credentials: Auth {
+                    svr2_credentials: Some(Auth {
                         username: "user".to_owned(),
                         password: "pass".to_owned(),
-                    },
+                    }),
                 })
+            }
+            TestingRegisterAccountError::RequestRejected => RegisterAccountError::RequestRejected,
+            TestingRegisterAccountError::InvalidSession => RegisterAccountError::InvalidSession,
+            TestingRegisterAccountError::InvalidReceipt => RegisterAccountError::InvalidReceipt,
+            TestingRegisterAccountError::RecoveryPasswordRequired => {
+                RegisterAccountError::RecoveryPasswordRequired
+            }
+            TestingRegisterAccountError::OneTimePasswordRequired => {
+                RegisterAccountError::OneTimePasswordRequired
             }
         }))
 }

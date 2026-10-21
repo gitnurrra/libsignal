@@ -3,22 +3,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { randomBytes } from 'crypto';
+import type { Bytes } from '@signalapp/types';
+import { randomBytes } from 'node:crypto';
 
-import ByteArray, { UNCHECKED_AND_UNCLONED } from '../internal/ByteArray';
-import * as Native from '../../../Native';
-import { RANDOM_LENGTH } from '../internal/Constants';
+import ByteArray, { UNCHECKED_AND_UNCLONED } from '../internal/ByteArray.js';
+import * as Native from '../../Native.js';
+import { RANDOM_LENGTH } from '../internal/Constants.js';
 
-import GroupSecretParams from '../groups/GroupSecretParams';
-import ServerPublicParams from '../ServerPublicParams';
-import UuidCiphertext from '../groups/UuidCiphertext';
-import { Aci, ServiceId } from '../../Address';
-import GroupSendDerivedKeyPair from './GroupSendDerivedKeyPair';
-import GroupSendEndorsement from './GroupSendEndorsement';
+import GroupSecretParams from '../groups/GroupSecretParams.js';
+import ServerPublicParams from '../ServerPublicParams.js';
+import UuidCiphertext from '../groups/UuidCiphertext.js';
+import { Aci, ServiceId } from '../../Address.js';
+import GroupSendDerivedKeyPair from './GroupSendDerivedKeyPair.js';
+import GroupSendEndorsement from './GroupSendEndorsement.js';
 
 // For docs
-import type { VerificationFailedError } from '../../Errors';
-import GroupSendFullToken from './GroupSendFullToken';
+import type { VerificationFailedError } from '../../Errors.js';
+import GroupSendFullToken from './GroupSendFullToken.js';
 
 /**
  * A collection of endorsements known to be valid.
@@ -41,7 +42,7 @@ export type ReceivedEndorsements = {
  * perspective.
  */
 export default class GroupSendEndorsementsResponse extends ByteArray {
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, Native.GroupSendEndorsementsResponse_CheckValidContents);
   }
 
@@ -69,7 +70,7 @@ export default class GroupSendEndorsementsResponse extends ByteArray {
   public static issueWithRandom(
     groupMembers: UuidCiphertext[],
     keyPair: GroupSendDerivedKeyPair,
-    random: Uint8Array
+    random: Bytes
   ): GroupSendEndorsementsResponse {
     return new GroupSendEndorsementsResponse(
       Native.GroupSendEndorsementsResponse_IssueDeterministic(

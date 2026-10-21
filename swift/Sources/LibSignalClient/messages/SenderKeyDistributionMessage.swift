@@ -19,17 +19,14 @@ public class SenderKeyDistributionMessage: NativeHandleOwner<SignalMutPointerSen
         store: SenderKeyStore,
         context: StoreContext
     ) throws {
-        var result = SignalMutPointerSenderKeyDistributionMessage()
-        try sender.withNativeHandle { senderHandle in
-            try withUnsafePointer(to: distributionId.uuid) { distributionId in
-                try withSenderKeyStore(store, context) {
-                    try checkError(
-                        signal_sender_key_distribution_message_create(
-                            &result,
-                            senderHandle.const(),
-                            distributionId,
-                            $0
-                        )
+        let result = try sender.withNativeHandle { senderHandle in
+            try withSenderKeyStore(store, context) { store in
+                try invokeFnReturningValueByPointer(.init()) {
+                    signal_sender_key_distribution_message_create(
+                        $0,
+                        senderHandle.const(),
+                        SignalUuid(bytes: distributionId.uuid),
+                        store
                     )
                 }
             }
@@ -38,9 +35,10 @@ public class SenderKeyDistributionMessage: NativeHandleOwner<SignalMutPointerSen
     }
 
     public convenience init(bytes: Data) throws {
-        var result = SignalMutPointerSenderKeyDistributionMessage()
-        try bytes.withUnsafeBorrowedBuffer {
-            try checkError(signal_sender_key_distribution_message_deserialize(&result, $0))
+        let result = try bytes.withUnsafeBorrowedBuffer { bytes in
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_sender_key_distribution_message_deserialize($0, bytes)
+            }
         }
         self.init(owned: NonNull(result)!)
     }

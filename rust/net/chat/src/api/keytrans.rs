@@ -3,9 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+#[cfg(test)]
+mod integration_tests;
+mod maybe_partial;
+mod monitor_and_search;
+mod verify_ext;
+
 use std::borrow::Cow;
-use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::time::SystemTime;
@@ -16,10 +21,13 @@ use libsignal_keytrans::{
     AccountData, ChatDistinguishedResponse, ChatMonitorResponse, ChatSearchResponse,
     CondensedTreeSearchResponse, FullSearchResponse, FullTreeHead, KeyTransparency, LastTreeHead,
     LocalStateUpdate, MonitorContext, MonitorKey, MonitorProof, MonitorRequest, MonitorResponse,
-    MonitoringData, SearchContext, SearchStateUpdate, SlimSearchRequest, VerifiedSearchResult,
+    MonitoringData, SearchContext, SearchStateUpdate, SlimSearchRequest, StoredAccountData,
 };
 use libsignal_net::env::KeyTransConfig;
 use libsignal_protocol::PublicKey;
+pub use maybe_partial::{AccountDataField, MaybePartial};
+pub use monitor_and_search::{TreeHeadWithTimestamp, check};
+use verify_ext::KeyTransparencyVerifyExt as _;
 
 use super::RequestError;
 
@@ -27,7 +35,14 @@ const SEARCH_KEY_PREFIX_ACI: &[u8] = b"a";
 const SEARCH_KEY_PREFIX_E164: &[u8] = b"n";
 const SEARCH_KEY_PREFIX_USERNAME_HASH: &[u8] = b"u";
 
+#[derive(Eq, Debug, PartialEq, Clone, Copy)]
+pub enum CheckMode {
+    SelfCheck { is_e164_discoverable: bool },
+    ContactCheck,
+}
+
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
+#[cfg_attr(test, derive(Clone))]
 #[ignore_extra_doc_attributes]
 pub enum Error {
     /// Verification failed: {0}
@@ -65,6 +80,45 @@ pub trait LowLevelChatApi {
     ) -> Result<Vec<u8>, RequestError<Error>>; // Expected to be a ChatMonitorResponse proto
 }
 
+/// One identifier to monitor, with the log position and commitment index that go
+/// with it already looked up in the stored [`AccountData`].
+pub(crate) struct ResolvedMonitor<V> {
+    pub(crate) value: V,
+    pub(crate) entry_position: u64,
+    pub(crate) commitment_index: [u8; 32],
+}
+
+/// Pairs an identifier the caller asked to monitor with the stored monitoring
+/// data that its log position and commitment index come from.
+///
+/// A monitor request has to send an entry position and commitment index for each
+/// identifier, and those come from [`AccountData`] rather than from the caller's
+/// arguments. That means two independent `Option`s have to agree: the requested
+/// identifier, and the stored entry to read from. Matching on the pair *is* the
+/// check, so there is no state where a caller holds a value but no position to go
+/// with it, and callers need no `expect`.
+///
+/// This logic is extracted from the websocket implementation, and is in a separate
+/// function for reuse.
+pub(crate) fn resolve_monitor<V>(
+    value: Option<V>,
+    stored: Option<&MonitoringData>,
+) -> Result<Option<ResolvedMonitor<V>>, Error> {
+    match (value, stored) {
+        (None, None) => Ok(None),
+        (Some(value), Some(stored)) => Ok(Some(ResolvedMonitor {
+            value,
+            entry_position: stored.latest_log_position(),
+            commitment_index: stored.index,
+        })),
+        // Keep this message identical to the one `RawChatMonitorRequest::new` produces, so both
+        // transports report a mismatch the same way.
+        _ => Err(Error::InvalidRequest(
+            "account data does not match the monitor request",
+        )),
+    }
+}
+
 // Differs from [`ChatSearchResponse`] by establishing proper optionality of fields.
 pub(crate) struct TypedSearchResponse {
     pub(crate) full_tree_head: FullTreeHead,
@@ -74,18 +128,7 @@ pub(crate) struct TypedSearchResponse {
 }
 
 impl TypedSearchResponse {
-    pub(crate) fn from_untyped(
-        require_e164: bool,
-        require_username_hash: bool,
-        response: ChatSearchResponse,
-    ) -> Result<Self, Error> {
-        if require_e164 != response.e164.is_some()
-            || require_username_hash != response.username_hash.is_some()
-        {
-            return Err(Error::InvalidResponse(
-                "request/response optionality mismatch".to_string(),
-            ));
-        }
+    pub(crate) fn from_untyped(response: ChatSearchResponse) -> Result<Self, Error> {
         let ChatSearchResponse {
             tree_head,
             aci,
@@ -146,92 +189,6 @@ impl TypedMonitorResponse {
     }
 }
 
-/// A tag identifying an optional field in [`AccountData`]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, displaydoc::Display)]
-pub enum AccountDataField {
-    /// E.164
-    E164,
-    /// Username hash
-    UsernameHash,
-}
-
-/// This struct adds to its type parameter a (potentially empty) list of
-/// account fields (see [`AccountDataField`]) that can no longer be verified
-/// by the server.
-///
-/// Basically it is a non-generic version of a `Writer` monad with [`BTreeSet`] used
-/// to accumulate missing field entries in some order while avoiding duplicates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MaybePartial<T> {
-    pub inner: T,
-    pub missing_fields: BTreeSet<AccountDataField>,
-}
-
-impl<T> From<T> for MaybePartial<T> {
-    fn from(value: T) -> Self {
-        Self {
-            inner: value,
-            missing_fields: Default::default(),
-        }
-    }
-}
-
-impl<T> MaybePartial<T> {
-    fn new_complete(inner: T) -> Self {
-        Self {
-            inner,
-            missing_fields: Default::default(),
-        }
-    }
-
-    fn new(inner: T, missing_fields: impl IntoIterator<Item = AccountDataField>) -> Self {
-        Self {
-            inner,
-            missing_fields: BTreeSet::from_iter(missing_fields),
-        }
-    }
-
-    fn map<U>(self, f: impl FnOnce(T) -> U) -> MaybePartial<U> {
-        MaybePartial {
-            inner: f(self.inner),
-            missing_fields: self.missing_fields,
-        }
-    }
-
-    fn and_then<U>(self, f: impl FnOnce(T) -> MaybePartial<U>) -> MaybePartial<U> {
-        let MaybePartial {
-            inner,
-            mut missing_fields,
-        } = self;
-        let MaybePartial {
-            inner: final_inner,
-            missing_fields: other_missing,
-        } = f(inner);
-        missing_fields.extend(other_missing);
-        MaybePartial {
-            inner: final_inner,
-            missing_fields,
-        }
-    }
-
-    pub fn into_inner(self) -> T {
-        self.inner
-    }
-}
-
-impl<T, E> MaybePartial<std::result::Result<T, E>> {
-    fn transpose(self) -> std::result::Result<MaybePartial<T>, E> {
-        let MaybePartial {
-            inner,
-            missing_fields,
-        } = self;
-        Ok(MaybePartial {
-            inner: inner?,
-            missing_fields,
-        })
-    }
-}
-
 /// Representation of an object as "search key" aligned with conversion
 /// performed by the chat server.
 ///
@@ -241,6 +198,12 @@ impl<T, E> MaybePartial<std::result::Result<T, E>> {
 /// and username hashes.
 pub trait SearchKey {
     fn as_search_key(&self) -> Vec<u8>;
+}
+
+impl<T: SearchKey> SearchKey for &T {
+    fn as_search_key(&self) -> Vec<u8> {
+        (*self).as_search_key()
+    }
 }
 
 impl SearchKey for Aci {
@@ -257,6 +220,7 @@ impl SearchKey for E164 {
 
 /// Type-safe wrapper for a byte slice representing username hash.
 #[derive(Clone)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UsernameHash<'a>(Cow<'a, [u8]>);
 
 impl AsRef<[u8]> for UsernameHash<'_> {
@@ -337,66 +301,6 @@ pub trait UnauthenticatedChatApi {
     ) -> impl Future<Output = Result<AccountData, RequestError<Error>>> + Send;
 }
 
-pub async fn monitor_and_search(
-    kt: &impl UnauthenticatedChatApi,
-    aci: &Aci,
-    aci_identity_key: &PublicKey,
-    e164: Option<(E164, Vec<u8>)>,
-    username_hash: Option<UsernameHash<'_>>,
-    stored_account_data: AccountData,
-    distinguished_tree_head: &LastTreeHead,
-) -> Result<MaybePartial<AccountData>, RequestError<Error>> {
-    let updated_account_data = kt
-        .monitor(
-            aci,
-            e164.as_ref().map(|(e164, _)| *e164),
-            username_hash.clone(),
-            stored_account_data.clone(),
-            distinguished_tree_head,
-        )
-        .await?;
-
-    // Call to `monitor` guarantees that the optionality of E.164 and username hash data
-    // will match between `stored_account_data` and `updated_account_data`. Meaning, they will
-    // either both be Some() or both None.
-    let should_search = has_version_changed_between(&stored_account_data, &updated_account_data);
-    let final_account_data = if should_search {
-        kt.search(
-            aci,
-            aci_identity_key,
-            e164,
-            username_hash,
-            Some(stored_account_data),
-            distinguished_tree_head,
-        )
-        .await?
-    } else {
-        updated_account_data.into()
-    };
-    Ok(final_account_data)
-}
-
-fn cmp_by_key<T, K: Ord>(lhs: &T, rhs: &T, get_key: impl Fn(&T) -> K) -> Ordering {
-    get_key(lhs).cmp(&get_key(rhs))
-}
-
-/// Compare the account data fields between stored and received from monitor call,
-/// and decide whether there is a newer version of search key in the tree, in which
-/// case search request needs to be performed.
-fn has_version_changed_between(stored: &AccountData, updated: &AccountData) -> bool {
-    let e164_version =
-        |acc_data: &AccountData| acc_data.e164.as_ref().map(|md| md.greatest_version());
-    let username_hash_version = |acc_data: &AccountData| {
-        acc_data
-            .username_hash
-            .as_ref()
-            .map(|md| md.greatest_version())
-    };
-
-    cmp_by_key(stored, updated, e164_version) == Ordering::Less
-        || cmp_by_key(stored, updated, username_hash_version) == Ordering::Less
-}
-
 impl<'a> KeyTransparencyClient<'a> {
     pub fn new(chat: &'a (dyn LowLevelChatApi + Sync), kt_config: KeyTransConfig) -> Self {
         Self {
@@ -436,24 +340,36 @@ impl UnauthenticatedChatApi for KeyTransparencyClient<'_> {
                     ))
                 })
             })
-            .and_then(|r| {
-                TypedSearchResponse::from_untyped(e164.is_some(), username_hash.is_some(), r)
-                    .map_err(RequestError::Other)
-            })?;
+            .and_then(|r| TypedSearchResponse::from_untyped(r).map_err(RequestError::Other))?;
 
         let now = SystemTime::now();
 
-        verify_chat_search_response(
-            &self.inner,
-            aci,
-            e164.map(|(e164, _)| e164),
-            username_hash,
-            stored_account_data,
-            chat_search_response,
-            Some(distinguished_tree_head),
-            now,
-        )
-        .map_err(RequestError::Other)
+        let e164_search_key = e164.as_ref().map(|(x, _)| x.as_search_key());
+        let username_hash_search_key = username_hash.as_ref().map(SearchKey::as_search_key);
+
+        let mut account_data = self
+            .inner
+            .verify_chat_search_response(
+                aci,
+                aci_identity_key,
+                e164.map(|(e164, _)| e164),
+                username_hash,
+                stored_account_data,
+                chat_search_response,
+                Some(distinguished_tree_head),
+                now,
+            )
+            .map_err(RequestError::Other)?;
+
+        // Preserve search keys in account data
+        account_data.inner.aci.search_key = aci.as_search_key();
+        if let Some(stored) = account_data.inner.e164.as_mut() {
+            stored.search_key = e164_search_key.unwrap_or_default();
+        }
+        if let Some(stored) = account_data.inner.username_hash.as_mut() {
+            stored.search_key = username_hash_search_key.unwrap_or_default();
+        }
+        Ok(account_data)
     }
 
     async fn distinguished(
@@ -571,7 +487,11 @@ impl UnauthenticatedChatApi for KeyTransparencyClient<'_> {
                 monitor_keys.push(key);
 
                 // The proof must be present. Checked in TypedMonitorResponse::from_untyped
-                proofs.push(chat_monitor_response.e164.unwrap());
+                proofs.push(
+                    chat_monitor_response
+                        .e164
+                        .expect("checked in TypedMonitorResponse::from_untyped"),
+                );
                 monitoring_data_map.insert(e164.as_search_key(), monitoring_data);
             }
 
@@ -586,7 +506,11 @@ impl UnauthenticatedChatApi for KeyTransparencyClient<'_> {
                 };
                 monitor_keys.push(key);
                 // The proof must be present. Checked in TypedMonitorResponse::from_untyped
-                proofs.push(chat_monitor_response.username_hash.unwrap());
+                proofs.push(
+                    chat_monitor_response
+                        .username_hash
+                        .expect("checked in TypedMonitorResponse::from_untyped"),
+                );
                 monitoring_data_map.insert(username_hash.as_search_key(), monitoring_data);
             }
 
@@ -621,9 +545,15 @@ impl UnauthenticatedChatApi for KeyTransparencyClient<'_> {
             } = verified;
 
             let mut take_data = move |search_key: &[u8], err_message: &'static str| {
-                monitoring_data.remove(search_key).ok_or_else(|| {
-                    RequestError::Other(Error::InvalidResponse(err_message.to_string()))
-                })
+                monitoring_data
+                    .remove(search_key)
+                    .map(|mut d| {
+                        d.search_key = search_key.to_vec();
+                        d
+                    })
+                    .ok_or_else(|| {
+                        RequestError::Other(Error::InvalidResponse(err_message.to_string()))
+                    })
             };
 
             AccountData {
@@ -641,7 +571,7 @@ impl UnauthenticatedChatApi for KeyTransparencyClient<'_> {
                         )
                     })
                     .transpose()?,
-                last_tree_head: (tree_head, tree_root),
+                last_tree_head: LastTreeHead(tree_head, tree_root),
             }
         };
 
@@ -649,189 +579,34 @@ impl UnauthenticatedChatApi for KeyTransparencyClient<'_> {
     }
 }
 
-fn verify_single_search_response(
-    kt: &KeyTransparency,
-    search_key: Vec<u8>,
-    response: CondensedTreeSearchResponse,
-    monitoring_data: Option<MonitoringData>,
-    full_tree_head: &FullTreeHead,
-    last_tree_head: Option<&LastTreeHead>,
-    last_distinguished_tree_head: Option<&LastTreeHead>,
-    now: SystemTime,
-) -> Result<VerifiedSearchResult, Error> {
-    let result = kt.verify_search(
-        SlimSearchRequest::new(search_key),
-        FullSearchResponse::new(response, full_tree_head),
-        SearchContext {
-            last_tree_head,
-            last_distinguished_tree_head,
-            data: monitoring_data,
-        },
-        true,
-        now,
-    )?;
-    Ok(result)
+pub trait AccountDataFieldReset {
+    fn reset(self, field: AccountDataField) -> Self;
 }
 
-fn verify_chat_search_response(
-    kt: &KeyTransparency,
-    aci: &Aci,
-    e164: Option<E164>,
-    username_hash: Option<UsernameHash>,
-    stored_account_data: Option<AccountData>,
-    chat_search_response: TypedSearchResponse,
-    last_distinguished_tree_head: Option<&LastTreeHead>,
-    now: SystemTime,
-) -> Result<MaybePartial<AccountData>, Error> {
-    let TypedSearchResponse {
-        full_tree_head,
-        aci_search_response,
-        e164_search_response,
-        username_hash_search_response,
-    } = chat_search_response;
-
-    let (
-        aci_monitoring_data,
-        e164_monitoring_data,
-        username_hash_monitoring_data,
-        stored_last_tree_head,
-    ) = match stored_account_data {
-        None => (None, None, None, None),
-        Some(acc) => {
-            let AccountData {
-                aci,
-                e164,
-                username_hash,
-                last_tree_head,
-            } = acc;
-            (Some(aci), e164, username_hash, Some(last_tree_head))
+impl AccountDataFieldReset for StoredAccountData {
+    fn reset(mut self, field: AccountDataField) -> Self {
+        match field {
+            AccountDataField::E164 => self.e164 = None,
+            AccountDataField::UsernameHash => self.username_hash = None,
         }
-    };
-
-    let aci_result = verify_single_search_response(
-        kt,
-        aci.as_search_key(),
-        aci_search_response,
-        aci_monitoring_data,
-        &full_tree_head,
-        stored_last_tree_head.as_ref(),
-        last_distinguished_tree_head,
-        now,
-    )?;
-
-    let e164_result = match_optional_fields(e164, e164_search_response, AccountDataField::E164)?
-        .map(|non_partial| {
-            non_partial
-                .map(|(e164, e164_search_response)| {
-                    verify_single_search_response(
-                        kt,
-                        e164.as_search_key(),
-                        e164_search_response,
-                        e164_monitoring_data,
-                        &full_tree_head,
-                        stored_last_tree_head.as_ref(),
-                        last_distinguished_tree_head,
-                        now,
-                    )
-                })
-                .transpose()
-        })
-        .transpose()?;
-
-    let username_hash_result = match_optional_fields(
-        username_hash,
-        username_hash_search_response,
-        AccountDataField::UsernameHash,
-    )?
-    .map(|non_partial| {
-        non_partial
-            .map(|(username_hash, username_hash_response)| {
-                verify_single_search_response(
-                    kt,
-                    username_hash.as_search_key(),
-                    username_hash_response,
-                    username_hash_monitoring_data,
-                    &full_tree_head,
-                    stored_last_tree_head.as_ref(),
-                    last_distinguished_tree_head,
-                    now,
-                )
-            })
-            .transpose()
-    })
-    .transpose()?;
-
-    let MaybePartial {
-        inner: (e164_result, username_hash_result),
-        missing_fields,
-    } = e164_result.and_then(|e164| username_hash_result.map(|hash| (e164, hash)));
-
-    if !aci_result.are_all_roots_equal([e164_result.as_ref(), username_hash_result.as_ref()]) {
-        return Err(Error::InvalidResponse("mismatching tree roots".to_string()));
-    }
-
-    // ACI response is guaranteed to be present, taking the last tree head from it.
-    let LocalStateUpdate {
-        tree_head,
-        tree_root,
-        monitoring_data: updated_aci_monitoring_data,
-    } = aci_result.state_update;
-
-    let updated_account_data = AccountData {
-        aci: updated_aci_monitoring_data
-            .ok_or_else(|| Error::InvalidResponse("ACI data is missing".to_string()))?,
-        e164: e164_result.and_then(|r| r.state_update.monitoring_data),
-        username_hash: username_hash_result.and_then(|r| r.state_update.monitoring_data),
-        last_tree_head: (tree_head, tree_root),
-    };
-
-    Ok(MaybePartial {
-        inner: updated_account_data,
-        missing_fields,
-    })
-}
-
-/// This function tries to match the optional value in request and response.
-///
-/// The rules of matching are:
-/// - If neither `request_value` nor `response_value` is present, the result is
-///   considered complete (in `MaybePartial` terms) and will require no further
-///   handling. It is expected to not have a value in the response if it had
-///   never been requested to start with.
-/// - If both `request_value` and `response_value` are present, the result is
-///   considered complete and ready for further verification.
-/// - If `response_value` is present but `request_value` is not, there is
-///   something wrong with the server implementation. We never requested the
-///   field, but the response contains a corresponding value.
-/// - If `request_value` is present but `response_value` isn't we consider the
-///   response complete but not suitable for further processing and record a
-///   missing field inside `MaybePartial`.
-fn match_optional_fields<T, U>(
-    request_value: Option<T>,
-    response_value: Option<U>,
-    field: AccountDataField,
-) -> Result<MaybePartial<Option<(T, U)>>, Error> {
-    match (request_value, response_value) {
-        (Some(a), Some(b)) => Ok(MaybePartial::new_complete(Some((a, b)))),
-        (None, None) => Ok(MaybePartial::new_complete(None)),
-        (None, Some(_)) => Err(Error::InvalidResponse(format!(
-            "Unexpected field in the response: {}",
-            &field
-        ))),
-        (Some(_), None) => Ok(MaybePartial::new(None, vec![field])),
+        self
     }
 }
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use std::cell::Cell;
     use std::time::Duration;
 
+    use assert_matches::assert_matches;
     use const_str::hex;
     use libsignal_keytrans::{StoredAccountData, TreeHead};
+    use libsignal_net::chat::ChatConnection;
     use libsignal_net::env;
     use prost::Message as _;
 
     use super::*;
+    use crate::api::Unauth;
 
     pub const KEYTRANS_CONFIG_STAGING: env::KeyTransConfig = env::STAGING.keytrans_config;
 
@@ -848,11 +623,11 @@ pub(crate) mod test_support {
 
         pub const ACI: Uuid = uuid::uuid!("90c979fd-eab4-4a08-b6da-69dedeab9b29");
         pub const ACI_IDENTITY_KEY_BYTES: &[u8] =
-            &hex!("05111f9464c1822c6a2405acf1c5a4366679dc3349fc8eb015c8d7260e3f771177");
+            &hex!("05cdcbb178067f0ddfd258bb21d006e0aa9c7ab132d9fb5e8b027de07d947f9d0c");
         pub const USERNAME_HASH: &[u8] =
-            &hex!("d237a4b83b463ca7da58d4a16bf6a3ba104506eb412b235eb603ea10f467c655");
+            &hex!("dc711808c2cf66d5e6a33ce41f27d69d942d2e1ff4db22d39b42d2eff8d09746");
         pub const PHONE_NUMBER: E164 = E164::new(nonzero!(18005550100u64));
-        pub const UNIDENTIFIED_ACCESS_KEY: &[u8] = &hex!("c6f7c258c24d69538ea553b4a943c8d9");
+        pub const UNIDENTIFIED_ACCESS_KEY: &[u8] = &hex!("108d84b71be307bdf101e380a1d7f2a2");
 
         pub fn aci() -> Aci {
             Aci::from(ACI)
@@ -864,6 +639,11 @@ pub(crate) mod test_support {
 
         pub fn username_hash() -> UsernameHash<'static> {
             UsernameHash(Cow::Borrowed(USERNAME_HASH))
+        }
+
+        // To be used for search function
+        pub fn e164_pair() -> (E164, Vec<u8>) {
+            (PHONE_NUMBER, UNIDENTIFIED_ACCESS_KEY.to_vec())
         }
     }
 
@@ -890,49 +670,183 @@ pub(crate) mod test_support {
         matches!(res, Err(RequestError::Disconnected(_)))
     }
 
+    /// Connects to the staging chat server.
+    ///
+    /// The connection is set up as if it was established over WebSocket transport.
+    pub async fn make_chat() -> Unauth<ChatConnection> {
+        use libsignal_net::chat::GrpcOverride;
+        use libsignal_net::chat::test_support::simple_chat_connection;
+        use libsignal_net::infra::EnableDomainFronting;
+        use libsignal_net::infra::route::DirectOrProxyMode;
+        use libsignal_net_grpc::proto::chat::services;
+
+        let chat = simple_chat_connection(
+            &env::STAGING,
+            EnableDomainFronting::No,
+            DirectOrProxyMode::DirectOnly,
+            |_| true,
+            [(
+                services::KeyTransparencyQueryService::SearchV2.into(),
+                GrpcOverride::UseWs,
+            )],
+        )
+        .await
+        .expect("can connect to chat");
+        Unauth(chat)
+    }
+
     pub fn make_kt(chat: &(dyn LowLevelChatApi + Sync)) -> KeyTransparencyClient<'_> {
         KeyTransparencyClient::new(chat, KEYTRANS_CONFIG_STAGING)
     }
 
     pub const CHAT_SEARCH_RESPONSE: &[u8] =
         include_bytes!("../../../tests/data/chat_search_response.dat");
-    pub const CHAT_SEARCH_RESPONSE_VALID_AT: Duration = Duration::from_secs(1746042060);
+    pub const CHAT_SEARCH_RESPONSE_VALID_AT: Duration =
+        include!("../../../tests/data/chat_response_valid_at.in");
 
-    const DISTINGUISHED_TREE_25223230_HEAD: &[u8] = &hex!("08bec0830c10f1beddc1e8321a640a201123b13ee32479ae6af5739e5d687b51559abf7684120511f68cde7a21a0e75512404dc142dc8f20605328f39b230b7f4160638c8c9c0fd1985b5348d152bd482c449efbba837ac5bed017e02216ae26ca72fd0b654401c99fdbaa0fdcee38d4a90b");
-    const DISTINGUISHED_TREE_25223230_ROOT: &[u8] =
-        &hex!("85d15cf60676285c0105d9474139dfc7b070996c6dba7ab12ccf2ffcfff8cbcd");
+    const DISTINGUISHED_TREE_677_HEAD: &[u8] = &hex!(
+        "08a50510f981afc4d7331a640a20bd1e26a0fbdbfa923486ccc9296f4227db490b4add29f5507775171ea0fb7a4e1240404fcd202d174fa3c1db70dd7a2af28aa7289230f16bbbabfbb0cf8ac0351ce8ddcc770a4e5ab2a2b32b4af7fba5e056f2d6f70be1039c152aeda2e7c6117a0d1a640a201123b13ee32479ae6af5739e5d687b51559abf7684120511f68cde7a21a0e7551240521e691c9356343feee2e80c5355d1f257550d870542ac0b6e25d349b6223966eb0859dd0df942cd5e541b37e9028682c9c986a5c9f33ce4739e205f58cbd2061a640a20093ee42d95502b3e81f4e604179c82c149fffb96167642b9eb81b03d6e2dd636124081185aaf680e96e329dee42cdb2f1ce7bef6da769b51dabfda8db0163977d500a47d00fe60a6fe3e2562f08e5ff8c4ec4dfcf054e31a85b28d0665ff92c0f901"
+    );
+    const DISTINGUISHED_TREE_677_ROOT: &[u8] =
+        &hex!("8bf5f1bdfb17a7772210f05192e4581f4b4364c9ca2efdd79244d5fc01adcde5");
 
-    const STORED_ACCOUNT_DATA_25223245: &[u8] = &hex!("0a2f0a203901c94081c4e6321e92b3e434dcaf788f5326913e7bdcab47b4fd2ae7a6848a10231a0708ffffff071002200112300a2086052cc2a2689558e852d053c5ab411d8c3baef20171ec298e551574806ca95d1081011a0708ffffff07100220011a300a20bc1cfaae736c27c437b99175798933ee32caf07a5226840ec963a4e614916e9010dc011a0708ffffff07100220012296010a7208cdc0830c10a8d6ddc1e8321a640a201123b13ee32479ae6af5739e5d687b51559abf7684120511f68cde7a21a0e75512408d5ed11ea43c26fc56d4758369210ecc79ffd24b3f45a54d827b2da29e5104bd67cdb69cb31b06704e4bcefe9e2a57f39e6a63237b86bfd054fe0c9ec001990b122048e51aeb705ffa2fe7bed5f7aad51d216c551547892280eded1db2708eba359a");
-
+    const STORED_ACCOUNT_DATA_681: &[u8] = &hex!(
+        "0a3e0a203901c94081c4e6321e92b3e434dcaf788f5326913e7bdcab47b4fd2ae7a6848a10131a0308ff0320012a116190c979fdeab44a08b6da69dedeab9b29123a0a2086052cc2a2689558e852d053c5ab411d8c3baef20171ec298e551574806ca95d104c1a0308ff0320012a0d6e2b31383030353535303130301a4f0a206f55ac745ebeaf39fd5b21177c7fa692876c42678ffa1f3d58ed8fbc5ef023b910a6011a0308ff0320012a2175dc711808c2cf66d5e6a33ce41f27d69d942d2e1ff4db22d39b42d2eff8d0974622e8020abc0208a90510bec5b0c4d7331a640a20bd1e26a0fbdbfa923486ccc9296f4227db490b4add29f5507775171ea0fb7a4e124000eec714425c086bcde66e5a2af2c87031eea6c485965b549ac81bc3793cf5bdd5222073f59dd4959f6e9fdb6f6d405a477a7aaeb4bc8fd89b876b59cf89bf031a640a201123b13ee32479ae6af5739e5d687b51559abf7684120511f68cde7a21a0e755124034a1a53ac786258ad28d79b3b9cd9a59219b1449b10e769f3934d8981bf58d47c594439a93a3bb1adc318b5b227a60257406052f4501540d06c3d01b07a35a051a640a20093ee42d95502b3e81f4e604179c82c149fffb96167642b9eb81b03d6e2dd63612402cec2570d4fc3e3063aa9c358e2fcb55ae65f25f8c82072fc8d4016ce4fe2be182adeee08d786745109a8978189791feb52d2ebe7e98d1a22ab0478ea5190e0b1220032487becda242fa353ee8654ba3a5fb7d9e9aa1d48eb42f2ea6866070a494a118c4d6b0c4d733"
+    );
     pub fn test_distinguished_tree() -> LastTreeHead {
-        (
-            TreeHead::decode(DISTINGUISHED_TREE_25223230_HEAD).expect("valid TreeHead"),
-            DISTINGUISHED_TREE_25223230_ROOT
+        LastTreeHead(
+            TreeHead::decode(DISTINGUISHED_TREE_677_HEAD).expect("valid TreeHead"),
+            DISTINGUISHED_TREE_677_ROOT
                 .try_into()
                 .expect("valid root size"),
         )
     }
 
     pub fn test_stored_account_data() -> StoredAccountData {
-        StoredAccountData::decode(STORED_ACCOUNT_DATA_25223245).expect("valid stored acc data")
+        StoredAccountData::decode(STORED_ACCOUNT_DATA_681).expect("valid stored acc data")
     }
 
     pub fn test_account_data() -> AccountData {
         AccountData::try_from(test_stored_account_data()).expect("valid account data")
     }
+
+    #[derive(Debug, Clone)]
+    pub struct OwnedParameters {
+        pub aci: Aci,
+        pub e164: Option<(E164, Vec<u8>)>,
+        pub username_hash_bytes: Option<Vec<u8>>,
+    }
+
+    pub struct TestKt {
+        pub monitor: Cell<Option<Result<AccountData, RequestError<Error>>>>,
+        pub search: Cell<Option<Result<MaybePartial<AccountData>, RequestError<Error>>>>,
+        pub distinguished: Cell<Option<Result<LastTreeHead, RequestError<Error>>>>,
+        search_invocation: Cell<Option<OwnedParameters>>,
+    }
+
+    impl TestKt {
+        pub fn for_monitor(monitor: Result<AccountData, RequestError<Error>>) -> Self {
+            Self::new(Some(monitor), None)
+        }
+
+        pub fn for_search(search: Result<MaybePartial<AccountData>, RequestError<Error>>) -> Self {
+            Self::new(None, Some(search))
+        }
+
+        #[must_use]
+        pub fn with_distinguished(self, result: Result<LastTreeHead, RequestError<Error>>) -> Self {
+            self.distinguished.set(Some(result));
+            self
+        }
+
+        pub fn new(
+            monitor: Option<Result<AccountData, RequestError<Error>>>,
+            search: Option<Result<MaybePartial<AccountData>, RequestError<Error>>>,
+        ) -> Self {
+            Self {
+                monitor: Cell::new(monitor),
+                search: Cell::new(search),
+                distinguished: Cell::new(Some(Ok(test_distinguished_tree()))),
+                search_invocation: Cell::new(None),
+            }
+        }
+
+        pub fn expected_error() -> RequestError<Error> {
+            RequestError::Unexpected {
+                log_safe: "test error".to_string(),
+            }
+        }
+
+        pub fn assert_expected_error<T: Debug>(result: Result<T, RequestError<Error>>) {
+            assert_matches!(result, Err(RequestError::Unexpected { log_safe }) if log_safe == "test error")
+        }
+
+        pub fn search_invocation(self) -> Option<OwnedParameters> {
+            self.search_invocation.into_inner()
+        }
+    }
+
+    impl UnauthenticatedChatApi for TestKt {
+        fn search(
+            &self,
+            aci: &Aci,
+            _aci_identity_key: &PublicKey,
+            e164: Option<(E164, Vec<u8>)>,
+            username_hash: Option<UsernameHash<'_>>,
+            _stored_account_data: Option<AccountData>,
+            _distinguished_tree_head: &LastTreeHead,
+        ) -> impl Future<Output = Result<MaybePartial<AccountData>, RequestError<Error>>> + Send
+        {
+            self.search_invocation.set(Some(OwnedParameters {
+                aci: *aci,
+                e164,
+                username_hash_bytes: username_hash.map(|x| x.as_ref().to_vec()),
+            }));
+
+            let result = self.search.take().expect("unexpected call to search");
+            std::future::ready(result)
+        }
+
+        fn distinguished(
+            &self,
+            _: Option<LastTreeHead>,
+        ) -> impl Future<Output = Result<SearchStateUpdate, RequestError<Error>>> {
+            let tree_head = self
+                .distinguished
+                .take()
+                .expect("unexpected call to distinguished");
+            let state_update = tree_head.map(|tree_head| SearchStateUpdate {
+                tree_head: tree_head.0,
+                tree_root: tree_head.1,
+                monitoring_data: None,
+            });
+            std::future::ready(state_update)
+        }
+
+        fn monitor(
+            &self,
+            _aci: &Aci,
+            _e164: Option<E164>,
+            _username_hash: Option<UsernameHash<'_>>,
+            _account_data: AccountData,
+            _last_distinguished_tree_head: &LastTreeHead,
+        ) -> impl Future<Output = Result<AccountData, RequestError<Error>>> + Send {
+            let result = self.monitor.take().expect("unexpected call to monitor");
+            std::future::ready(result)
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use std::cell::Cell;
-
     use assert_matches::assert_matches;
+    use libsignal_keytrans::StoredMonitoringData;
     use prost::Message as _;
-    use test_case::test_case;
+    use test_case::{test_case, test_matrix};
 
     use super::test_support::{
-        test_account, test_account_data, test_distinguished_tree, CHAT_SEARCH_RESPONSE,
-        CHAT_SEARCH_RESPONSE_VALID_AT, KEYTRANS_CONFIG_STAGING,
+        CHAT_SEARCH_RESPONSE, CHAT_SEARCH_RESPONSE_VALID_AT, KEYTRANS_CONFIG_STAGING, test_account,
+        test_account_data, test_distinguished_tree,
     };
     use super::*;
 
@@ -940,7 +854,7 @@ mod test {
         let chat_search_response =
             libsignal_keytrans::ChatSearchResponse::decode(CHAT_SEARCH_RESPONSE)
                 .expect("valid response");
-        TypedSearchResponse::from_untyped(true, true, chat_search_response)
+        TypedSearchResponse::from_untyped(chat_search_response)
             .expect("valid typed search response")
     }
 
@@ -971,9 +885,9 @@ mod test {
             config: KEYTRANS_CONFIG_STAGING.into(),
         };
 
-        let result = verify_chat_search_response(
-            &kt,
+        let result = kt.verify_chat_search_response(
             &aci,
+            &test_account::aci_identity_key(),
             e164,
             username_hash,
             Some(account_data),
@@ -1013,9 +927,9 @@ mod test {
             config: KEYTRANS_CONFIG_STAGING.into(),
         };
 
-        let result = verify_chat_search_response(
-            &kt,
+        let result = kt.verify_chat_search_response(
             &aci,
+            &test_account::aci_identity_key(),
             Some(e164),
             Some(username_hash),
             Some(account_data),
@@ -1029,195 +943,36 @@ mod test {
         );
     }
 
-    struct TestKt {
-        monitor: Cell<Option<Result<AccountData, RequestError<Error>>>>,
-        search: Cell<Option<Result<MaybePartial<AccountData>, RequestError<Error>>>>,
-    }
-
-    impl TestKt {
-        fn for_monitor(monitor: Result<AccountData, RequestError<Error>>) -> Self {
-            Self {
-                monitor: Cell::new(Some(monitor)),
-                search: Cell::new(None),
-            }
-        }
-
-        fn new(
-            monitor: Result<AccountData, RequestError<Error>>,
-            search: Result<MaybePartial<AccountData>, RequestError<Error>>,
-        ) -> Self {
-            Self {
-                monitor: Cell::new(Some(monitor)),
-                search: Cell::new(Some(search)),
-            }
-        }
-    }
-
-    impl UnauthenticatedChatApi for TestKt {
-        fn search(
-            &self,
-            _aci: &Aci,
-            _aci_identity_key: &PublicKey,
-            _e164: Option<(E164, Vec<u8>)>,
-            _username_hash: Option<UsernameHash<'_>>,
-            _stored_account_data: Option<AccountData>,
-            _distinguished_tree_head: &LastTreeHead,
-        ) -> impl Future<Output = Result<MaybePartial<AccountData>, RequestError<Error>>> + Send
-        {
-            let result = self.search.take().expect("unexpected call to search");
-            std::future::ready(result)
-        }
-
-        fn distinguished(
-            &self,
-            _: Option<LastTreeHead>,
-        ) -> impl Future<Output = Result<SearchStateUpdate, RequestError<Error>>> {
-            // not used in the tests
-            unreachable!();
-            #[allow(unreachable_code)] // without this, `impl Future` gets confused
-            std::future::pending()
-        }
-
-        fn monitor(
-            &self,
-            _aci: &Aci,
-            _e164: Option<E164>,
-            _username_hash: Option<UsernameHash<'_>>,
-            _account_data: AccountData,
-            _last_distinguished_tree_head: &LastTreeHead,
-        ) -> impl Future<Output = Result<AccountData, RequestError<Error>>> + Send {
-            let result = self.monitor.take().expect("unexpected call to monitor");
-            std::future::ready(result)
-        }
-    }
-
-    #[tokio::test]
-    async fn monitor_and_search_monitor_error_is_returned() {
-        let kt = TestKt::for_monitor(Err(RequestError::Unexpected {
-            log_safe: "pass through unexpected error".to_owned(),
-        }));
-        let result = monitor_and_search(
-            &kt,
-            &test_account::aci(),
-            &test_account::aci_identity_key(),
-            None,
-            None,
-            test_account_data(),
-            &test_distinguished_tree(),
-        )
-        .await;
-        assert_matches!(
-            result,
-            Err(RequestError::Unexpected { log_safe: msg }) if msg == "pass through unexpected error"
-        );
-    }
-
-    #[tokio::test]
-    async fn monitor_and_search_no_search_needed() {
-        let monitor_result = test_account_data();
-        // TestKt constructed like this will panic if search is invoked
-        let kt = TestKt::for_monitor(Ok(monitor_result.clone()));
-
-        let actual = monitor_and_search(
-            &kt,
-            &test_account::aci(),
-            &test_account::aci_identity_key(),
-            None,
-            None,
-            test_account_data(),
-            &test_distinguished_tree(),
-        )
-        .await
-        .expect("monitor should succeed");
-        assert_eq!(actual, monitor_result.into());
-    }
-
-    enum BumpVersionFor {
-        E164,
-        UsernameHash,
-    }
-
-    #[tokio::test]
-    #[test_case(BumpVersionFor::E164; "newer E.164")]
-    #[test_case(BumpVersionFor::UsernameHash; "newer username hash")]
-    async fn monitor_and_search_e164_changed(bump: BumpVersionFor) {
-        let mut monitor_result = test_account_data();
-        let subject = match bump {
-            BumpVersionFor::E164 => monitor_result.e164.as_mut(),
-            BumpVersionFor::UsernameHash => monitor_result.username_hash.as_mut(),
-        }
-        .unwrap();
-        // inserting a newer version of the subject
-        let max_version = subject.greatest_version();
-        subject.ptrs.insert(u64::MAX, max_version + 1);
-
-        let kt = TestKt::new(
-            Ok(monitor_result.clone()),
-            Err(RequestError::Unexpected {
-                log_safe: "pass through unexpected error".to_owned(),
+    #[test_matrix([AccountDataField::E164, AccountDataField::UsernameHash])]
+    fn reset_account_data_field(field: AccountDataField) {
+        let field_data = StoredMonitoringData::default();
+        let data = StoredAccountData {
+            aci: None,
+            e164: Some(StoredMonitoringData {
+                pos: 1,
+                ..field_data.clone()
             }),
-        );
+            username_hash: Some(StoredMonitoringData {
+                pos: 2,
+                ..field_data
+            }),
+            last_tree_head: None,
+        };
 
-        let result = monitor_and_search(
-            &kt,
-            &test_account::aci(),
-            &test_account::aci_identity_key(),
-            None,
-            None,
-            test_account_data(),
-            &test_distinguished_tree(),
-        )
-        .await;
+        let updated = data.clone().reset(field);
 
-        // monitor invocation should have succeeded, and search
-        // should have been invoked returning our custom error
-        assert_matches!(
-            result,
-            Err(RequestError::Unexpected { log_safe: msg }) if msg == "pass through unexpected error"
-        );
-    }
-
-    #[tokio::test]
-    async fn monitor_and_search_search_success() {
-        let mut monitor_result = test_account_data();
-
-        // inserting a newer version of the username hash
-        let max_version = monitor_result
-            .username_hash
-            .as_ref()
-            .unwrap()
-            .greatest_version();
-        monitor_result
-            .username_hash
-            .as_mut()
-            .unwrap()
-            .ptrs
-            .insert(u64::MAX, max_version + 1);
-
-        let mut search_result_account_data = test_account_data();
-        // make some unique change to validate this is the one that gets returned
-        search_result_account_data.last_tree_head.1 = [42; 32];
-
-        let kt = TestKt::new(
-            Ok(monitor_result.clone()),
-            Ok(search_result_account_data.clone().into()),
-        );
-
-        let updated_account_data = monitor_and_search(
-            &kt,
-            &test_account::aci(),
-            &test_account::aci_identity_key(),
-            None,
-            None,
-            test_account_data(),
-            &test_distinguished_tree(),
-        )
-        .await
-        .expect("both monitor and search should have succeeded");
-
-        assert_eq!(
-            search_result_account_data,
-            updated_account_data.into_inner()
-        );
+        match field {
+            AccountDataField::E164 => {
+                assert!(updated.e164.is_none());
+                assert_matches!(
+                    updated.username_hash,
+                    Some(StoredMonitoringData { pos: 2, .. })
+                );
+            }
+            AccountDataField::UsernameHash => {
+                assert_matches!(updated.e164, Some(StoredMonitoringData { pos: 1, .. }));
+                assert!(updated.username_hash.is_none());
+            }
+        }
     }
 }

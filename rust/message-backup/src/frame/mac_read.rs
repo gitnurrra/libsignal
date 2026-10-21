@@ -5,8 +5,7 @@
 
 use std::pin::Pin;
 
-use futures::{ready, AsyncRead};
-use hmac::digest::generic_array::GenericArray;
+use futures::{AsyncRead, ready};
 use hmac::Mac;
 
 /// [`AsyncRead`]er that computes an HMAC of the produced contents.
@@ -21,7 +20,7 @@ impl<R, M> MacReader<R, M> {
         Self { reader, mac }
     }
 
-    pub fn finalize(self) -> GenericArray<u8, M::OutputSize>
+    pub fn finalize(self) -> hmac::digest::array::Array<u8, M::OutputSize>
     where
         M: Mac,
     {
@@ -46,9 +45,9 @@ impl<R: AsyncRead + Unpin, M: Mac + Unpin> AsyncRead for MacReader<R, M> {
 
 #[cfg(test)]
 mod test {
-    use futures::io::Cursor;
     use futures::FutureExt as _;
-    use hmac::{Hmac, Mac as _};
+    use futures::io::Cursor;
+    use hmac::{Hmac, KeyInit as _};
     use sha2::Sha256;
 
     use super::*;

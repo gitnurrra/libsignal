@@ -14,16 +14,16 @@ use std::io::Write;
 use attest::enclave;
 use attest::enclave::Handshake;
 use clap::Parser as _;
-use http::uri::PathAndQuery;
 use http::HeaderName;
+use http::uri::PathAndQuery;
 use libsignal_net::auth::Auth;
 use libsignal_net::connect_state::{ConnectState, ConnectionResources, SUGGESTED_CONNECT_CONFIG};
 use libsignal_net::enclave::{EnclaveKind, EndpointParams, MrEnclave, NewHandshake, SvrSgx};
 use libsignal_net::svr::SvrConnection;
+use libsignal_net_infra::EnableDomainFronting;
 use libsignal_net_infra::dns::DnsResolver;
 use libsignal_net_infra::route::DirectOrProxyProvider;
-use libsignal_net_infra::testutil::no_network_change_events;
-use libsignal_net_infra::EnableDomainFronting;
+use libsignal_net_infra::utils::no_network_change_events;
 
 #[derive(clap::Parser)]
 struct Args {
@@ -83,9 +83,9 @@ async fn main() {
     let auth = Auth { username, password };
 
     let env = if prod {
-        libsignal_net::env::PROD.svr2
+        libsignal_net::env::PROD.svr2.current
     } else {
-        libsignal_net::env::STAGING.svr2
+        libsignal_net::env::STAGING.svr2.current
     };
 
     let resolver = DnsResolver::new(&no_network_change_events());
@@ -107,13 +107,11 @@ async fn main() {
 
     let _connection = SvrConnection::connect(
         connection_resources,
-        DirectOrProxyProvider::maybe_proxied(
-            env.enclave_websocket_provider(EnableDomainFronting::No),
-            None,
-        ),
+        env.domain_config.connect.service,
+        DirectOrProxyProvider::direct(env.enclave_websocket_provider(EnableDomainFronting::No)),
         env.ws_config,
         &params,
-        auth,
+        &auth,
     )
     .await
     .expect("can connect");

@@ -4,10 +4,10 @@
 //
 
 use http::HeaderName;
+use libsignal_net_infra::EnableDomainFronting;
 use libsignal_net_infra::dns::DnsResolver;
 use libsignal_net_infra::route::DirectOrProxyProvider;
 use libsignal_net_infra::utils::NetworkChangeEvent;
-use libsignal_net_infra::EnableDomainFronting;
 
 use crate::auth::Auth;
 use crate::connect_state::{ConnectState, ConnectionResources, SUGGESTED_CONNECT_CONFIG};
@@ -38,13 +38,13 @@ where
 
     SvrConnection::connect(
         connection_resources,
-        DirectOrProxyProvider::maybe_proxied(
+        endpoint.domain_config.connect.service,
+        DirectOrProxyProvider::direct(
             endpoint.enclave_websocket_provider(EnableDomainFronting::No),
-            None,
         ),
         endpoint.ws_config,
         &endpoint.params,
-        auth.clone(),
+        auth,
     )
     .await
 }

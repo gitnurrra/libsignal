@@ -7,7 +7,6 @@ package org.signal.libsignal.metadata;
 
 import static org.signal.libsignal.internal.FilterExceptions.filterExceptions;
 
-import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -29,7 +28,6 @@ import org.signal.libsignal.protocol.ServiceId;
 import org.signal.libsignal.protocol.SessionCipher;
 import org.signal.libsignal.protocol.SignalProtocolAddress;
 import org.signal.libsignal.protocol.UntrustedIdentityException;
-import org.signal.libsignal.protocol.UsePqRatchet;
 import org.signal.libsignal.protocol.groups.GroupCipher;
 import org.signal.libsignal.protocol.message.CiphertextMessage;
 import org.signal.libsignal.protocol.message.PreKeySignalMessage;
@@ -61,27 +59,19 @@ public class SealedSessionCipher {
       SignalProtocolAddress destinationAddress,
       SenderCertificate senderCertificate,
       byte[] paddedPlaintext)
-      throws InvalidKeyException, UntrustedIdentityException {
-    try (NativeHandleGuard addressGuard = new NativeHandleGuard(destinationAddress)) {
-      CiphertextMessage message =
-          filterExceptions(
-              InvalidKeyException.class,
-              UntrustedIdentityException.class,
-              () ->
-                  Native.SessionCipher_EncryptMessage(
-                      paddedPlaintext,
-                      addressGuard.nativeHandle(),
-                      this.signalProtocolStore,
-                      this.signalProtocolStore,
-                      Instant.now().toEpochMilli()));
-      UnidentifiedSenderMessageContent content =
-          new UnidentifiedSenderMessageContent(
-              message,
-              senderCertificate,
-              UnidentifiedSenderMessageContent.CONTENT_HINT_DEFAULT,
-              Optional.<byte[]>empty());
-      return encrypt(destinationAddress, content);
-    }
+      throws InvalidKeyException, NoSessionException, UntrustedIdentityException {
+    SignalProtocolAddress localAddress =
+        new SignalProtocolAddress(this.localUuidAddress, this.localDeviceId);
+    CiphertextMessage message =
+        new SessionCipher(signalProtocolStore, localAddress, destinationAddress)
+            .encrypt(paddedPlaintext);
+    UnidentifiedSenderMessageContent content =
+        new UnidentifiedSenderMessageContent(
+            message,
+            senderCertificate,
+            UnidentifiedSenderMessageContent.CONTENT_HINT_DEFAULT,
+            Optional.<byte[]>empty());
+    return encrypt(destinationAddress, content);
   }
 
   public byte[] encrypt(
@@ -96,7 +86,7 @@ public class SealedSessionCipher {
               Native.SealedSessionCipher_Encrypt(
                   addressGuard.nativeHandle(),
                   contentGuard.nativeHandle(),
-                  this.signalProtocolStore));
+                  SessionCipher._bridge(this.signalProtocolStore)));
     }
   }
 
@@ -174,7 +164,7 @@ public class SealedSessionCipher {
                       recipientSessionHandles,
                       ServiceId.toConcatenatedFixedWidthBinary(excludedRecipients),
                       contentGuard.nativeHandle(),
-                      this.signalProtocolStore));
+                      SessionCipher._bridge(this.signalProtocolStore)));
       // Manually keep the lists of recipients and sessions from being garbage collected
       // while we're using their native handles.
       Native.keepAlive(recipients);
@@ -189,8 +179,7 @@ public class SealedSessionCipher {
         () -> Native.SealedSessionCipher_MultiRecipientMessageForSingleRecipient(message));
   }
 
-  public DecryptionResult decrypt(
-      CertificateValidator validator, byte[] ciphertext, long timestamp, UsePqRatchet usePqRatchet)
+  public DecryptionResult decrypt(CertificateValidator validator, byte[] ciphertext, long timestamp)
       throws InvalidMetadataMessageException,
           InvalidMetadataVersionException,
           ProtocolInvalidMessageException,
@@ -206,7 +195,8 @@ public class SealedSessionCipher {
     try {
       content =
           new UnidentifiedSenderMessageContent(
-              Native.SealedSessionCipher_DecryptToUsmc(ciphertext, this.signalProtocolStore));
+              Native.SealedSessionCipher_DecryptToUsmc(
+                  ciphertext, SessionCipher._bridge(this.signalProtocolStore)));
       validator.validate(content.getSenderCertificate(), timestamp);
     } catch (Exception e) {
       throw new InvalidMetadataMessageException(e);
@@ -229,7 +219,7 @@ public class SealedSessionCipher {
           content.getSenderCertificate().getSenderDeviceId(),
           content.getType(),
           content.getGroupId(),
-          decrypt(content, usePqRatchet));
+          decrypt(content));
     } catch (InvalidMessageException e) {
       throw new ProtocolInvalidMessageException(e, content);
     } catch (InvalidKeyException e) {
@@ -249,15 +239,18 @@ public class SealedSessionCipher {
     }
   }
 
-  public int getSessionVersion(SignalProtocolAddress remoteAddress) {
-    return new SessionCipher(signalProtocolStore, remoteAddress).getSessionVersion();
+  public int getSessionVersion(SignalProtocolAddress remoteAddress) throws NoSessionException {
+    return new SessionCipher(signalProtocolStore, localAddress(), remoteAddress)
+        .getSessionVersion();
   }
 
-  public int getRemoteRegistrationId(SignalProtocolAddress remoteAddress) {
-    return new SessionCipher(signalProtocolStore, remoteAddress).getRemoteRegistrationId();
+  public int getRemoteRegistrationId(SignalProtocolAddress remoteAddress)
+      throws NoSessionException {
+    return new SessionCipher(signalProtocolStore, localAddress(), remoteAddress)
+        .getRemoteRegistrationId();
   }
 
-  private byte[] decrypt(UnidentifiedSenderMessageContent message, UsePqRatchet usePqRatchet)
+  private byte[] decrypt(UnidentifiedSenderMessageContent message)
       throws InvalidVersionException,
           InvalidMessageException,
           InvalidKeyException,
@@ -273,11 +266,11 @@ public class SealedSessionCipher {
 
     switch (message.getType()) {
       case CiphertextMessage.WHISPER_TYPE:
-        return new SessionCipher(signalProtocolStore, sender)
+        return new SessionCipher(signalProtocolStore, localAddress(), sender)
             .decrypt(new SignalMessage(message.getContent()));
       case CiphertextMessage.PREKEY_TYPE:
-        return new SessionCipher(signalProtocolStore, sender)
-            .decrypt(new PreKeySignalMessage(message.getContent()), usePqRatchet);
+        return new SessionCipher(signalProtocolStore, localAddress(), sender)
+            .decrypt(new PreKeySignalMessage(message.getContent()));
       case CiphertextMessage.SENDERKEY_TYPE:
         return new GroupCipher(signalProtocolStore, sender).decrypt(message.getContent());
       case CiphertextMessage.PLAINTEXT_CONTENT_TYPE:
@@ -349,5 +342,9 @@ public class SealedSessionCipher {
     public Optional<byte[]> getGroupId() {
       return groupId;
     }
+  }
+
+  private SignalProtocolAddress localAddress() {
+    return new SignalProtocolAddress(this.localUuidAddress, this.localDeviceId);
   }
 }

@@ -71,11 +71,6 @@ final class NetTests {
             #expect(message == "SGX operation failed: attestation data invalid: fake reason")
         }
         do {
-            try failWithError("InvalidResponse")
-        } catch SignalError.networkProtocolError(let message) {
-            #expect(message == "Protocol error: invalid response received from the server")
-        }
-        do {
             try failWithError("RetryAfter42Seconds")
         } catch SignalError.rateLimitedError(retryAfter: 42, let message) {
             #expect(message == "Rate limited; try again after 42s")
@@ -91,14 +86,9 @@ final class NetTests {
             #expect(message == "invalid argument: request was invalid: fake reason")
         }
         do {
-            try failWithError("Parse")
-        } catch SignalError.networkProtocolError(let message) {
-            #expect(message == "Protocol error: failed to parse the response from the server")
-        }
-        do {
-            try failWithError("ConnectDnsFailed")
+            try failWithError("TcpConnectFailed")
         } catch SignalError.ioError(let message) {
-            #expect(message == "IO error: DNS lookup failed")
+            #expect(message == "IO error: Failed to establish TCP connection to any of the IPs")
         }
         do {
             try failWithError("WebSocketIdleTooLong")
@@ -106,9 +96,9 @@ final class NetTests {
             #expect(message == "WebSocket error: channel was idle for too long")
         }
         do {
-            try failWithError("ConnectionTimedOut")
-        } catch SignalError.connectionTimeoutError(let message) {
-            #expect(message == "Connect timed out")
+            try failWithError("AllConnectionAttemptsFailed")
+        } catch SignalError.connectionFailed(let message) {
+            #expect(message == "No connection attempts succeeded before timeout")
         }
         do {
             try failWithError("ServerCrashed")
@@ -126,7 +116,7 @@ final class NetTests {
             acisAndAccessKeys: [],
             token: nil
         )
-        let net = Net(env: .staging, userAgent: userAgent)
+        let net = Net(env: .staging, userAgent: userAgent, buildVariant: .production)
 
         let lookup = try await net.cdsiLookup(auth: auth, request: request)
         let response = try await lookup.complete()
@@ -140,7 +130,7 @@ final class NetTests {
     @Test
     func networkChangeEvent() throws {
         // There's no feedback from this, we're just making sure it doesn't normally crash or throw.
-        let net = Net(env: .staging, userAgent: userAgent)
+        let net = Net(env: .staging, userAgent: userAgent, buildVariant: .production)
         try net.networkDidChange()
     }
 }

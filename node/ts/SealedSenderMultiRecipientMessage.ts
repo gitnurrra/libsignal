@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import * as Native from '../Native';
+import type { Bytes } from '@signalapp/types';
+import { Buffer } from 'node:buffer';
+
+import * as Native from './Native.js';
 
 /**
  * A single recipient parsed from a {@link SealedSenderMultiRecipientMessage}.
@@ -23,14 +26,14 @@ export interface Recipient {
  * material.
  */
 export default class SealedSenderMultiRecipientMessage {
-  readonly _buffer: Uint8Array;
+  readonly _buffer: Bytes;
   readonly _recipientMap: {
     [serviceId: string]: Native.SealedSenderMultiRecipientMessageRecipient;
   };
   readonly _excludedRecipients: string[];
   readonly _offsetOfSharedData: number;
 
-  constructor(buffer: Uint8Array) {
+  constructor(buffer: Bytes) {
     const { recipientMap, excludedRecipients, offsetOfSharedData } =
       Native.SealedSenderMultiRecipientMessage_Parse(buffer);
     this._buffer = buffer;
@@ -66,7 +69,7 @@ export default class SealedSenderMultiRecipientMessage {
    * {@link #recipientsByServiceIdString}. The same payload should be sent to all of the recipient's
    * devices.
    */
-  messageForRecipient(recipient: Recipient): Uint8Array {
+  messageForRecipient(recipient: Recipient): Bytes {
     const nativeRecipient =
       recipient as Native.SealedSenderMultiRecipientMessageRecipient;
     // Use Buffer.concat for convenience, but return a proper Uint8Array, both for the correct type

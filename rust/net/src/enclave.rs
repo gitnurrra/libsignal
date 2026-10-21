@@ -10,19 +10,20 @@ use attest::svr2::RaftConfig;
 use attest::{cds2, enclave};
 use derive_where::derive_where;
 use http::uri::PathAndQuery;
-use libsignal_net_infra::errors::LogSafeDisplay;
+use libsignal_core::LogSafeDisplay;
+use libsignal_net_infra::errors::RetryLater;
+use libsignal_net_infra::extract_retry_later;
 use libsignal_net_infra::route::{
     DirectTcpRouteProvider, DomainFrontRouteProvider, HttpsProvider, TlsRouteProvider,
     WebSocketProvider, WebSocketRouteFragment,
 };
-use libsignal_net_infra::ws::WebSocketServiceError;
-use libsignal_net_infra::ws2;
-use libsignal_net_infra::ws2::attested::{
+use libsignal_net_infra::ws::attested::{
     AttestedConnection, AttestedConnectionError, AttestedProtocolError,
 };
+use libsignal_net_infra::ws::{self, WebSocketConnectError, WebSocketError};
 
 use crate::env::{DomainConfig, SvrBEnv};
-use crate::infra::{EnableDomainFronting, EnforceMinimumTls};
+use crate::infra::{EnableDomainFronting, EnforceMinimumTls, OverrideNagleAlgorithm};
 use crate::svr::SvrConnection;
 use crate::ws::WebSocketServiceConnectError;
 
@@ -56,14 +57,15 @@ pub enum SvrSgx {}
 impl EnclaveKind for Cdsi {
     type RaftConfigType = ();
     fn url_path(enclave: &[u8]) -> PathAndQuery {
-        PathAndQuery::try_from(format!("/v1/{}/discovery", hex::encode(enclave))).unwrap()
+        PathAndQuery::try_from(format!("/v1/{}/discovery", hex::encode(enclave)))
+            .expect("valid path")
     }
 }
 
 impl EnclaveKind for SvrSgx {
     type RaftConfigType = &'static RaftConfig;
     fn url_path(enclave: &[u8]) -> PathAndQuery {
-        PathAndQuery::try_from(format!("/v1/{}", hex::encode(enclave))).unwrap()
+        PathAndQuery::try_from(format!("/v1/{}", hex::encode(enclave))).expect("valid path")
     }
 }
 
@@ -204,7 +206,7 @@ pub struct EndpointParams<'a, E: EnclaveKind> {
 #[derive_where(Clone)]
 pub struct EnclaveEndpoint<'a, E: EnclaveKind> {
     pub domain_config: DomainConfig,
-    pub ws_config: ws2::Config,
+    pub ws_config: ws::Config,
     pub params: EndpointParams<'a, E>,
 }
 
@@ -217,16 +219,18 @@ pub trait NewHandshake: EnclaveKind + Sized {
 
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
 pub enum Error {
-    /// websocket error: {0}
-    WebSocketConnect(#[from] WebSocketServiceConnectError),
+    /// Websocket error: {0}
+    WebSocketConnect(WebSocketConnectError),
+    /// {0}
+    RateLimited(RetryLater),
     /// Network error: {0}
-    WebSocket(#[from] WebSocketServiceError),
+    WebSocket(#[from] WebSocketError),
     /// Protocol error after establishing a connection: {0}
     Protocol(AttestedProtocolError),
     /// Enclave attestation failed: {0}
     AttestationError(attest::enclave::Error),
-    /// Connection timeout
-    ConnectionTimedOut,
+    /// No connection attempts succeeded before timeout
+    AllConnectionAttemptsFailed,
 }
 
 impl LogSafeDisplay for Error {}
@@ -237,6 +241,25 @@ impl From<AttestedConnectionError> for Error {
             AttestedConnectionError::WebSocket(net) => Self::WebSocket(net),
             AttestedConnectionError::Protocol(error) => Self::Protocol(error),
             AttestedConnectionError::Attestation(err) => Self::AttestationError(err),
+        }
+    }
+}
+
+impl From<WebSocketServiceConnectError> for Error {
+    fn from(value: WebSocketServiceConnectError) -> Self {
+        match value {
+            WebSocketServiceConnectError::RejectedByServer {
+                response,
+                received_at: _,
+            } => {
+                if response.status() == http::StatusCode::TOO_MANY_REQUESTS
+                    && let Some(retry_later) = extract_retry_later(response.headers())
+                {
+                    return Self::RateLimited(retry_later);
+                }
+                Self::WebSocket(WebSocketError::Http(response))
+            }
+            WebSocketServiceConnectError::Connect(e, _) => Self::WebSocketConnect(e),
         }
     }
 }
@@ -253,7 +276,10 @@ impl<E: EnclaveKind> EnclaveEndpoint<'_, E> {
             ws_config: _,
             params,
         } = self;
-        let http_provider = domain_config.connect.route_provider(enable_domain_fronting);
+        let http_provider = domain_config.connect.route_provider(
+            enable_domain_fronting,
+            OverrideNagleAlgorithm::UseSystemDefault,
+        );
 
         let ws_fragment = WebSocketRouteFragment {
             ws_config: Default::default(),
@@ -268,6 +294,7 @@ impl<E: EnclaveKind> EnclaveEndpoint<'_, E> {
         &self,
         enable_domain_fronting: EnableDomainFronting,
         enforce_minimum_tls: EnforceMinimumTls,
+        override_nagle_algorithm: OverrideNagleAlgorithm,
     ) -> WebSocketProvider<
         HttpsProvider<DomainFrontRouteProvider, TlsRouteProvider<DirectTcpRouteProvider>>,
     > {
@@ -276,9 +303,11 @@ impl<E: EnclaveKind> EnclaveEndpoint<'_, E> {
             ws_config: _,
             params,
         } = self;
-        let http_provider = domain_config
-            .connect
-            .route_provider_with_options(enable_domain_fronting, enforce_minimum_tls);
+        let http_provider = domain_config.connect.route_provider_with_options(
+            enable_domain_fronting,
+            enforce_minimum_tls,
+            override_nagle_algorithm,
+        );
 
         let ws_fragment = WebSocketRouteFragment {
             ws_config: Default::default(),

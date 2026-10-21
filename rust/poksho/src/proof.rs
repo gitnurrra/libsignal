@@ -19,16 +19,13 @@ impl Proof {
     /// Returns `None` if the input is invalid. This does not run in constant
     /// time!
     pub fn from_slice(bytes: &[u8]) -> Option<Self> {
-        // TODO use Iterator::array_chunks once that's stabilized.
-        // See https://github.com/rust-lang/rust/issues/100450.
-        let chunks = bytes.chunks_exact(32);
-        if !chunks.remainder().is_empty() {
+        let (chunks, chunks_remainder) = bytes.as_chunks::<32>();
+        if !chunks_remainder.is_empty() {
             return None;
         }
-        let mut array_chunks = chunks.map(|chunk| {
-            let chunk = chunk.try_into().expect("chunk size is exact");
-            Option::from(Scalar::from_canonical_bytes(chunk))
-        });
+        let mut array_chunks = chunks
+            .iter()
+            .map(|chunk| Option::from(Scalar::from_canonical_bytes(*chunk)));
 
         let challenge = array_chunks.next()??;
         if array_chunks.len() > 256 {

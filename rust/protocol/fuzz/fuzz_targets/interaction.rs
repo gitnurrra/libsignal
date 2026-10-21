@@ -123,24 +123,28 @@ impl Participant {
 
         process_prekey_bundle(
             &them.address,
+            &self.address,
             &mut self.store.session_store,
             &mut self.store.identity_store,
             &their_pre_key_bundle,
             SystemTime::UNIX_EPOCH,
             rng,
-            UsePQRatchet::Yes,
         )
         .await
         .unwrap();
 
-        assert!(self
-            .store
-            .load_session(&them.address)
-            .await
-            .unwrap()
-            .expect("just created")
-            .has_usable_sender_chain(SystemTime::UNIX_EPOCH, SessionUsabilityRequirements::all())
-            .unwrap());
+        assert!(
+            self.store
+                .load_session(&them.address)
+                .await
+                .unwrap()
+                .expect("just created")
+                .has_usable_sender_chain(
+                    SystemTime::UNIX_EPOCH,
+                    SessionUsabilityRequirements::all()
+                )
+                .unwrap()
+        );
     }
 
     async fn send_message(&mut self, them: &mut Self, rng: &mut (impl Rng + CryptoRng)) {
@@ -170,6 +174,7 @@ impl Participant {
         let outgoing_message = message_encrypt(
             &buffer,
             &them.address,
+            &self.address,
             &mut self.store.session_store,
             &mut self.store.identity_store,
             SystemTime::UNIX_EPOCH,
@@ -202,13 +207,13 @@ impl Participant {
             let decrypted = message_decrypt(
                 &incoming_message,
                 their_address,
+                &self.address,
                 &mut self.store.session_store,
                 &mut self.store.identity_store,
                 &mut self.store.pre_key_store,
                 &mut self.store.signed_pre_key_store,
                 &mut self.store.kyber_pre_key_store,
                 rng,
-                UsePQRatchet::Yes,
             )
             .await
             .unwrap();
@@ -298,10 +303,17 @@ fuzz_target!(|data: (u64, &[u8])| {
                     info!("{}: shuffle incoming messages", me.name);
                     me.message_queue.shuffle(&mut csprng);
                 }
-                _ => {
-                    if them.message_queue.len() < 1_500 {
-                        // Only send if it can't result in a too-long chain.
-                        // We're not testing that.
+                i => {
+                    // Only send if it can't result in a too-long chain.
+                    // We're not testing that.
+                    let space_in_queue = 1_500usize.saturating_sub(them.message_queue.len());
+                    // Send several messages at once, to increase the likelihood of PQ ratchets.
+                    let messages_to_send = i
+                        .saturating_sub(64)
+                        .div_ceil(4)
+                        .max(1)
+                        .min(u8::try_from(space_in_queue).unwrap_or(u8::MAX));
+                    for _ in 0..messages_to_send {
                         me.send_message(them, &mut csprng).await
                     }
                 }

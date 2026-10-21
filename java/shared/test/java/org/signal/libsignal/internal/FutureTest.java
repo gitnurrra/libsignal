@@ -53,6 +53,35 @@ public class FutureTest {
     assertTrue(e.getCause() instanceof org.signal.libsignal.internal.TestingException);
   }
 
+  @Test(timeout = 5000)
+  public void testFutureThrowsInvalidException() throws Exception {
+    Future future = NativeTesting.TESTING_FutureThrowsPoisonErrorType(ioRuntime);
+    ExecutionException e = assertThrows(ExecutionException.class, () -> future.get());
+    assertTrue(e.getCause() instanceof AssertionError);
+    // Check the whole message to make sure it includes both the original error and the failure to
+    // convert it to an exception. (TestingError just makes that feel especially confusing!)
+    assertTrue(
+        e.getCause().getMessage(),
+        e.getCause()
+            .getMessage()
+            .startsWith(
+                "failed to convert error \"TestingError(org.signal.libsignal.internal.GuaranteedNonexistentException)\": "));
+    assertTrue(
+        e.getCause().getMessage(),
+        e.getCause()
+                .getMessage()
+                .contains(
+                    "JNI error failed to resolve Java class 'org/signal/libsignal/internal/GuaranteedNonexistentException'")
+            || e.getCause()
+                .getMessage()
+                .contains(
+                    "Didn't find class \"org.signal.libsignal.internal.GuaranteedNonexistentException\"")
+            || e.getCause()
+                .getMessage()
+                .contains(
+                    "JNI error failed to resolve Java class 'org.signal.libsignal.internal.GuaranteedNonexistentException'"));
+  }
+
   @Test
   public void testFutureFromRustCancel() {
     TokioAsyncContext context = new TokioAsyncContext();
@@ -90,7 +119,7 @@ public class FutureTest {
             NativeTesting.TestingFutureCancellationCounter_Destroy(nativeHandle);
           }
         };
-    org.signal.libsignal.internal.CompletableFuture<Integer> testFuture =
+    org.signal.libsignal.internal.CompletableFuture<Void> testFuture =
         context
             .guardedMap(
                 (nativeContextHandle) ->
@@ -206,5 +235,37 @@ public class FutureTest {
 
     int result = future.get();
     assertEquals("memory corrupted", result, INITIAL);
+  }
+
+  @Test(timeout = 10_000)
+  public void testFutureResultIsNotLeakedEvenWithPermanentJVMAttachedThreads() throws Exception {
+    var context =
+        new TokioAsyncContext(NativeTesting.TESTING_TokioAsyncContext_NewSingleThreaded());
+    context.guardedRun(
+        nativeContextHandle ->
+            NativeTesting.TESTING_TokioAsyncContext_AttachBlockingThreadToJVMPermanently(
+                nativeContextHandle, null));
+
+    var finalizationQueue = new java.lang.ref.ReferenceQueue<byte[]>();
+    java.lang.ref.PhantomReference<byte[]> reference;
+
+    {
+      int length = 1024;
+      CompletableFuture<byte[]> future =
+          context.guardedMap(
+              nativeContextHandle ->
+                  NativeTesting.TESTING_TokioAsyncContext_FutureSuccessBytes(
+                      nativeContextHandle, length));
+      byte[] result = future.get();
+      reference = new java.lang.ref.PhantomReference<>(result, finalizationQueue);
+      assertEquals(length, result.length);
+      future = null;
+      result = null;
+    }
+
+    do {
+      System.gc();
+      System.runFinalization();
+    } while (finalizationQueue.remove(100) != reference);
   }
 }

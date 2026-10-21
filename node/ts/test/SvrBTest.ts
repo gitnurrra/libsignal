@@ -4,16 +4,35 @@
 //
 
 import { assert } from 'chai';
-import { Environment, Net, SvrB } from '../net';
-import { BackupKey, BackupForwardSecrecyToken } from '../AccountKeys';
+import { Buffer } from 'node:buffer';
+
+import { Environment, Net, SvrB } from '../net.js';
+import { BackupKey, BackupForwardSecrecyToken } from '../AccountKeys.js';
+import { Aci } from '../Address.js';
+import * as Native from '../Native.js';
 
 describe('SecureValueRecoveryBackup', () => {
+  const testAci = Aci.parseFromServiceIdString(
+    'e74beed0-e70f-4cfd-abbb-7e3eb333bbac'
+  );
   const testBackupKey = BackupKey.generateRandom();
+  const testBackupIdString = Buffer.from(
+    testBackupKey.deriveBackupId(testAci)
+  ).toString('hex');
   const testInvalidSecretData = new Uint8Array([1, 2, 3, 4]);
-  const testAuth = {
-    username: process.env.LIBSIGNAL_TESTING_SVRB_USERNAME || '',
-    password: process.env.LIBSIGNAL_TESTING_SVRB_PASSWORD || '',
-  };
+  const enclaveSecret = process.env.LIBSIGNAL_TESTING_SVRB_ENCLAVE_SECRET;
+  const testAuth = enclaveSecret
+    ? {
+        username: testBackupIdString,
+        password: Native.TESTING_CreateOTPFromBase64(
+          testBackupIdString,
+          enclaveSecret
+        ),
+      }
+    : {
+        username: process.env.LIBSIGNAL_TESTING_SVRB_USERNAME || '',
+        password: process.env.LIBSIGNAL_TESTING_SVRB_PASSWORD || '',
+      };
 
   let net: Net;
   let svrB: SvrB;
@@ -49,6 +68,7 @@ describe('SecureValueRecoveryBackup', () => {
     it('returns a promise', () => {
       const result = svrB.restore(testBackupKey, new Uint8Array());
       assert.instanceOf(result, Promise);
+      // eslint-disable-next-line promise/prefer-await-to-then
       result.catch(() => {});
     });
 
@@ -58,6 +78,7 @@ describe('SecureValueRecoveryBackup', () => {
         abortSignal: abortController.signal,
       });
       assert.instanceOf(result, Promise);
+      // eslint-disable-next-line promise/prefer-await-to-then
       result.catch(() => {});
     });
   });
@@ -70,6 +91,16 @@ describe('SecureValueRecoveryBackup', () => {
         testAuth.password == ''
       ) {
         this.skip();
+      }
+    });
+    afterEach(async function () {
+      if (this.currentTest && !this.currentTest.isPending()) {
+        try {
+          await svrB.remove();
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.log(e);
+        }
       }
     });
 
@@ -120,6 +151,6 @@ describe('SecureValueRecoveryBackup', () => {
 
       // The tokens should be different between backups
       assert.notDeepEqual(firstToken.serialize(), secondToken.serialize());
-    });
+    }).timeout(10000);
   });
 });

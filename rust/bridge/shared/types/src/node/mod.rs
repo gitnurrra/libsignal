@@ -3,10 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::sync::Arc;
+
 use libsignal_protocol::*;
 pub use neon::context::Context;
 pub use neon::prelude::*;
 pub use neon::types::buffer::TypedArray;
+pub use signal_neon_futures::call_method;
+use signal_neon_futures::{JsFuture, JsPromiseResult};
 
 /// Used to keep track of all generated entry points.
 ///
@@ -17,7 +21,7 @@ pub use neon::types::buffer::TypedArray;
 macro_rules! node_register {
     ( $name:ident ) => {
         ::paste::paste! {
-            #[no_mangle] // necessary because we are linking as a cdylib
+            #[unsafe(no_mangle)] // necessary because we are linking as a cdylib
             #[allow(non_upper_case_globals)]
             #[linkme::distributed_slice($crate::node::LIBSIGNAL_FNS)]
             static [<signal_register_node_ $name>]: (&str, $crate::node::JsFn) =
@@ -40,9 +44,8 @@ mod io;
 pub use io::*;
 
 mod chat;
-mod storage;
 
-pub use storage::*;
+use crate::support::{BridgedCallbacks, WithContext};
 
 /// A function pointer referring to a Neon-based Node entry point.
 #[doc(hidden)]
@@ -67,3 +70,185 @@ pub struct DefaultFinalize<T>(pub T);
 impl<T> Finalize for DefaultFinalize<T> {}
 
 pub type DefaultJsBox<T> = JsBox<DefaultFinalize<T>>;
+
+/// A standard idiom for a callback object usable from any thread, used by `bridge_callbacks`.
+pub struct RootAndChannel {
+    js_channel: Channel,
+    // Root can only be cloned within a Context, but we need to rehydrate it every time we do a
+    // callback. Wrapping it in Arc is the easiest solution.
+    root: Arc<Root<JsObject>>,
+}
+
+impl RootAndChannel {
+    pub fn new(cx: &mut FunctionContext, callbacks: Handle<JsObject>) -> NeonResult<Self> {
+        let mut channel = cx.channel();
+        channel.unref(cx);
+
+        Ok(Self {
+            js_channel: channel,
+            root: Arc::new(callbacks.root(cx)),
+        })
+    }
+
+    /// Scaffolding to invoke a callback on the object owned by `self`, and return a Future for its
+    /// result.
+    ///
+    /// Concretely, `operation` will be sent to the JavaScript thread, and is expected to produce a
+    /// JavaScript Promise. A resolved promise will convert the result back to Rust using
+    /// [`CallbackResultTypeInfo`]; a rejected promise will stringify the error and convert it to the
+    /// error type of the caller's choice.
+    ///
+    /// Used by [`bridge_callbacks`](libsignal_bridge_macros::bridge_callbacks), but can be invoked
+    /// directly as well.
+    pub fn get_promise<F, T, E>(&self, name: &'static str, operation: F) -> JsFuture<Result<T, E>>
+    where
+        F: for<'a> FnOnce(&mut Cx<'a>, Handle<'a, JsObject>) -> NeonResult<Handle<'a, JsObject>>
+            + Send
+            + 'static,
+        T: CallbackResultTypeInfo + Send + 'static,
+        E: From<WithContext<ThrownException>> + Send,
+    {
+        /// Generates a closure to convert the promise's result type back to Rust.
+        ///
+        /// This is a separate function to keep it from being instantiated as many times as
+        /// `get_promise`, which will have a unique instantiation for every callback.
+        ///
+        /// Skip past this function to see the implementation of `get_promise`.
+        fn handle_result<T, E>(
+            name: &'static str,
+        ) -> impl for<'a> FnOnce(&mut FunctionContext<'a>, JsPromiseResult<'a>) -> Result<T, E>
+        where
+            T: CallbackResultTypeInfo,
+            E: From<WithContext<ThrownException>>,
+        {
+            move |cx, result| {
+                result
+                    .and_then(|value| {
+                        cx.try_catch(|cx| {
+                            let value = value.downcast_or_throw(cx)?;
+                            T::convert_from_callback(cx, value)
+                        })
+                    })
+                    .map_err(|error| {
+                        WithContext {
+                            operation: name,
+                            inner: ThrownException::from_value(cx, error),
+                        }
+                        .into()
+                    })
+            }
+        }
+
+        let root = self.root.clone();
+        JsFuture::get_promise(&self.js_channel, move |cx| {
+            let object = root.to_inner(cx);
+            let result = operation(cx, object);
+            root.finalize(cx);
+            result
+        })
+        .then(handle_result(name))
+    }
+
+    /// Runs an operation on the JavaScript thread, with the object owned by `self` available for
+    /// use.
+    ///
+    /// This is a "fire and forget" operation; it does not complete synchronously, and it will not
+    /// do anything but log error results.
+    pub fn send_and_log_on_error<F>(&self, name: &'static str, operation: F)
+    where
+        F: for<'a> FnOnce(&mut Cx<'a>, Handle<'a, JsObject>) -> NeonResult<()> + Send + 'static,
+    {
+        let root = self.root.clone();
+        self.js_channel.send(move |mut cx| {
+            cx.try_catch(move |cx| {
+                let object = root.to_inner(cx);
+                let result = operation(cx, object);
+                root.finalize(cx);
+                result
+            })
+            .unwrap_or_else(|e| {
+                log::error!(
+                    "failed to report {name}: {}",
+                    e.to_string(&mut cx)
+                        .map(|msg| msg.value(&mut cx))
+                        .as_deref()
+                        .unwrap_or("<unable to print error>")
+                )
+            });
+            Ok(())
+        });
+    }
+}
+
+impl Finalize for RootAndChannel {
+    fn finalize<'a, C: Context<'a>>(self, cx: &mut C) {
+        let Self {
+            js_channel: _,
+            root,
+        } = self;
+        root.finalize(cx);
+    }
+}
+
+impl<T: Finalize> Finalize for BridgedCallbacks<T> {
+    fn finalize<'a, C: Context<'a>>(self, cx: &mut C) {
+        self.0.finalize(cx);
+    }
+}
+
+/// neon implements [`neon::types::Finalize`] for a limited number of tuple sizes. We need more
+/// elements than they implement. Hence this trait.
+pub trait NodeFinalizeTuple {
+    fn tuple_finalize<'a, C: Context<'a>>(self, c: &mut C);
+}
+
+impl NodeFinalizeTuple for () {
+    #[inline]
+    fn tuple_finalize<'a, C: Context<'a>>(self, _: &mut C) {}
+}
+macro_rules! node_finalize_tuple{
+    ($([$($targ:ident),*$(,)?]),*$(,)?) => {$(
+        impl<$($targ: Finalize),*> NodeFinalizeTuple for ($($targ,)*) {
+            #[inline]
+            #[allow(non_snake_case)]
+            fn tuple_finalize<'a, C: Context<'a>>(self, c: &mut C) {
+                let ($($targ,)*) = self;
+                $($targ.finalize(c);)*
+            }
+        }
+    )*};
+}
+node_finalize_tuple! {
+    [T1],
+    [T1, T2],
+    [T1, T2, T3],
+    [T1, T2, T3, T4],
+    [T1, T2, T3, T4, T5],
+    [T1, T2, T3, T4, T5, T6],
+    [T1, T2, T3, T4, T5, T6, T7],
+    [T1, T2, T3, T4, T5, T6, T7, T8],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26, T27],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26, T27, T28],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29, T30],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29, T30, T31],
+    [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29, T30, T31, T32],
+}

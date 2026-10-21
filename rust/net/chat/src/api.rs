@@ -7,32 +7,52 @@
 //! chat-server".
 
 use std::convert::Infallible;
+use std::fmt::Formatter;
 
-use libsignal_net::infra::errors::LogSafeDisplay;
+use libsignal_core::LogSafeDisplay;
+use libsignal_net::infra::errors::RetryLater;
+use ref_cast::RefCast as _;
 
+pub mod backups;
+pub mod keys;
 pub mod keytrans;
+pub mod messages;
 pub mod profiles;
+pub mod purchase;
 pub mod registration;
 pub mod usernames;
 
 /// Marker wrapper for unauthenticated connections.
 ///
 /// You can get `&Unauth<Connection>` from `&Connection` using `Into`.
-#[derive(derive_more::Deref)]
+#[derive(derive_more::Deref, ref_cast::RefCast, derive_more::From)]
 #[repr(transparent)]
 pub struct Unauth<T>(pub T);
 
+impl<T> Unauth<T> {
+    pub(crate) const LOG_TAG: &'static str = "unauth";
+}
+
 impl<'a, T> From<&'a T> for &'a Unauth<T> {
     fn from(value: &'a T) -> Self {
-        // SAFETY: We use repr(transparent) to ensure that T and Unauth<T> have the same
-        // representation. Therefore, every valid reference to a T is also a valid reference to an
-        // Unauth T. (The standard library does the same thing for std::array::from_ref.)
-        unsafe {
-            std::ptr::from_ref(value)
-                .cast::<Unauth<T>>()
-                .as_ref()
-                .unwrap()
-        }
+        Unauth::ref_cast(value)
+    }
+}
+
+/// Marker wrapper for authenticated connections.
+///
+/// You can get `&Auth<Connection>` from `&Connection` using `Into`.
+#[derive(derive_more::Deref, ref_cast::RefCast, derive_more::From)]
+#[repr(transparent)]
+pub struct Auth<T>(pub T);
+
+impl<T> Auth<T> {
+    pub(crate) const LOG_TAG: &'static str = "auth";
+}
+
+impl<'a, T> From<&'a T> for &'a Auth<T> {
+    fn from(value: &'a T) -> Self {
+        Auth::ref_cast(value)
     }
 }
 
@@ -40,17 +60,27 @@ impl<'a, T> From<&'a T> for &'a Unauth<T> {
 #[derive(derive_more::Deref)]
 pub struct Registration<T>(pub T);
 
+impl<T> Registration<T> {
+    pub(crate) const LOG_TAG: &'static str = "reg";
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum AllowRateLimitChallenges {
+    No,
+    Yes,
+}
+
 /// Authorization for requests on unauthenticated connections involving other users.
 ///
-/// TODO: for multi-recipient message sends *specifically* there's one more kind of authorization,
-/// "this is a story". That should be handled as a separate type since other requests don't have
-/// that.
+/// For multi-recipient messages, see [messages::MultiRecipientSendAuthorization].
 pub enum UserBasedAuthorization {
-    AccessKey([u8; 16]),
+    AccessKey([u8; zkgroup::ACCESS_KEY_LEN]),
     Group(zkgroup::groups::GroupSendFullToken),
+    UnrestrictedUnauthenticatedAccess,
 }
 
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
+#[cfg_attr(test, derive(Clone))]
 #[ignore_extra_doc_attributes]
 pub enum RequestError<E, D = DisconnectedError> {
     /// the request timed out
@@ -85,7 +115,39 @@ impl<E, D> From<Infallible> for RequestError<E, D> {
     }
 }
 
+impl<E, D> RequestError<E, D> {
+    /// Substitutes one `Other` error type for another.
+    ///
+    /// This is a *flat* map because the transformation is allowed to return a different
+    /// `RequestError` case (usually `Unexpected`).
+    pub fn flat_map_other<E2>(
+        self,
+        f: impl FnOnce(E) -> RequestError<E2, D>,
+    ) -> RequestError<E2, D> {
+        match self {
+            RequestError::Timeout => RequestError::Timeout,
+            RequestError::Disconnected(d) => RequestError::Disconnected(d),
+            RequestError::RetryLater(retry_later) => RequestError::RetryLater(retry_later),
+            RequestError::Challenge(challenge) => RequestError::Challenge(challenge),
+            RequestError::ServerSideError => RequestError::ServerSideError,
+            RequestError::Unexpected { log_safe } => RequestError::Unexpected { log_safe },
+            RequestError::Other(e) => f(e),
+        }
+    }
+}
+
+impl<D> RequestError<Infallible, D> {
+    /// Replaces [`Infallible`] with an actual `Other` error type (which `self` must not be using).
+    ///
+    /// Unfortunately we can't `impl From<RequestError<Infallible, D>> for RequestError<E, D>`
+    /// because that overlaps when `E = Infallible`. So we need a helper instead.
+    pub fn with_other<E2>(self) -> RequestError<E2, D> {
+        self.flat_map_other(|e| match e {})
+    }
+}
+
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
+#[cfg_attr(test, derive(Clone))]
 #[ignore_extra_doc_attributes]
 pub enum DisconnectedError {
     /// the server explicitly disconnected us because we connected elsewhere with the same credentials
@@ -106,11 +168,25 @@ impl<E> From<DisconnectedError> for RequestError<E> {
     }
 }
 
-#[derive(Debug, thiserror::Error, displaydoc::Display)]
-/// retry after completing a rate limit challenge {options:?}
+#[derive(Debug, thiserror::Error)]
+#[cfg_attr(test, derive(Clone))]
 pub struct RateLimitChallenge {
     pub token: String,
     pub options: Vec<ChallengeOption>,
+    pub retry_later: Option<RetryLater>,
+}
+impl std::fmt::Display for RateLimitChallenge {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "retry after completing a rate limit challenge {:?}",
+            self.options
+        )?;
+        if let Some(retry_later) = &self.retry_later {
+            write!(f, " (or {retry_later})")?;
+        }
+        Ok(())
+    }
 }
 impl LogSafeDisplay for RateLimitChallenge {}
 
@@ -124,18 +200,138 @@ pub enum ChallengeOption {
     Captcha,
 }
 
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub struct UploadForm {
+    pub cdn: u32,
+    pub key: String,
+    pub headers: Vec<(String, String)>,
+    pub signed_upload_url: String,
+}
+
+// The upload form for CDN0 is different because S3 uses a POST-based API.
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub struct S3UploadForm {
+    // The S3 key (i.e. path and filename) for the uploaded file.
+    pub key: String,
+
+    // A scoped credential. Includes the AWS access key, date, region targeted,
+    // and AWS service.
+    pub credential: String,
+
+    // The type of access control for the uploaded file.
+    pub acl: String,
+
+    // The algorithm used to calculate a signature on the S3 policy.
+    pub algorithm: String,
+
+    // The timestamp (formatted as "yyyyMMdd'T'HHmmssX") at which the S3 policy
+    // and signature were generated.
+    pub date: String,
+
+    // The S3 policy (as a base64-encoded JSON string) used to upload the file.
+    pub policy: String,
+
+    // A digital signature (formatted as a hex string) on the S3 policy.
+    pub signature: String,
+}
+
 /// A convenience trait covering all Chat APIs.
 ///
 /// This should be extended to include any new submodules' traits.
-pub trait UnauthenticatedChatApi:
-    keytrans::UnauthenticatedChatApi
+///
+/// ### Generic?
+///
+/// The type parameter `T` is a marker to distinguish blanket impls that would otherwise overlap.
+/// Any concrete type will only impl this trait in one way; anywhere that needs to use
+/// UnauthenticatedChatApi generically should accept an arbitrary `T` here.
+pub trait UnauthenticatedChatApi<T>:
+    backups::UnauthenticatedChatApi<T>
+    + keys::UnauthenticatedChatApi<T>
+    + keytrans::UnauthenticatedChatApi
+    + messages::UnauthenticatedChatApi<T>
     + profiles::UnauthenticatedChatApi
-    + usernames::UnauthenticatedChatApi
+    + usernames::UnauthenticatedChatApi<T>
 {
 }
-impl<T> UnauthenticatedChatApi for T where
-    T: keytrans::UnauthenticatedChatApi
+impl<T, U> UnauthenticatedChatApi<T> for U where
+    U: backups::UnauthenticatedChatApi<T>
+        + keys::UnauthenticatedChatApi<T>
+        + keytrans::UnauthenticatedChatApi
+        + messages::UnauthenticatedChatApi<T>
         + profiles::UnauthenticatedChatApi
-        + usernames::UnauthenticatedChatApi
+        + usernames::UnauthenticatedChatApi<T>
 {
+}
+
+#[cfg(test)]
+pub(crate) mod testutil {
+    use const_str::concat_bytes;
+    use data_encoding_macro::base64;
+    use rand::SeedableRng as _;
+
+    pub const TEST_SELF_ACI: libsignal_core::Aci =
+        libsignal_core::Aci::from_uuid_bytes(const_str::hex!("659aa5f4a28dfcc11ea1b997537a3d95"));
+
+    /// A standard RNG used for exact-match tests that (normally) depend on randomness.
+    pub(crate) fn fixed_seed_test_rng() -> impl rand::CryptoRng + Send {
+        rand_chacha::ChaCha20Rng::seed_from_u64(0)
+    }
+
+    const TEST_RANDOMNESS: [u8; zkgroup::RANDOMNESS_LEN] = zkgroup::TEST_ARRAY_32;
+
+    pub(crate) fn test_server_params() -> (zkgroup::ServerSecretParams, zkgroup::ServerPublicParams)
+    {
+        let secret = zkgroup::ServerSecretParams::generate(TEST_RANDOMNESS);
+        let public = secret.get_public_params();
+        (secret, public)
+    }
+
+    /// A `ReceiptCredentialPresentation` issued by [`test_server_params`].
+    pub(crate) fn valid_receipt_credential_presentation()
+    -> zkgroup::receipts::ReceiptCredentialPresentation {
+        let (secret_params, public_params) = test_server_params();
+
+        let request_context = public_params
+            .create_receipt_credential_request_context(TEST_RANDOMNESS, zkgroup::TEST_ARRAY_16);
+        let response = secret_params.issue_receipt_credential(
+            TEST_RANDOMNESS,
+            &request_context.get_request(),
+            zkgroup::Timestamp::from_epoch_seconds(zkgroup::SECONDS_PER_DAY),
+            6,
+        );
+        public_params.create_receipt_credential_presentation(
+            TEST_RANDOMNESS,
+            &public_params
+                .receive_receipt_credential(&request_context, &response)
+                .expect("valid response"),
+        )
+    }
+
+    /// A fake `GroupSendFullToken` with a known form for serialization
+    /// ([`SERIALIZED_GROUP_SEND_TOKEN`]).
+    pub(crate) fn structurally_valid_group_send_token() -> zkgroup::groups::GroupSendFullToken {
+        // A full token is a version byte, a length-prefixed truncated hash, and a 64-bit
+        // day-aligned expiration timestamp in seconds.
+        zkgroup::deserialize(concat_bytes!(
+            0,
+            16u64.to_le_bytes(),
+            [0; 16],
+            1700000000000u64.to_le_bytes()
+        ))
+        .expect("valid (enough)")
+    }
+
+    /// The serialized form of [`structurally_valid_group_send_token`].
+    pub(crate) const SERIALIZED_GROUP_SEND_TOKEN: &[u8] =
+        &base64!("ABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABo5c+LAQAA");
+
+    #[test]
+    fn serialized_group_send_token_is_correct() {
+        assert_eq!(
+            &zkgroup::serialize(&structurally_valid_group_send_token()),
+            SERIALIZED_GROUP_SEND_TOKEN,
+        );
+    }
 }

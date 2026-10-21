@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { InputStream } from '../io';
+import type { Bytes } from '@signalapp/types';
+
+import { InputStream } from '../io.js';
 
 export class ErrorInputStream extends InputStream {
   public static Error = class extends Error {};
 
-  read(_amount: number): Promise<Uint8Array> {
+  read(_amount: number): Promise<Bytes> {
     throw new ErrorInputStream.Error();
   }
   skip(_amount: number): Promise<void> {
@@ -17,14 +19,14 @@ export class ErrorInputStream extends InputStream {
 }
 
 export class Uint8ArrayInputStream extends InputStream {
-  data: Uint8Array;
+  data: Bytes;
 
-  constructor(data: Uint8Array) {
+  constructor(data: Bytes) {
     super();
     this.data = data;
   }
 
-  read(amount: number): Promise<Uint8Array> {
+  read(amount: number): Promise<Bytes> {
     const read_amount = Math.min(amount, this.data.length);
     const read_data = this.data.subarray(0, read_amount);
     this.data = this.data.subarray(read_amount);

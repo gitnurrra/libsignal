@@ -28,7 +28,16 @@
         "storyViewReceiptsEnabled": false,
         "hasSeenGroupStoryEducationSheet": false,
         "hasCompletedUsernameOnboarding": false,
-        "phoneNumberSharingMode": "NOBODY"
+        "phoneNumberSharingMode": "NOBODY",
+        "defaultSentMediaQuality": "STANDARD",
+        "appTheme": "SYSTEM",
+        "callsUseLessDataSetting": "MOBILE_DATA_ONLY",
+        "unreadBadgeType": "UNREAD_MESSAGES"
+      },
+      "androidSpecificSettings": {
+        "useSystemEmoji": true,
+        "screenshotSecurity": true,
+        "navigationBarSize": "NORMAL"
       }
     }
   },
@@ -123,7 +132,7 @@
             },
           ],
           "inviteLinkPassword": "",
-          "announcements_only": false
+          "announcementsOnly": false
         }
       }
     }

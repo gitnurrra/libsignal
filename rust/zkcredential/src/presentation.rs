@@ -22,9 +22,11 @@
 //! Credential presentation is defined in Chase-Perrin-Zaverucha section 3.2; proofs for verifiable
 //! encryption are defined in section 4.1.
 
+use std::borrow::Cow;
+
+use curve25519_dalek::Scalar;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::traits::Identity;
-use curve25519_dalek::Scalar;
 use partial_default::PartialDefault;
 use poksho::shoapi::ShoApiExt as _;
 use poksho::{ShoApi, ShoHmacSha256};
@@ -32,13 +34,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::attributes::{self, Attribute, PublicAttribute, RevealedAttribute};
 use crate::credentials::{
-    Credential, CredentialKeyPair, CredentialPrivateKey, CredentialPublicKey, SystemParams,
-    NUM_SUPPORTED_ATTRS,
+    CompatibilityMode, CompatibilityModeAsValue, Credential, CredentialKeyPair,
+    CredentialPrivateKey, CredentialPublicKey, NUM_SUPPORTED_ATTRS, SystemParams,
 };
 use crate::sho::ShoExt;
-use crate::{VerificationFailure, RANDOMNESS_LEN};
+use crate::{RANDOMNESS_LEN, VerificationFailure};
 
-#[derive(Serialize, Deserialize, PartialDefault)]
+#[derive(Clone, Serialize, Deserialize, PartialDefault)]
 struct PresentationProofCommitments {
     C_x0: RistrettoPoint,
     C_x1: RistrettoPoint,
@@ -49,7 +51,7 @@ struct PresentationProofCommitments {
 /// Demonstrates to the _verifying server_ that the client holds a particular credential.
 ///
 /// Use [`PresentationProofVerifier`] to validate the proof.
-#[derive(Serialize, Deserialize, PartialDefault)]
+#[derive(Clone, Serialize, Deserialize, PartialDefault)]
 pub struct PresentationProof {
     commitments: PresentationProofCommitments,
     poksho_proof: Vec<u8>,
@@ -78,6 +80,13 @@ impl<D: attributes::Domain> From<attributes::PublicKey<D>> for AnyPublicKey {
         }
     }
 }
+
+impl PartialEq for AnyPublicKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && (self.G_a)() == (other.G_a)() && self.A == other.A
+    }
+}
+impl Eq for AnyPublicKey {}
 
 enum PublicKeyOrId {
     PublicKey(AnyPublicKey),
@@ -202,7 +211,13 @@ impl<'a, T: MayHavePublicKey> PresentationProofBuilderCore<'a, T> {
                 .iter()
                 .position(|key| key.id() == key_id)
             {
-                Some(idx) => idx,
+                Some(idx) => {
+                    assert!(
+                        key.public_key() == self.encryption_keys[idx].public_key(),
+                        "key '{key_id}' is not used in a consistent way"
+                    );
+                    idx
+                }
                 None => {
                     let idx = self.encryption_keys.len();
                     self.encryption_keys.push(key);
@@ -227,7 +242,6 @@ impl<'a, T: MayHavePublicKey> PresentationProofBuilderCore<'a, T> {
 
         // These terms are from Chase-Perrin-Zaverucha section 4.1,
         // proving the validity of the encryption keys.
-        let mut encryption_sum_terms = vec![];
         for key in &self.encryption_keys {
             let key_id = key.id();
             let a1 = format!("a1_{key_id}");
@@ -237,22 +251,16 @@ impl<'a, T: MayHavePublicKey> PresentationProofBuilderCore<'a, T> {
             // 0 = z1_uid * I + a1_uid * Z
             st.add("0", &[(&format!("z1_{key_id}"), "I"), (&a1, "Z")]);
 
+            // A_uid = (a1_uid * G_a1_uid) + (a2_uid * G_a2_uid)
             if key.public_key().is_some() {
-                encryption_sum_terms.push((a1, format!("G_a1_{key_id}")));
-                encryption_sum_terms.push((format!("a2_{key_id}"), format!("G_a2_{key_id}")));
+                st.add(
+                    &format!("A_{key_id}"),
+                    &[
+                        (&a1, &format!("G_a1_{key_id}")),
+                        (&format!("a2_{key_id}"), &format!("G_a2_{key_id}")),
+                    ],
+                );
             }
-        }
-        if !encryption_sum_terms.is_empty() {
-            // sum(A) = (a1_uid * G_a1_uid) + (a2_uid * G_a2_uid) +
-            //          (a1_profilekey * G_a1_profilekey) + (a2_profilekey * G_a2_profilekey) +
-            //          ...
-            st.add(
-                "sum(A)",
-                &encryption_sum_terms
-                    .iter()
-                    .map(|(a, b)| (a.as_str(), b.as_str()))
-                    .collect::<Vec<_>>(),
-            );
         }
 
         for attr in &self.attributes {
@@ -310,7 +318,7 @@ impl<'a, T: MayHavePublicKey> PresentationProofBuilderCore<'a, T> {
     /// This includes the credential key commitments `C_x0`, `C_x1`, and `C_y0`; the system points
     /// `G_x0`, `G_x1`, and all `G_y{i}`; the appropriate issuing parameter point `I`; and the
     /// points necessary to prove the validity of encryption keys: `0`, `G_a1_{key}`, `G_a2_{key}`,
-    /// and `sum(A)`.
+    /// and `A_{key}`.
     ///
     /// The caller is responsible for handling the presenter's one-off public point `Z` (which the
     /// verifier derives from the commitments and public attributes); the appropriate `C_y{i}` for
@@ -333,17 +341,13 @@ impl<'a, T: MayHavePublicKey> PresentationProofBuilderCore<'a, T> {
 
         if !self.encryption_keys.is_empty() {
             point_args.add("0", RistrettoPoint::identity());
-            let mut sum_A = RistrettoPoint::identity();
             for key in &self.encryption_keys {
                 if let Some(key) = key.public_key() {
                     let [G_a1, G_a2] = (key.G_a)();
                     point_args.add(format!("G_a1_{}", key.id), G_a1);
                     point_args.add(format!("G_a2_{}", key.id), G_a2);
-                    sum_A += key.A;
+                    point_args.add(format!("A_{}", key.id), key.A);
                 }
-            }
-            if sum_A != RistrettoPoint::identity() {
-                point_args.add("sum(A)", sum_A);
             }
         }
 
@@ -361,6 +365,55 @@ impl<'a, T: MayHavePublicKey> PresentationProofBuilderCore<'a, T> {
         // Other C_y depend on the form of the attribute.
 
         point_args
+    }
+
+    /// Collects everything to authenticate over that's *not* in the poksho statement.
+    ///
+    /// This includes the individual public encryption keys (order-sensitive), as well as extra
+    /// points passed in from the caller, which should include any points whose values feed into the
+    /// poksho statement but are not used directly. (In particular, the second point of an encrypted
+    /// attribute and its corresponding commitment.)
+    fn prepare_full_authenticated_message(
+        &self,
+        extra_points: &[RistrettoPoint],
+        mode: CompatibilityModeAsValue,
+    ) -> Cow<'_, [u8]> {
+        match mode {
+            CompatibilityModeAsValue::LegacyY0AndAssociatedData => {
+                Cow::Borrowed(self.authenticated_message)
+            }
+            CompatibilityModeAsValue::Standard => {
+                const SIZE_OF_COMPRESSED_POINT_BYTES: usize = 32;
+                let mut result = Vec::with_capacity(
+                    size_of::<u32>()
+                        + self.authenticated_message.len()
+                        + SIZE_OF_COMPRESSED_POINT_BYTES * self.encryption_keys.len()
+                        + SIZE_OF_COMPRESSED_POINT_BYTES * extra_points.len(),
+                );
+                result.extend_from_slice(
+                    &u32::try_from(self.authenticated_message.len())
+                        .expect("auth messages are not more than 2^32 bytes")
+                        .to_be_bytes(),
+                );
+                result.extend_from_slice(self.authenticated_message);
+                // We don't need a separator for these because they're all fixed-length.
+                for next in &self.encryption_keys {
+                    if let Some(key) = next.public_key() {
+                        result.extend_from_slice(key.A.compress().as_bytes());
+                    }
+                }
+                for next in extra_points {
+                    result.extend_from_slice(next.compress().as_bytes());
+                }
+
+                if result == 0u32.to_be_bytes() {
+                    // Preserve compatibility with the legacy authentication if there's otherwise
+                    // nothing to authenticate.
+                    result.clear();
+                }
+                Cow::Owned(result)
+            }
+        }
     }
 }
 
@@ -454,7 +507,7 @@ impl<'a> PresentationProofBuilder<'a> {
     /// It is critical that different randomness is used each time a credential is issued. Failing
     /// to do so allows different presentations to be linked to the same credential (and thus the
     /// same user), and worse, effectively reveals any hidden Attributes and their encryption keys.
-    pub fn present(
+    pub fn present<Mode: CompatibilityMode>(
         self,
         public_key: &CredentialPublicKey,
         credential: &Credential,
@@ -508,6 +561,7 @@ impl<'a> PresentationProofBuilder<'a> {
         }
 
         let mut point_args = self.core.prepare_non_attribute_point_args(I, &commitments);
+        let mut extra_points_to_authenticate = Vec::with_capacity(self.core.attr_points.len());
         point_args.add("Z", Z);
         for attr in &self.core.attributes {
             let &AttributeRef {
@@ -530,6 +584,8 @@ impl<'a> PresentationProofBuilder<'a> {
                     format!("C_y{second_point_index}-E_A{second_point_index}"),
                     commitments.C_y[second_point_index] - E_A2,
                 );
+                extra_points_to_authenticate.push(commitments.C_y[second_point_index]);
+                extra_points_to_authenticate.push(E_A2);
             } else {
                 debug_assert!(
                     self.core.attr_points[first_point_index] == RistrettoPoint::identity(),
@@ -544,10 +600,12 @@ impl<'a> PresentationProofBuilder<'a> {
             .prove(
                 &scalar_args,
                 &point_args,
-                self.core.authenticated_message,
+                &self
+                    .core
+                    .prepare_full_authenticated_message(&extra_points_to_authenticate, Mode::ENUM),
                 &sho.squeeze_and_ratchet_as_array::<RANDOMNESS_LEN>(),
             )
-            .unwrap();
+            .expect("valid proof");
 
         PresentationProof {
             commitments,
@@ -637,9 +695,9 @@ impl<'a> PresentationProofVerifier<'a> {
     }
 
     /// Verifies the given `proof` over the accrued attributes using the given `key_pair`.
-    pub fn verify(
+    pub fn verify<Mode: CompatibilityMode>(
         mut self,
-        key_pair: &CredentialKeyPair,
+        key_pair: &CredentialKeyPair<Mode>,
         proof: &PresentationProof,
     ) -> Result<(), VerificationFailure> {
         self.finalize_public_attrs();
@@ -656,19 +714,25 @@ impl<'a> PresentationProofVerifier<'a> {
         }
 
         let CredentialPrivateKey { W, x0, x1, y, .. } = key_pair.private_key();
+        // Slot 0's coefficient is domain-separated by the total attribute count, which is what
+        // blinds the published `I` ladder. See `CredentialPrivateKey::y0`.
+        let y0 = key_pair.private_key().y0(Mode::ENUM, C_y.len());
 
         let mut Z = C_V - W - x0 * C_x0 - x1 * C_x1;
-        for (yn, C_yn) in y.iter().zip(C_y.iter()) {
-            Z -= yn * C_yn;
+        for (i, (yn, C_yn)) in y.iter().zip(C_y.iter()).enumerate() {
+            let coefficient = if i == 0 { y0 } else { *yn };
+            Z -= coefficient * C_yn;
         }
         // Incorporate public attributes here so the server can check they haven't changed.
-        Z -= y[0] * self.core.attr_points[0];
+        // Revealed attributes below are always at index >= 1, so they keep using the raw `y`.
+        Z -= y0 * self.core.attr_points[0];
 
         let public_key = key_pair.public_key();
         let I = public_key.I(self.core.attr_points.len());
         let mut point_args = self
             .core
             .prepare_non_attribute_point_args(I, &proof.commitments);
+        let mut extra_points_to_authenticate = Vec::with_capacity(self.core.attr_points.len());
 
         for attr in &self.core.attributes {
             let &AttributeRef {
@@ -691,6 +755,8 @@ impl<'a> PresentationProofVerifier<'a> {
                     format!("C_y{second_point_index}-E_A{second_point_index}"),
                     C_y[second_point_index] - self.core.attr_points[second_point_index],
                 );
+                extra_points_to_authenticate.push(C_y[second_point_index]);
+                extra_points_to_authenticate.push(self.core.attr_points[second_point_index]);
             } else {
                 // Check that the revealed attributes match the original issuance.
                 Z -= y[first_point_index] * self.core.attr_points[first_point_index];
@@ -702,7 +768,9 @@ impl<'a> PresentationProofVerifier<'a> {
         match self.core.get_poksho_statement().verify_proof(
             &proof.poksho_proof,
             &point_args,
-            self.core.authenticated_message,
+            &self
+                .core
+                .prepare_full_authenticated_message(&extra_points_to_authenticate, Mode::ENUM),
         ) {
             Err(_) => Err(VerificationFailure),
             Ok(_) => Ok(()),

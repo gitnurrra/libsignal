@@ -7,6 +7,8 @@
 //!
 //! Contains code to read and validate message backup files.
 
+#![warn(clippy::unwrap_used)]
+
 use std::time::Duration;
 
 use futures::AsyncRead;
@@ -26,8 +28,12 @@ pub mod args;
 pub mod backup;
 pub mod frame;
 pub mod key;
+pub mod padding;
 pub mod parse;
 pub mod unknown;
+
+#[cfg(feature = "json")]
+pub mod json;
 
 // visibility::make isn't supported for modules, so we have to write it twice instead.
 #[cfg(feature = "test-util")]
@@ -111,6 +117,19 @@ pub struct FoundUnknownField {
     pub frame_index: usize,
     pub path: Vec<PathPart>,
     pub value: UnknownValue,
+}
+
+impl FoundUnknownField {
+    /// Convenience method for mapping over an iterator of results from the same frame.
+    ///
+    /// Note that this *returns* a function that you then pass to `map`.
+    pub fn in_frame(frame_index: usize) -> impl Fn((Vec<PathPart>, UnknownValue)) -> Self {
+        move |(path, value)| Self {
+            frame_index,
+            path,
+            value,
+        }
+    }
 }
 
 impl std::fmt::Display for FoundUnknownField {
@@ -216,11 +235,7 @@ where
         |unknown_fields: &mut Vec<FoundUnknownField>, found_unknown: Vec<_>, index| {
             let iter = found_unknown
                 .into_iter()
-                .map(|(path, value)| FoundUnknownField {
-                    frame_index: index,
-                    path,
-                    value,
-                });
+                .map(FoundUnknownField::in_frame(index));
             unknown_fields.extend(iter);
         };
 
@@ -320,15 +335,12 @@ where
 /// For APIs that don't have a good way to report unknown fields, logging is the best we can do if
 /// we don't want a fatal error.
 fn log_unknown_fields<V: crate::unknown::VisitUnknownFields>(input: &V, context: &'static str) {
-    for (path, value) in input.collect_unknown_fields() {
-        log::warn!(
-            "{context}: {}",
-            FoundUnknownField {
-                frame_index: 0,
-                path,
-                value
-            }
-        );
+    for entry in input
+        .collect_unknown_fields()
+        .into_iter()
+        .map(FoundUnknownField::in_frame(0))
+    {
+        log::warn!("{context}: {entry}");
     }
 }
 

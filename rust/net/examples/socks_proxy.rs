@@ -11,18 +11,18 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use clap::Parser;
-use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
+use libsignal_net::infra::OverrideNagleAlgorithm;
 use libsignal_net::infra::certs::RootCertificates;
 use libsignal_net::infra::dns::DnsResolver;
 use libsignal_net::infra::host::Host;
 use libsignal_net::infra::tcp_ssl::proxy::socks::Protocol;
-use libsignal_net_infra::errors::TransportConnectError;
 use libsignal_net_infra::route::{
     ConnectorExt as _, ProxyTarget, SocksRoute, TcpRoute, TlsRoute, TlsRouteFragment,
     UnresolvedHost,
 };
-use libsignal_net_infra::testutil::no_network_change_events;
+use libsignal_net_infra::utils::no_network_change_events;
 use tokio::time::Duration;
 use url::Url;
 
@@ -53,10 +53,8 @@ async fn main() {
 
     let Args { proxy_url, target } = Args::parse();
 
-    let protocol;
-    let resolve_hostname_locally;
     let scheme = proxy_url.scheme();
-    match scheme {
+    let (protocol, resolve_hostname_locally) = match scheme {
         "socks" | // Default to SOCKS5
         "socks5" | "socks5h" => {
             let username = (!proxy_url.username().is_empty()).then_some(proxy_url.username());
@@ -65,14 +63,15 @@ async fn main() {
                 (None, None) => None,
                 _ => panic!("only one of username or password was provided"),
             };
-            protocol = Protocol::Socks5 { username_password };
-            resolve_hostname_locally = !scheme.ends_with('h');
+            (
+                Protocol::Socks5 { username_password },
+                !scheme.ends_with('h'),
+            )
         },
         "socks4" | "socks4a" => {
             let username = proxy_url.username();
             let user_id = (!username.is_empty()).then(|| username.to_owned());
-            protocol = Protocol::Socks4 { user_id };
-            resolve_hostname_locally = !scheme.ends_with('a');
+            (Protocol::Socks4 { user_id }, !scheme.ends_with('a'))
         }
         proto => panic!("unsupported protocol {proto:?}"),
     };
@@ -107,6 +106,7 @@ async fn main() {
                     address: Host::<Arc<str>>::parse_as_ip_or_domain(proxy_host)
                         .map_domain(UnresolvedHost::from),
                     port: proxy_port,
+                    override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
                 },
                 target_addr: target_host,
                 target_port,
@@ -117,11 +117,10 @@ async fn main() {
         let resolved = libsignal_net::infra::route::resolve_route(&dns_resolver, unresolved_route)
             .await
             .expect("failed to resolve");
-        let connector =
-            libsignal_net::infra::route::ComposedConnector::<_, _, TransportConnectError>::new(
-                libsignal_net::infra::tcp_ssl::StatelessTls,
-                libsignal_net::infra::tcp_ssl::proxy::StatelessProxied,
-            );
+        let connector = libsignal_net::infra::route::ComposedConnector::new(
+            libsignal_net::infra::tcp_ssl::StatelessTls,
+            libsignal_net::infra::tcp_ssl::proxy::StatelessProxied,
+        );
 
         const START_NEXT_DELAY: Duration = Duration::from_secs(5);
         let connect_attempts = FuturesUnordered::from_iter(resolved.zip(0..).map(|(route, i)| {

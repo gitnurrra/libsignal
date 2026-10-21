@@ -3,20 +3,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { assert, use } from 'chai';
-import { randomBytes } from 'crypto';
-import * as chaiAsPromised from 'chai-as-promised';
+import { assert, expect, use } from 'chai';
+import chaiAsPromised from 'chai-as-promised';
+import type { Bytes } from '@signalapp/types';
+import { Buffer } from 'node:buffer';
+import { randomBytes } from 'node:crypto';
+import * as stream from 'node:stream';
+
 import {
-  ValidatingPassThrough,
-  everyNthByte,
-  inferChunkSize,
   chunkSizeInBytes,
   DigestingPassThrough,
-} from '../incremental_mac';
-import { LibSignalErrorBase } from '../Errors';
+  everyNthByte,
+  inferChunkSize,
+  ValidatingPassThrough,
+} from '../incremental_mac.js';
+import { ErrorCode, LibSignalErrorBase } from '../Errors.js';
 
-import * as stream from 'stream';
-import { assertArrayEquals } from './util';
+import { assertArrayEquals } from './util.js';
 
 use(chaiAsPromised);
 
@@ -85,7 +88,10 @@ describe('Incremental MAC', () => {
         stream.Readable.from(badInput),
         validating
       );
-      await assert.isRejected(promise, LibSignalErrorBase);
+      const error = (await expect(promise).to.be.rejectedWith(
+        LibSignalErrorBase
+      )) as LibSignalErrorBase;
+      assert.equal(error.code, ErrorCode.IncrementalMacVerificationFailed);
     });
 
     it('corrupted input in finalize', async () => {
@@ -99,7 +105,10 @@ describe('Incremental MAC', () => {
         stream.Readable.from(badInput),
         validating
       );
-      await assert.isRejected(promise, LibSignalErrorBase);
+      const error = (await expect(promise).to.be.rejectedWith(
+        LibSignalErrorBase
+      )) as LibSignalErrorBase;
+      assert.equal(error.code, ErrorCode.IncrementalMacVerificationFailed);
     });
 
     it('corrupted digest', async () => {
@@ -114,15 +123,18 @@ describe('Incremental MAC', () => {
         stream.Readable.from(TEST_INPUT),
         validating
       );
-      await assert.isRejected(promise, LibSignalErrorBase);
+      const error = (await expect(promise).to.be.rejectedWith(
+        LibSignalErrorBase
+      )) as LibSignalErrorBase;
+      assert.equal(error.code, ErrorCode.IncrementalMacVerificationFailed);
     });
   });
   describe('ValidatingPassThrough', () => {
     // Use uneven chunk size to trigger buffering
     const CHUNK_SIZE = 13579;
 
-    function toChunkedReadable(buffer: Uint8Array): stream.Readable {
-      const chunked = new Array<Uint8Array>();
+    function toChunkedReadable(buffer: Bytes): stream.Readable {
+      const chunked = new Array<Bytes>();
       for (let i = 0; i < buffer.byteLength; i += CHUNK_SIZE) {
         chunked.push(buffer.subarray(i, i + CHUNK_SIZE));
       }
@@ -170,10 +182,25 @@ describe('Incremental MAC', () => {
         throw new Error('Should not be called');
       });
 
-      await assert.isRejected(
-        stream.promises.pipeline(toChunkedReadable(source), validator),
-        'Corrupted input data'
+      const promise = stream.promises.pipeline(
+        toChunkedReadable(source),
+        validator
       );
+      const error = (await expect(promise).to.be.rejectedWith(
+        LibSignalErrorBase
+      )) as LibSignalErrorBase;
+      assert.equal(error.code, ErrorCode.IncrementalMacVerificationFailed);
+      assert.equal(error.message, 'Corrupted input data');
+    });
+
+    it('handles an invalid digest', () => {
+      const badDigest = Buffer.of(1);
+      expect(
+        () =>
+          new ValidatingPassThrough(TEST_KEY, inferChunkSize(1000), badDigest)
+      )
+        .to.throw(LibSignalErrorBase)
+        .with.property('code', ErrorCode.IncrementalMacVerificationFailed);
     });
   });
 });

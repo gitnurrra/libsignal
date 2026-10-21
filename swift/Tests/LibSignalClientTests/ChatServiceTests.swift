@@ -41,8 +41,9 @@ final class ChatServiceTests: TestCaseBase {
     func testConvertResponse() throws {
         do {
             // Empty body
-            var rawResponse = SignalFfiChatResponse()
-            try checkError(signal_testing_chat_response_convert(&rawResponse, false))
+            let rawResponse = try invokeFnReturningValueByPointer(.init()) {
+                signal_testing_chat_response_convert($0, false)
+            }
             let response = try ChatConnection.Response(consuming: rawResponse)
             XCTAssertEqual(Self.expectedStatus, response.status)
             XCTAssertEqual(Self.expectedMessage, response.message)
@@ -52,8 +53,9 @@ final class ChatServiceTests: TestCaseBase {
 
         do {
             // Present body
-            var rawResponse = SignalFfiChatResponse()
-            try checkError(signal_testing_chat_response_convert(&rawResponse, true))
+            let rawResponse = try invokeFnReturningValueByPointer(.init()) {
+                signal_testing_chat_response_convert($0, true)
+            }
             let response = try ChatConnection.Response(consuming: rawResponse)
             XCTAssertEqual(Self.expectedStatus, response.status)
             XCTAssertEqual(Self.expectedMessage, response.message)
@@ -73,6 +75,9 @@ final class ChatServiceTests: TestCaseBase {
         do {
             try failWithError("DeviceDeregistered")
         } catch SignalError.deviceDeregistered(_) {}
+        do {
+            try failWithError("PossibleCaptiveNetwork")
+        } catch SignalError.possibleCaptiveNetwork(_) {}
 
         do {
             try failWithError("WebSocketConnectionFailed")
@@ -169,7 +174,7 @@ final class ChatServiceTests: TestCaseBase {
     #endif
 
     func testInvalidProxyRejected() {
-        let net = Net(env: .production, userAgent: Self.userAgent)
+        let net = Net(env: .production, userAgent: Self.userAgent, buildVariant: .production)
 
         func check(callback: () throws -> Void) {
             net.connectionManager.assertIsUsingProxyIs(0)
@@ -206,6 +211,7 @@ final class ChatConnectionTests: TestCaseBase {
     func testListenerCallbacks() async throws {
         class Listener: ChatConnectionListener {
             let queueEmpty: XCTestExpectation
+            let serverTimestampReceived: XCTestExpectation
             let alertsReceived: XCTestExpectation
             let firstMessageReceived: XCTestExpectation
             let secondMessageReceived: XCTestExpectation
@@ -213,19 +219,21 @@ final class ChatConnectionTests: TestCaseBase {
 
             var expectations: [XCTestExpectation] {
                 [
-                    self.alertsReceived, self.firstMessageReceived, self.secondMessageReceived, self.queueEmpty,
-                    self.connectionInterrupted,
+                    self.serverTimestampReceived, self.alertsReceived, self.firstMessageReceived,
+                    self.secondMessageReceived, self.queueEmpty, self.connectionInterrupted,
                 ]
             }
 
             init(
                 queueEmpty: XCTestExpectation,
+                serverTimestampReceived: XCTestExpectation,
                 alertsReceived: XCTestExpectation,
                 firstMessageReceived: XCTestExpectation,
                 secondMessageReceived: XCTestExpectation,
                 connectionInterrupted: XCTestExpectation
             ) {
                 self.queueEmpty = queueEmpty
+                self.serverTimestampReceived = serverTimestampReceived
                 self.alertsReceived = alertsReceived
                 self.firstMessageReceived = firstMessageReceived
                 self.secondMessageReceived = secondMessageReceived
@@ -259,6 +267,11 @@ final class ChatConnectionTests: TestCaseBase {
                 self.alertsReceived.fulfill()
             }
 
+            func chatConnection(_ chat: AuthenticatedChatConnection, reportedServerTimestamp timestamp: UInt64) {
+                XCTAssertEqual(timestamp, 500)  // This value is hardcoded in fake.rs.
+                self.serverTimestampReceived.fulfill()
+            }
+
             func connectionWasInterrupted(_: AuthenticatedChatConnection, error: Error?) {
                 XCTAssertNotNil(error)
                 self.connectionInterrupted.fulfill()
@@ -268,6 +281,7 @@ final class ChatConnectionTests: TestCaseBase {
         let tokioAsyncContext = TokioAsyncContext()
         let listener = Listener(
             queueEmpty: expectation(description: "queue empty"),
+            serverTimestampReceived: expectation(description: "server timestamp received"),
             alertsReceived: expectation(description: "alerts received"),
             firstMessageReceived: expectation(description: "first message received"),
             secondMessageReceived: expectation(description: "second message received"),
@@ -406,6 +420,101 @@ final class ChatConnectionTests: TestCaseBase {
         XCTAssertEqual(responseFromServer.headers, ["purpose": "test response"])
         XCTAssertEqual(responseFromServer.body, Data([5]))
     }
+
+    func testProvisioningCallbacks() async throws {
+        class Listener: ProvisioningConnectionListener {
+            let addressReceived: XCTestExpectation
+            let envelopeReceived: XCTestExpectation
+            let connectionInterrupted: XCTestExpectation
+
+            var expectations: [XCTestExpectation] {
+                [self.addressReceived, self.envelopeReceived, self.connectionInterrupted]
+            }
+
+            init(
+                addressReceived: XCTestExpectation,
+                envelopeReceived: XCTestExpectation,
+                connectionInterrupted: XCTestExpectation,
+            ) {
+                self.addressReceived = addressReceived
+                self.envelopeReceived = envelopeReceived
+                self.connectionInterrupted = connectionInterrupted
+            }
+
+            func provisioningConnection(
+                _ connection: ProvisioningConnection,
+                didReceiveAddress address: String,
+                sendAck: @escaping () throws -> Void
+            ) {
+                XCTAssertEqual(address, "the address")
+                try! sendAck()
+                self.addressReceived.fulfill()
+            }
+
+            func provisioningConnection(
+                _ connection: ProvisioningConnection,
+                didReceiveEnvelope envelope: Data,
+                sendAck: @escaping () throws -> Void
+            ) {
+                XCTAssertEqual(envelope, Data("encoded envelope".utf8))
+                try! sendAck()
+                self.envelopeReceived.fulfill()
+            }
+
+            func connectionWasInterrupted(_: ProvisioningConnection, error: Error?) {
+                XCTAssertNotNil(error)
+                self.connectionInterrupted.fulfill()
+            }
+        }
+
+        let tokioAsyncContext = TokioAsyncContext()
+        let listener = Listener(
+            addressReceived: expectation(description: "address received"),
+            envelopeReceived: expectation(description: "envelope received"),
+            connectionInterrupted: expectation(description: "connection interrupted")
+        )
+        let (chat, fakeRemote) = ProvisioningConnection.fakeConnect(
+            tokioAsyncContext: tokioAsyncContext,
+            listener: listener,
+        )
+        // Make sure the chat object doesn't go away too soon.
+        defer { withExtendedLifetime(chat) {} }
+
+        // The following payloads were generated via protoscope.
+        // % protoscope -s | base64
+        // The fields are described by chat_websocket.proto and chat_provisioning.proto in the
+        // libsignal-net crate.
+
+        // 1: {"PUT"}
+        // 2: {"/v1/address"}
+        // 3: {1: {"the address"}}
+        // 5: {"x-signal-timestamp: 1000"}
+        // 4: 1
+        fakeRemote.injectServerRequest(
+            base64: "CgNQVVQSCy92MS9hZGRyZXNzGg0KC3RoZSBhZGRyZXNzKhh4LXNpZ25hbC10aW1lc3RhbXA6IDEwMDAgAQ=="
+        )
+
+        // Sending an invalid message should not affect the listener at all, nor should it stop future requests.
+        // 1: {"PUT"}
+        // 2: {"/invalid"}
+        // 4: 10
+        fakeRemote.injectServerRequest(base64: "CgNQVVQSCC9pbnZhbGlkIAo=")
+
+        // 1: {"PUT"}
+        // 2: {"/v1/message"}
+        // 3: {"encoded envelope"}
+        // 5: {"x-signal-timestamp: 1000"}
+        // 4: 2
+        fakeRemote.injectServerRequest(
+            base64: "CgNQVVQSCy92MS9tZXNzYWdlGhBlbmNvZGVkIGVudmVsb3BlKhh4LXNpZ25hbC10aW1lc3RhbXA6IDEwMDAgAg=="
+        )
+
+        fakeRemote.injectConnectionInterrupted()
+
+        await self.fulfillment(of: listener.expectations, timeout: 2, enforceOrder: true)
+
+    }
+
     #endif
 
     func testListenerCleanup() async throws {
@@ -426,7 +535,7 @@ final class ChatConnectionTests: TestCaseBase {
             func connectionWasInterrupted(_: UnauthenticatedChatConnection, error: Error?) {}
         }
 
-        let net = Net(env: .staging, userAgent: Self.userAgent)
+        let net = Net(env: .staging, userAgent: Self.userAgent, buildVariant: .production)
         var expectations: [XCTestExpectation] = []
 
         do {
@@ -459,7 +568,7 @@ final class ChatConnectionTests: TestCaseBase {
             throw XCTSkip()
         }
 
-        let net = Net(env: .staging, userAgent: Self.userAgent)
+        let net = Net(env: .staging, userAgent: Self.userAgent, buildVariant: .production)
         let chat = try await net.connectUnauthenticatedChat(languages: ["en"])
         _ = chat.info()
         let listener = ExpectDisconnectListener(expectation(description: "disconnect"))
@@ -477,14 +586,19 @@ final class ChatConnectionTests: TestCaseBase {
             throw XCTSkip()
         }
 
-        let net = Net(env: .staging, userAgent: Self.userAgent)
+        let net = Net(env: .staging, userAgent: Self.userAgent, buildVariant: .production)
         try await net.preconnectChat()
         do {
             // While we get no direct feedback here whether the preconnect was used,
             // you can check the log lines for: "[authenticated] using preconnection".
             // We have to use an authenticated connection because that's the only one that's allowed to
             // use preconnects.
-            _ = try await net.connectAuthenticatedChat(username: "", password: "", receiveStories: false)
+            // Use a syntactically valid but non-existent ACI so the server rejects the credentials.
+            _ = try await net.connectAuthenticatedChat(
+                username: "90c979fd-eab4-4a08-b6da-69dedeab9b29.1",
+                password: "password",
+                receiveStories: false
+            )
             XCTFail("should not have managed to authenticate")
         } catch SignalError.deviceDeregistered(_:) {
             // expected error, okay
@@ -496,7 +610,7 @@ final class ChatConnectionTests: TestCaseBase {
             throw XCTSkip()
         }
 
-        let net = Net(env: .staging, userAgent: Self.userAgent)
+        let net = Net(env: .staging, userAgent: Self.userAgent, buildVariant: .production)
         let host: Substring
         let port: UInt16
         if let colonIndex = PROXY_SERVER.firstIndex(of: ":") {
@@ -524,7 +638,7 @@ final class ChatConnectionTests: TestCaseBase {
             throw XCTSkip()
         }
 
-        let net = Net(env: .staging, userAgent: Self.userAgent)
+        let net = Net(env: .staging, userAgent: Self.userAgent, buildVariant: .production)
         let host: Substring
         let port: UInt16?
         if let colonIndex = PROXY_SERVER.firstIndex(of: ":") {
@@ -563,7 +677,7 @@ final class ChatConnectionTests: TestCaseBase {
             throw XCTSkip()
         }
 
-        let net = Net(env: .staging, userAgent: Self.userAgent)
+        let net = Net(env: .staging, userAgent: Self.userAgent, buildVariant: .production)
         let chat = try await net.connectUnauthenticatedChat()
         // Intentionally don't call .start and set a listener; sometimes the client app does not do this before
         // calling .disconnect()

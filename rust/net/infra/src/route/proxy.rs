@@ -7,17 +7,21 @@ use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use either::Either;
+use http::uri::PathAndQuery;
+use http::{HeaderMap, HeaderValue};
+use itertools::Itertools as _;
+use libsignal_core::LogSafeDisplay;
 use nonzero_ext::nonzero;
 
 use crate::certs::RootCertificates;
-use crate::errors::LogSafeDisplay;
 use crate::host::Host;
 use crate::route::{
-    ReplaceFragment, RouteProvider, RouteProviderContext, SimpleRoute, TcpRoute, TlsRoute,
-    TlsRouteFragment, UnresolvedHost,
+    DEFAULT_HTTPS_PORT, HttpRouteFragment, HttpVersion, HttpsTlsRoute, ReplaceFragment,
+    RouteProvider, RouteProviderContext, SimpleRoute, TcpRoute, TlsRoute, TlsRouteFragment,
+    UnresolvedHost, WebSocketRoute, WebSocketRouteFragment,
 };
 use crate::tcp_ssl::proxy::socks;
-use crate::Alpn;
+use crate::{Alpn, RouteType};
 
 pub const SIGNAL_TLS_PROXY_SCHEME: &str = "org.signal.tls";
 
@@ -52,6 +56,13 @@ pub struct HttpProxyAuth {
     pub password: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ReflectorProxyRoute<Addr> {
+    pub outer: WebSocketRoute<HttpsTlsRoute<TlsRoute<TcpRoute<Addr>>>>,
+    pub target_host: Arc<str>,
+    pub target_port: NonZeroU16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, strum::EnumDiscriminants)]
 #[strum_discriminants(name(ConnectionProxyKind))]
 pub enum ConnectionProxyRoute<Addr> {
@@ -65,6 +76,8 @@ pub enum ConnectionProxyRoute<Addr> {
     },
     Socks(SocksRoute<Addr>),
     Https(HttpsProxyRoute<Addr>),
+    // Boxed because it's much larger than the other variants.
+    Reflector(Box<ReflectorProxyRoute<Addr>>),
 }
 
 /// Target address for proxy protocols that support remote resolution.
@@ -89,13 +102,38 @@ pub enum DirectOrProxyRoute<D, P> {
     Proxy(P),
 }
 
+#[derive(Clone, Debug, strum::EnumDiscriminants)]
+#[strum_discriminants(derive(strum::Display))]
+pub enum DirectOrProxyMode {
+    DirectOnly,
+    ProxyOnly(ConnectionProxyConfig),
+    ProxyThenDirect(ConnectionProxyConfig),
+    DirectThenProxy(ConnectionProxyConfig),
+}
+
+impl std::fmt::Display for DirectOrProxyMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = DirectOrProxyModeDiscriminants::from(self);
+        match self {
+            DirectOrProxyMode::DirectOnly => write!(f, "{kind}"),
+            DirectOrProxyMode::ProxyOnly(proxy)
+            | DirectOrProxyMode::ProxyThenDirect(proxy)
+            | DirectOrProxyMode::DirectThenProxy(proxy) => {
+                write!(f, "{kind}({})", proxy.log_safe_kind())
+            }
+        }
+    }
+}
+
+impl LogSafeDisplay for DirectOrProxyMode {}
+
 /// [`RouteProvider`] implementation that returns [`DirectOrProxyRoute`]s.
 ///
 /// Constructs routes that either connect directly or through a proxy.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DirectOrProxyProvider<D, P> {
-    Direct(D),
-    Proxy(P),
+#[derive(Clone, Debug)]
+pub struct DirectOrProxyProvider<D> {
+    pub inner: D,
+    pub mode: DirectOrProxyMode,
 }
 
 #[derive(Debug, Clone)]
@@ -129,13 +167,30 @@ pub struct HttpProxy {
     pub resolve_hostname_locally: bool,
 }
 
-#[derive(Debug, Clone, derive_more::From)]
+#[derive(Debug, Clone, derive_more::From, strum::IntoStaticStr)]
 pub enum ConnectionProxyConfig {
     Tls(TlsProxy),
     #[cfg(feature = "dev-util")]
     Tcp(TcpProxy),
     Socks(SocksProxy),
     Http(HttpProxy),
+    Reflector {
+        /// Reflector tunnel providers to try. The caller is expected to take
+        /// this slice from the surrounding environment/domain config so prod
+        /// and staging can't be mispaired.
+        providers: &'static [ReflectorProviderConfig],
+        user_agent: HeaderValue,
+    },
+}
+
+#[derive(Debug)]
+pub struct ReflectorProviderConfig {
+    pub route_type: RouteType,
+    pub http_host: &'static str,
+    /// Pool of candidate SNI hostnames; one is selected per connection attempt.
+    pub sni_list: &'static [&'static str],
+    pub certs: RootCertificates,
+    pub endpoint: PathAndQuery,
 }
 
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
@@ -153,6 +208,10 @@ pub enum ProxyFromPartsError {
 impl LogSafeDisplay for ProxyFromPartsError {}
 
 impl ConnectionProxyConfig {
+    fn log_safe_kind(&self) -> &'static str {
+        self.into()
+    }
+
     /// Create a ConnectionProxyConfig from the information found in a URL or PAC file.
     ///
     /// Passing `None` for the `port` means the default port for the proxy type will be used.
@@ -207,7 +266,7 @@ impl ConnectionProxyConfig {
                 proxy_port: port.unwrap_or(nonzero!(80u16)),
                 proxy_tls: None,
                 proxy_authorization: auth,
-                resolve_hostname_locally: true,
+                resolve_hostname_locally: false,
             }
             .into(),
             "https" => HttpProxy {
@@ -215,7 +274,7 @@ impl ConnectionProxyConfig {
                 proxy_port: port.unwrap_or(nonzero!(443u16)),
                 proxy_tls: Some(CERTS_FOR_ARBITRARY_PROXY),
                 proxy_authorization: auth,
-                resolve_hostname_locally: true,
+                resolve_hostname_locally: false,
             }
             .into(),
             "socks4" | "socks4a" => {
@@ -248,214 +307,241 @@ impl ConnectionProxyConfig {
 
         Ok(proxy)
     }
-}
 
-pub struct ConnectionProxyRouteProvider<P> {
-    pub(crate) proxy: ConnectionProxyConfig,
-    pub(crate) inner: P,
-}
-
-impl<D> DirectOrProxyProvider<D, ConnectionProxyRouteProvider<D>> {
-    /// Convenience constructor for a provider that creates proxied routes if a
-    /// config is provided.
-    ///
-    /// Returns `Self::Direct(direct)` if no proxy config is given, otherwise
-    /// `Self::Proxy` with a `ConnectionProxyRouteProvider` wrapped around
-    /// `direct`.
-    pub fn maybe_proxied(direct: D, proxy_config: Option<ConnectionProxyConfig>) -> Self {
-        match proxy_config {
-            Some(proxy) => Self::Proxy(ConnectionProxyRouteProvider::new(proxy, direct)),
-            None => Self::Direct(direct),
+    pub fn is_signal_transparent_proxy(&self) -> bool {
+        match self {
+            Self::Tls(_) => true,
+            #[cfg(feature = "dev-util")]
+            Self::Tcp(_) => true,
+            Self::Socks(_) | Self::Http(_) | Self::Reflector { .. } => false,
         }
     }
 }
 
-impl<P> ConnectionProxyRouteProvider<P> {
-    pub fn new(proxy: ConnectionProxyConfig, inner: P) -> Self {
-        Self { proxy, inner }
+impl<D> DirectOrProxyProvider<D> {
+    /// Convenience constructor for direct connections.
+    pub fn direct(inner: D) -> Self {
+        Self {
+            inner,
+            mode: DirectOrProxyMode::DirectOnly,
+        }
+    }
+}
+
+impl DirectOrProxyMode {
+    /// Convenience constructor [`DirectOnly`] or [`ProxyOnly`]
+    ///
+    /// [`DirectOnly`]: DirectOrProxyMode::DirectOnly
+    /// [`ProxyOnly`]: DirectOrProxyMode::ProxyOnly
+    pub fn maybe_proxy(proxy: Option<ConnectionProxyConfig>) -> Self {
+        proxy.map_or(Self::DirectOnly, Self::ProxyOnly)
+    }
+
+    pub fn proxy_config(&self) -> Option<&ConnectionProxyConfig> {
+        match self {
+            Self::DirectOnly => None,
+            Self::ProxyOnly(p) | Self::ProxyThenDirect(p) | Self::DirectThenProxy(p) => Some(p),
+        }
     }
 }
 
 type DirectOrProxyReplacement =
     DirectOrProxyRoute<TcpRoute<UnresolvedHost>, ConnectionProxyRoute<Host<UnresolvedHost>>>;
+type UnresolvedConnectionProxyRoute = ConnectionProxyRoute<Host<UnresolvedHost>>;
 
-impl<D, P, R> RouteProvider for DirectOrProxyProvider<D, P>
+impl<D, R: 'static> RouteProvider for DirectOrProxyProvider<D>
 where
     D: RouteProvider<
-        Route: ReplaceFragment<TcpRoute<UnresolvedHost>, Replacement<DirectOrProxyReplacement> = R>,
-    >,
-    P: RouteProvider<
         Route: ReplaceFragment<
-            ConnectionProxyRoute<Host<UnresolvedHost>>,
+            TcpRoute<UnresolvedHost>,
             Replacement<DirectOrProxyReplacement> = R,
-        >,
+        > + Clone,
     >,
 {
     type Route = R;
 
-    fn routes<'s>(
+    fn routes<'s, C: RouteProviderContext>(
         &'s self,
-        context: &impl RouteProviderContext,
-    ) -> impl Iterator<Item = Self::Route> + 's {
-        match self {
-            Self::Direct(direct) => Either::Left(
-                direct
+        context: &mut C,
+    ) -> impl Iterator<Item = Self::Route> + use<'s, C, D, R> {
+        let Self { inner, mode } = self;
+        match mode {
+            DirectOrProxyMode::DirectOnly => Either::Left(
+                inner
                     .routes(context)
-                    .map(|route: D::Route| route.replace(DirectOrProxyRoute::Direct)),
+                    .map(|r| r.replace(DirectOrProxyRoute::Direct)),
             ),
-            Self::Proxy(proxy) => Either::Right(proxy.routes(context).map(|route: P::Route| {
-                route.replace(|cpr: ConnectionProxyRoute<Host<UnresolvedHost>>| {
-                    DirectOrProxyRoute::Proxy(cpr)
-                })
-            })),
+            DirectOrProxyMode::ProxyOnly(proxy)
+            | DirectOrProxyMode::ProxyThenDirect(proxy)
+            | DirectOrProxyMode::DirectThenProxy(proxy) => {
+                let original_routes = inner.routes(context).collect_vec();
+                let proxy_providers = proxy.concrete_proxy_configs(context);
+                let proxied_routes = proxy_providers
+                    .into_iter()
+                    .flat_map(|provider| {
+                        original_routes
+                            .iter()
+                            .cloned()
+                            .map(move |route| provider.replace_route(route))
+                    })
+                    .collect_vec();
+
+                let routes = match mode {
+                    DirectOrProxyMode::ProxyOnly(_) => proxied_routes,
+                    DirectOrProxyMode::ProxyThenDirect(_) => proxied_routes
+                        .into_iter()
+                        .chain(
+                            original_routes
+                                .into_iter()
+                                .map(|r| r.replace(DirectOrProxyRoute::Direct)),
+                        )
+                        .collect(),
+                    DirectOrProxyMode::DirectThenProxy(_) => original_routes
+                        .into_iter()
+                        .map(|r| r.replace(DirectOrProxyRoute::Direct))
+                        .chain(proxied_routes)
+                        .collect(),
+                    DirectOrProxyMode::DirectOnly => unreachable!("handled above"),
+                };
+
+                Either::Right(routes.into_iter())
+            }
         }
     }
 }
 
-impl<P> RouteProvider for ConnectionProxyRouteProvider<P>
-where
-    P: RouteProvider<Route: ReplaceFragment<TcpRoute<UnresolvedHost>>>,
-{
-    type Route = <P::Route as ReplaceFragment<TcpRoute<UnresolvedHost>>>::Replacement<
-        ConnectionProxyRoute<Host<UnresolvedHost>>,
-    >;
-
-    fn routes<'s>(
-        &'s self,
-        context: &impl RouteProviderContext,
-    ) -> impl Iterator<Item = Self::Route> + 's {
-        let Self { proxy, inner } = self;
-        let replacer = proxy.as_replacer();
-        inner.routes(context).map(replacer)
-    }
-}
-
-trait AsReplacer {
-    fn as_replacer<R: ReplaceFragment<TcpRoute<UnresolvedHost>>>(
+impl ConnectionProxyConfig {
+    fn concrete_proxy_configs<C: RouteProviderContext>(
         &self,
-    ) -> impl Fn(R) -> R::Replacement<ConnectionProxyRoute<Host<UnresolvedHost>>>;
-}
-
-impl AsReplacer for ConnectionProxyConfig {
-    fn as_replacer<R: ReplaceFragment<TcpRoute<UnresolvedHost>>>(
-        &self,
-    ) -> impl Fn(R) -> R::Replacement<ConnectionProxyRoute<Host<UnresolvedHost>>> {
-        let replacer = match self {
-            ConnectionProxyConfig::Tls(tls_proxy) => {
-                Either::Left(Either::Left(tls_proxy.as_replacer()))
-            }
+        context: &mut C,
+    ) -> Vec<ConcreteProxyConfig<'_>> {
+        match self {
+            Self::Tls(tls_proxy) => vec![ConcreteProxyConfig::Tls(tls_proxy)],
             #[cfg(feature = "dev-util")]
-            ConnectionProxyConfig::Tcp(tcp_proxy) => {
-                Either::Right(Either::Left(tcp_proxy.as_replacer()))
+            Self::Tcp(tcp_proxy) => vec![ConcreteProxyConfig::Tcp(tcp_proxy)],
+            Self::Socks(socks_proxy) => vec![ConcreteProxyConfig::Socks(socks_proxy)],
+            Self::Http(http_proxy) => vec![ConcreteProxyConfig::Http(http_proxy)],
+            Self::Reflector {
+                providers,
+                user_agent,
+            } => {
+                let sni_index = context.random_usize();
+                providers
+                    .iter()
+                    .map(|provider| {
+                        ConcreteProxyConfig::Reflector(
+                            provider.pick_sni(sni_index, user_agent.clone()),
+                        )
+                    })
+                    .collect()
             }
-            ConnectionProxyConfig::Socks(socks_proxy) => {
-                let replacer = socks_proxy.as_replacer();
-                #[cfg(feature = "dev-util")]
-                let replacer = Either::Right(replacer);
-                Either::Right(replacer)
-            }
-            ConnectionProxyConfig::Http(http_proxy) => {
-                Either::Left(Either::Right(http_proxy.as_replacer()))
-            }
-        };
-        move |route| match &replacer {
-            Either::Left(Either::Left(f)) => f(route),
-            Either::Left(Either::Right(f)) => f(route),
-            Either::Right(f) => match f {
-                #[cfg(feature = "dev-util")]
-                Either::Left(f) => f(route),
-                #[cfg(feature = "dev-util")]
-                Either::Right(f) => f(route),
-                #[cfg(not(feature = "dev-util"))]
-                f => f(route),
-            },
         }
     }
 }
 
-#[cfg(feature = "dev-util")]
-impl AsReplacer for TcpProxy {
-    fn as_replacer<R: ReplaceFragment<TcpRoute<UnresolvedHost>>>(
+#[derive(Clone)]
+struct ConcreteReflectorRouteProvider {
+    route_type: RouteType,
+    http_host: &'static str,
+    sni: &'static str,
+    certs: RootCertificates,
+    endpoint: PathAndQuery,
+    user_agent: HeaderValue,
+}
+
+impl ReflectorProviderConfig {
+    fn pick_sni(
         &self,
-    ) -> impl Fn(R) -> R::Replacement<ConnectionProxyRoute<Host<UnresolvedHost>>> {
-        let Self {
-            proxy_host,
-            proxy_port,
-        } = self;
-
-        let tcp = TcpRoute {
-            address: match proxy_host {
-                Host::Ip(ip) => Host::Ip(*ip),
-                Host::Domain(domain) => Host::Domain(UnresolvedHost(Arc::clone(domain))),
-            },
-            port: *proxy_port,
-        };
-
-        move |route| {
-            route.replace(|_: TcpRoute<UnresolvedHost>| ConnectionProxyRoute::Tcp {
-                proxy: tcp.clone(),
-            })
+        sni_index: usize,
+        user_agent: HeaderValue,
+    ) -> ConcreteReflectorRouteProvider {
+        assert!(
+            !self.sni_list.is_empty(),
+            "ReflectorProviderConfig::sni_list must not be empty"
+        );
+        ConcreteReflectorRouteProvider {
+            route_type: self.route_type,
+            http_host: self.http_host,
+            sni: self.sni_list[sni_index % self.sni_list.len()],
+            certs: self.certs.clone(),
+            endpoint: self.endpoint.clone(),
+            user_agent,
         }
     }
 }
 
-impl AsReplacer for TlsProxy {
-    fn as_replacer<R: ReplaceFragment<TcpRoute<UnresolvedHost>>>(
-        &self,
-    ) -> impl Fn(R) -> R::Replacement<ConnectionProxyRoute<Host<UnresolvedHost>>> {
-        let Self {
-            proxy_host,
-            proxy_port,
-            proxy_certs,
-        } = self;
-        let tls_fragment = TlsRouteFragment {
-            root_certs: proxy_certs.clone(),
-            sni: proxy_host.clone(),
-            alpn: None,
-            min_protocol_version: None,
-        };
-
-        let tcp = TcpRoute {
-            address: match proxy_host {
-                Host::Ip(ip) => Host::Ip(*ip),
-                Host::Domain(domain) => Host::Domain(UnresolvedHost(Arc::clone(domain))),
-            },
-            port: *proxy_port,
-        };
-
-        let tls_route = TlsRoute {
-            inner: tcp,
-            fragment: tls_fragment,
-        };
-        move |route| {
-            route.replace(|_: TcpRoute<UnresolvedHost>| ConnectionProxyRoute::Tls {
-                proxy: tls_route.clone(),
-            })
-        }
-    }
+#[derive(Clone)]
+enum ConcreteProxyConfig<'a> {
+    Tls(&'a TlsProxy),
+    #[cfg(feature = "dev-util")]
+    Tcp(&'a TcpProxy),
+    Socks(&'a SocksProxy),
+    Http(&'a HttpProxy),
+    Reflector(ConcreteReflectorRouteProvider),
 }
 
-impl AsReplacer for SocksProxy {
-    fn as_replacer<R: ReplaceFragment<TcpRoute<UnresolvedHost>>>(
+impl ConcreteProxyConfig<'_> {
+    fn replace_route<R>(&self, route: R) -> R::Replacement<DirectOrProxyReplacement>
+    where
+        R: ReplaceFragment<TcpRoute<UnresolvedHost>>,
+    {
+        route.replace(|tcp_route| DirectOrProxyRoute::Proxy(self.to_proxy_route(tcp_route)))
+    }
+
+    fn to_proxy_route(
         &self,
-    ) -> impl Fn(R) -> R::Replacement<ConnectionProxyRoute<Host<UnresolvedHost>>> {
-        let Self {
-            proxy_host,
-            proxy_port,
-            protocol,
-            resolve_hostname_locally,
-        } = self;
-        let proxy = TcpRoute {
-            address: match proxy_host {
-                Host::Ip(ip_addr) => Host::Ip(*ip_addr),
-                Host::Domain(domain) => Host::Domain(UnresolvedHost(Arc::clone(domain))),
+        tcp_route: TcpRoute<UnresolvedHost>,
+    ) -> UnresolvedConnectionProxyRoute {
+        match self {
+            Self::Tls(TlsProxy {
+                proxy_host,
+                proxy_port,
+                proxy_certs,
+            }) => ConnectionProxyRoute::Tls {
+                proxy: TlsRoute {
+                    inner: TcpRoute {
+                        address: proxy_host_as_unresolved(proxy_host),
+                        port: *proxy_port,
+                        override_nagle_algorithm: tcp_route.override_nagle_algorithm,
+                    },
+                    fragment: TlsRouteFragment {
+                        root_certs: proxy_certs.clone(),
+                        sni: proxy_host.clone(),
+                        alpn: None,
+                        min_protocol_version: None,
+                    },
+                },
             },
-            port: *proxy_port,
-        };
-        move |route| {
-            route.replace(|TcpRoute { address, port }| {
+
+            #[cfg(feature = "dev-util")]
+            Self::Tcp(TcpProxy {
+                proxy_host,
+                proxy_port,
+            }) => ConnectionProxyRoute::Tcp {
+                proxy: TcpRoute {
+                    address: proxy_host_as_unresolved(proxy_host),
+                    port: *proxy_port,
+                    override_nagle_algorithm: tcp_route.override_nagle_algorithm,
+                },
+            },
+
+            Self::Socks(SocksProxy {
+                proxy_host,
+                proxy_port,
+                protocol,
+                resolve_hostname_locally,
+            }) => {
+                let TcpRoute {
+                    address,
+                    port,
+                    override_nagle_algorithm,
+                } = tcp_route;
                 ConnectionProxyRoute::Socks(SocksRoute {
-                    proxy: proxy.clone(),
+                    proxy: TcpRoute {
+                        address: proxy_host_as_unresolved(proxy_host),
+                        port: *proxy_port,
+                        override_nagle_algorithm,
+                    },
                     protocol: protocol.clone(),
                     target_addr: if *resolve_hostname_locally {
                         ProxyTarget::ResolvedLocally(Host::Domain(address))
@@ -464,40 +550,20 @@ impl AsReplacer for SocksProxy {
                     },
                     target_port: port,
                 })
-            })
-        }
-    }
-}
+            }
 
-impl AsReplacer for HttpProxy {
-    fn as_replacer<R: ReplaceFragment<TcpRoute<UnresolvedHost>>>(
-        &self,
-    ) -> impl Fn(R) -> R::Replacement<ConnectionProxyRoute<Host<UnresolvedHost>>> {
-        let Self {
-            proxy_host,
-            proxy_port,
-            resolve_hostname_locally,
-            proxy_authorization,
-            proxy_tls,
-        } = self;
-        let proxy_tcp_route = TcpRoute {
-            address: proxy_host.clone().map_domain(UnresolvedHost::from),
-            port: *proxy_port,
-        };
-        let inner_route = match proxy_tls {
-            Some(proxy_certs) => Either::Left(TlsRoute {
-                inner: proxy_tcp_route,
-                fragment: TlsRouteFragment {
-                    root_certs: proxy_certs.clone(),
-                    sni: proxy_host.clone(),
-                    alpn: Some(Alpn::Http1_1),
-                    min_protocol_version: None,
-                },
-            }),
-            None => Either::Right(proxy_tcp_route),
-        };
-        move |route| {
-            route.replace(|TcpRoute { address, port }| {
+            Self::Http(HttpProxy {
+                proxy_host,
+                proxy_port,
+                proxy_tls,
+                proxy_authorization,
+                resolve_hostname_locally,
+            }) => {
+                let TcpRoute {
+                    address,
+                    port,
+                    override_nagle_algorithm,
+                } = tcp_route;
                 ConnectionProxyRoute::Https(HttpsProxyRoute {
                     fragment: HttpProxyRouteFragment {
                         target_host: if *resolve_hostname_locally {
@@ -508,11 +574,78 @@ impl AsReplacer for HttpProxy {
                         target_port: port,
                         authorization: proxy_authorization.clone(),
                     },
-                    inner: inner_route.clone(),
+                    inner: {
+                        let proxy_tcp = TcpRoute {
+                            address: proxy_host.clone().map_domain(UnresolvedHost::from),
+                            port: *proxy_port,
+                            override_nagle_algorithm,
+                        };
+                        match proxy_tls {
+                            Some(proxy_certs) => Either::Left(TlsRoute {
+                                inner: proxy_tcp,
+                                fragment: TlsRouteFragment {
+                                    root_certs: proxy_certs.clone(),
+                                    sni: proxy_host.clone(),
+                                    alpn: Some(Alpn::Http1_1),
+                                    min_protocol_version: None,
+                                },
+                            }),
+                            None => Either::Right(proxy_tcp),
+                        }
+                    },
                 })
-            })
+            }
+
+            Self::Reflector(ConcreteReflectorRouteProvider {
+                route_type,
+                http_host,
+                sni,
+                certs,
+                endpoint,
+                user_agent,
+            }) => ConnectionProxyRoute::Reflector(Box::new(ReflectorProxyRoute {
+                outer: WebSocketRoute {
+                    fragment: WebSocketRouteFragment {
+                        ws_config: Default::default(),
+                        endpoint: endpoint.clone(),
+                        headers: HeaderMap::from_iter([(
+                            http::header::USER_AGENT,
+                            user_agent.clone(),
+                        )]),
+                    },
+                    inner: HttpsTlsRoute {
+                        fragment: HttpRouteFragment {
+                            host_header: (*http_host).into(),
+                            path_prefix: "".into(),
+                            http_version: Some(HttpVersion::Http1_1),
+                            front_name: Some((*route_type).into()),
+                        },
+                        inner: TlsRoute {
+                            fragment: TlsRouteFragment {
+                                root_certs: certs.clone(),
+                                sni: Host::Domain((*sni).into()),
+                                alpn: Some(Alpn::Http1_1),
+                                min_protocol_version: None,
+                            },
+                            inner: TcpRoute {
+                                address: Host::Domain(UnresolvedHost((*sni).into())),
+                                port: DEFAULT_HTTPS_PORT,
+                                override_nagle_algorithm: tcp_route.override_nagle_algorithm,
+                            },
+                        },
+                    },
+                },
+                target_host: tcp_route.address.0,
+                target_port: tcp_route.port,
+            })),
         }
     }
+}
+
+fn proxy_host_as_unresolved(proxy_host: &Host<Arc<str>>) -> Host<UnresolvedHost> {
+    proxy_host
+        .as_ref()
+        .map_domain(|domain| UnresolvedHost(domain.clone()))
 }
 
 impl<R> ReplaceFragment<ConnectionProxyRoute<R>> for ConnectionProxyRoute<R> {
@@ -638,9 +771,13 @@ mod test {
                 .as_ref()
                 .map(|auth| (auth.username.as_str(), auth.password.as_str())),
         );
+
+        // Deferring hostname resolution to the proxy is in line with the published recommendations for
+        //   proxy configuration at:
+        // https://support.signal.org/hc/en-us/articles/360007320291-Firewall-and-Internet-settings
         assert!(
-            resolve_hostname_locally,
-            "this endpoint never produces a config that defers to the proxy"
+            !resolve_hostname_locally,
+            "we should always defer to the proxy for DNS resolution"
         );
     }
 

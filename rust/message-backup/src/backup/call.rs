@@ -12,7 +12,7 @@ use crate::backup::frame::RecipientId;
 use crate::backup::method::LookupPair;
 use crate::backup::recipient::{DestinationKind, MinimalRecipientData};
 use crate::backup::time::{ReportUnusualTimestamp, Timestamp, TimestampError};
-use crate::backup::{serialize, TryIntoWith};
+use crate::backup::{TryIntoWith, serialize};
 use crate::proto::backup as proto;
 
 /// Validated version of [`proto::AdHocCall`].
@@ -89,7 +89,7 @@ pub enum CallError {
 #[cfg_attr(test, derive(PartialEq))]
 #[expect(clippy::enum_variant_names)]
 pub enum CallLinkError {
-    /// expected {CALL_LINK_ROOT_KEY_LEN:?}-byte root key, found {0} bytes
+    /// expected at least {CALL_LINK_ROOT_KEY_MIN_LEN:?}-byte root key, found {0} bytes
     InvalidRootKey(usize),
     /// admin key was present but empty
     InvalidAdminKey,
@@ -134,8 +134,8 @@ pub enum GroupCallState {
     OutgoingRing,
 }
 
-const CALL_LINK_ROOT_KEY_LEN: usize = 16;
-pub(crate) type CallLinkRootKey = [u8; CALL_LINK_ROOT_KEY_LEN];
+const CALL_LINK_ROOT_KEY_MIN_LEN: usize = 16;
+pub(crate) type CallLinkRootKey = Vec<u8>;
 
 /// Validated version of [`proto::CallLink`].
 #[serde_as]
@@ -146,6 +146,7 @@ pub struct CallLink {
     pub restrictions: proto::call_link::Restrictions,
     #[serde(with = "hex")]
     pub root_key: CallLinkRootKey,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde_as(as = "Option<Hex>")]
     pub admin_key: Option<Vec<u8>>,
     pub expiration: Timestamp,
@@ -239,6 +240,7 @@ impl<C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusualTimestam
                         aci: None,
                         e164: _,
                         pni: _,
+                        username: _,
                     } => Err(CallError::CallStarterHasNoAci(id)),
                     MinimalRecipientData::Contact { .. } | MinimalRecipientData::Self_ => {
                         Ok(starter.clone())
@@ -264,6 +266,7 @@ impl<C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusualTimestam
                         aci: None,
                         e164: _,
                         pni: _,
+                        username: _,
                     } => Err(CallError::RingerHasNoAci(id)),
                     MinimalRecipientData::Contact { .. } | MinimalRecipientData::Self_ => {
                         Ok(ringer.clone())
@@ -317,10 +320,8 @@ impl<C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusualTimestam
     }
 }
 
-impl<
-        C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusualTimestamp,
-        R: Clone + Debug,
-    > TryIntoWith<AdHocCall<R>, C> for proto::AdHocCall
+impl<C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusualTimestamp, R: Clone + Debug>
+    TryIntoWith<AdHocCall<R>, C> for proto::AdHocCall
 {
     type Error = CallError;
 
@@ -381,9 +382,12 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<CallLink, C> for proto::CallLink {
             special_fields: _,
         } = self;
 
-        let root_key = rootKey
-            .try_into()
-            .map_err(|key: Vec<u8>| CallLinkError::InvalidRootKey(key.len()))?;
+        let root_key = {
+            if rootKey.len() < CALL_LINK_ROOT_KEY_MIN_LEN {
+                return Err(CallLinkError::InvalidRootKey(rootKey.len()));
+            }
+            rootKey
+        };
 
         let admin_key = {
             if adminKey.as_deref() == Some(&[]) {
@@ -408,6 +412,8 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<CallLink, C> for proto::CallLink {
 
 #[cfg(test)]
 pub(crate) mod test {
+    use std::sync::LazyLock;
+
     use protobuf::EnumOrUnknown;
     use test_case::test_case;
 
@@ -463,12 +469,12 @@ pub(crate) mod test {
         }
     }
 
-    const TEST_CALL_LINK_ROOT_KEY: CallLinkRootKey = [b'R'; 16];
+    const TEST_CALL_LINK_ROOT_KEY: &[u8] = &[b'R'; CALL_LINK_ROOT_KEY_MIN_LEN];
     const TEST_CALL_LINK_ADMIN_KEY: &[u8] = b"A";
     impl proto::CallLink {
         pub(crate) fn test_data() -> Self {
             Self {
-                rootKey: TEST_CALL_LINK_ROOT_KEY.to_vec(),
+                rootKey: TEST_CALL_LINK_ROOT_KEY.into(),
                 adminKey: Some(TEST_CALL_LINK_ADMIN_KEY.to_vec()),
                 restrictions: proto::call_link::Restrictions::NONE.into(),
                 expirationMs: MillisecondsSinceEpoch::TEST_VALUE.0,
@@ -481,7 +487,7 @@ pub(crate) mod test {
         pub(crate) fn from_proto_test_data() -> Self {
             Self {
                 restrictions: proto::call_link::Restrictions::NONE,
-                root_key: TEST_CALL_LINK_ROOT_KEY,
+                root_key: TEST_CALL_LINK_ROOT_KEY.into(),
                 admin_key: Some(TEST_CALL_LINK_ADMIN_KEY.to_vec()),
                 expiration: Timestamp::test_value(),
                 name: "".to_string(),
@@ -502,6 +508,7 @@ pub(crate) mod test {
                     proto::Contact::TEST_ACI,
                 )),
                 pni: None,
+                username: None,
             };
             static PNI_RECIPIENT: MinimalRecipientData = MinimalRecipientData::Contact {
                 e164: Some(proto::Contact::TEST_E164),
@@ -509,15 +516,15 @@ pub(crate) mod test {
                 pni: Some(libsignal_core::Pni::from_uuid_bytes(
                     proto::Contact::TEST_PNI,
                 )),
+                username: None,
             };
+            static CALL_LINK_RECIPIENT: LazyLock<MinimalRecipientData> =
+                LazyLock::new(|| MinimalRecipientData::CallLink {
+                    root_key: TEST_CALL_LINK_ROOT_KEY.into(),
+                });
             match key {
                 RecipientId(proto::Recipient::TEST_ID) => Some((&CONTACT_RECIPIENT, key)),
-                &TEST_CALL_LINK_RECIPIENT_ID => Some((
-                    &MinimalRecipientData::CallLink {
-                        root_key: TEST_CALL_LINK_ROOT_KEY,
-                    },
-                    key,
-                )),
+                &TEST_CALL_LINK_RECIPIENT_ID => Some((&CALL_LINK_RECIPIENT, key)),
                 &TEST_PNI_RECIPIENT_ID => Some((&PNI_RECIPIENT, key)),
                 _ => None,
             }

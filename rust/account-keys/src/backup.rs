@@ -12,7 +12,7 @@
 
 use hkdf::Hkdf;
 use libsignal_core::curve::PrivateKey;
-use libsignal_core::Aci;
+use libsignal_core::{Aci, derive_arrays};
 use partial_default::PartialDefault;
 use sha2::Sha256;
 
@@ -25,14 +25,16 @@ pub const BACKUP_KEY_LEN: usize = 32;
 pub const LOCAL_BACKUP_METADATA_KEY_LEN: usize = 32;
 pub const MEDIA_ID_LEN: usize = 15;
 pub const BACKUP_FORWARD_SECRECY_TOKEN_LEN: usize = 32;
-pub const MEDIA_ENCRYPTION_KEY_LEN: usize = 32 + 32; // HMAC key + AES-CBC key
+pub const MEDIA_ENCRYPTION_AES_KEY_LEN: usize = 32;
+pub const MEDIA_ENCRYPTION_HMAC_KEY_LEN: usize = 32;
+pub const MEDIA_ENCRYPTION_KEY_LEN: usize =
+    MEDIA_ENCRYPTION_AES_KEY_LEN + MEDIA_ENCRYPTION_HMAC_KEY_LEN;
 
 /// Primary key for backups that is used to derive other keys.
 ///
 /// The type `BackupKey`, leaving the `VERSION` parameter as its default, is used for keys derived
-/// from an [`AccountEntropyPool`]. Use [`BackupKeyV0`] if you want to derive keys using the "master
-/// key" scheme. (This will eventually go away.) The version will also be inferred if you use
-/// [`BackupKey::derive_from_master_key`] or [`BackupKey::derive_from_account_entropy_pool`].
+/// from an [`AccountEntropyPool`]. The version will also be inferred if you use
+/// [`BackupKey::derive_from_account_entropy_pool`].
 #[derive(Debug, PartialDefault, zerocopy::FromBytes, zerocopy::Immutable)]
 #[repr(transparent)]
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -157,21 +159,16 @@ impl<const VERSION: u8> BackupKey<VERSION> {
         &self,
         salt: &[u8],
     ) -> BackupForwardSecrecyEncryptionKey {
-        let mut bytes = [0u8; BACKUP_FORWARD_SECRECY_ENCRYPTION_KEY_CIPHER_KEY_SIZE
-            + BACKUP_FORWARD_SECRECY_ENCRYPTION_KEY_HMAC_KEY_SIZE];
-        const INFO: &[u8] =
-            b"Signal Message Backup 20250627:BackupForwardSecrecyToken Encryption Key";
-        Hkdf::<Sha256>::new(Some(salt), &self.0)
-            .expand(INFO, &mut bytes)
-            .expect("valid length");
+        let (cipher_key, hmac_key, []) = derive_arrays(|bytes| {
+            const INFO: &[u8] =
+                b"Signal Message Backup 20250627:BackupForwardSecrecyToken Encryption Key";
+            Hkdf::<Sha256>::new(Some(salt), &self.0)
+                .expand(INFO, bytes)
+                .expect("valid length");
+        });
         BackupForwardSecrecyEncryptionKey {
-            cipher_key: bytes[..BACKUP_FORWARD_SECRECY_ENCRYPTION_KEY_CIPHER_KEY_SIZE]
-                .try_into()
-                .expect("should have enough bytes"),
-            hmac_key: bytes[BACKUP_FORWARD_SECRECY_ENCRYPTION_KEY_CIPHER_KEY_SIZE..]
-                [..BACKUP_FORWARD_SECRECY_ENCRYPTION_KEY_HMAC_KEY_SIZE]
-                .try_into()
-                .expect("should have enough bytes"),
+            cipher_key,
+            hmac_key,
         }
     }
 }

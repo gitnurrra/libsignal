@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 use assert_matches::assert_matches;
 use futures_util::FutureExt;
 use libsignal_protocol::*;
+use proptest::proptest;
 use rand::rngs::OsRng;
 use rand::{RngCore, SeedableRng, TryRngCore as _};
 use support::*;
@@ -34,60 +35,15 @@ fn test_basic_prekey() -> TestResult {
             builder.add_kyber_pre_key(IdChoice::Next);
         },
         KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::Yes,
-        UsePQRatchet::Yes,
     )?;
 
-    run(
-        |builder| {
-            builder.add_pre_key(IdChoice::Next);
-            builder.add_signed_pre_key(IdChoice::Next);
-            builder.add_kyber_pre_key(IdChoice::Next);
-        },
-        KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::No,
-        UsePQRatchet::Yes,
-    )?;
-
-    run(
-        |builder| {
-            builder.add_pre_key(IdChoice::Next);
-            builder.add_signed_pre_key(IdChoice::Next);
-            builder.add_kyber_pre_key(IdChoice::Next);
-        },
-        KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::Yes,
-        UsePQRatchet::No,
-    )?;
-
-    run(
-        |builder| {
-            builder.add_pre_key(IdChoice::Next);
-            builder.add_signed_pre_key(IdChoice::Next);
-            builder.add_kyber_pre_key(IdChoice::Next);
-        },
-        KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::No,
-        UsePQRatchet::No,
-    )?;
-
-    fn run<F>(
-        bob_add_keys: F,
-        expected_session_version: u32,
-        alice_pqr: UsePQRatchet,
-        bob_pqr: UsePQRatchet,
-    ) -> TestResult
+    fn run<F>(bob_add_keys: F, expected_session_version: u32) -> TestResult
     where
         F: Fn(&mut TestStoreBuilder),
     {
         async {
             let mut csprng = OsRng.unwrap_err();
-            let established_session_requirements =
-                if alice_pqr == UsePQRatchet::Yes && bob_pqr == UsePQRatchet::Yes {
-                    SessionUsabilityRequirements::all()
-                } else {
-                    SessionUsabilityRequirements::all() - SessionUsabilityRequirements::Spqr
-                };
+            let established_session_requirements = SessionUsabilityRequirements::all();
 
             let bob_device_id = DeviceId::new(1).unwrap();
 
@@ -105,12 +61,12 @@ fn test_basic_prekey() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                alice_pqr,
             )
             .await?;
 
@@ -122,7 +78,7 @@ fn test_basic_prekey() -> TestResult {
 
             let original_message = "L'homme est condamné à être libre";
 
-            let outgoing_message = encrypt(alice_store, &bob_address, original_message).await?;
+            let outgoing_message = encrypt(alice_store, &bob_address, &alice_address, original_message).await?;
 
             assert_eq!(
                 outgoing_message.message_type(),
@@ -136,8 +92,8 @@ fn test_basic_prekey() -> TestResult {
             let ptext = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &incoming_message,
-                bob_pqr,
             )
             .await?;
 
@@ -148,19 +104,23 @@ fn test_basic_prekey() -> TestResult {
 
             let bobs_response = "Who watches the watchers?";
 
-            assert!(bob_store_builder
-                .store
-                .load_session(&alice_address)
-                .await?
-                .is_some());
+            assert!(
+                bob_store_builder
+                    .store
+                    .load_session(&alice_address)
+                    .await?
+                    .is_some()
+            );
             let bobs_session_with_alice = bob_store_builder
                 .store
                 .load_session(&alice_address)
                 .await?
                 .expect("session found");
-            assert!(bobs_session_with_alice
-                .has_usable_sender_chain(SystemTime::now(), established_session_requirements)
-                .expect("can check usability"));
+            assert!(
+                bobs_session_with_alice
+                    .has_usable_sender_chain(SystemTime::now(), established_session_requirements)
+                    .expect("can check usability")
+            );
             assert_eq!(
                 bobs_session_with_alice.session_version()?,
                 expected_session_version
@@ -168,31 +128,30 @@ fn test_basic_prekey() -> TestResult {
             assert_eq!(bobs_session_with_alice.alice_base_key()?.len(), 32 + 1);
 
             let bob_outgoing =
-                encrypt(&mut bob_store_builder.store, &alice_address, bobs_response).await?;
+                encrypt(&mut bob_store_builder.store, &alice_address, &bob_address, bobs_response).await?;
 
             assert_eq!(bob_outgoing.message_type(), CiphertextMessageType::Whisper);
 
-            let alice_decrypts =
-                decrypt(alice_store, &bob_address, &bob_outgoing, alice_pqr).await?;
+            let alice_decrypts = decrypt(alice_store, &bob_address, &alice_address, &bob_outgoing).await?;
 
             assert_eq!(
                 String::from_utf8(alice_decrypts).expect("valid utf8"),
                 bobs_response
             );
-            assert!(alice_store
-                .load_session(&bob_address)
-                .await?
-                .expect("session found")
-                .has_usable_sender_chain(SystemTime::now(), established_session_requirements)
-                .expect("can check usability"));
+            assert!(
+                alice_store
+                    .load_session(&bob_address)
+                    .await?
+                    .expect("session found")
+                    .has_usable_sender_chain(SystemTime::now(), established_session_requirements)
+                    .expect("can check usability")
+            );
 
             run_interaction(
                 alice_store,
                 &alice_address,
                 &mut bob_store_builder.store,
                 &bob_address,
-                alice_pqr,
-                bob_pqr,
             )
             .await?;
 
@@ -203,20 +162,21 @@ fn test_basic_prekey() -> TestResult {
             let bob_pre_key_bundle = bob_store_builder.make_bundle_with_latest_keys(bob_device_id);
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alter_alice_store.session_store,
                 &mut alter_alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                bob_pqr,
             )
             .await?;
 
             let outgoing_message =
-                encrypt(&mut alter_alice_store, &bob_address, original_message).await?;
+                encrypt(&mut alter_alice_store, &bob_address, &alice_address, original_message)
+                    .await?;
 
             assert!(matches!(
-                decrypt(&mut bob_store_builder.store, &alice_address, &outgoing_message, bob_pqr)
+                decrypt(&mut bob_store_builder.store, &alice_address, &bob_address, &outgoing_message)
                     .await
                     .unwrap_err(),
                 SignalProtocolError::UntrustedIdentity(a) if a == alice_address
@@ -239,8 +199,8 @@ fn test_basic_prekey() -> TestResult {
             let decrypted = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &outgoing_message,
-                bob_pqr,
             )
             .await?;
             assert_eq!(
@@ -261,17 +221,19 @@ fn test_basic_prekey() -> TestResult {
                 })
                 .expect("can reconstruct the bundle");
 
-            assert!(process_prekey_bundle(
-                &bob_address,
-                &mut alter_alice_store.session_store,
-                &mut alter_alice_store.identity_store,
-                &bad_bob_pre_key_bundle,
-                SystemTime::now(),
-                &mut csprng,
-                UsePQRatchet::Yes,
-            )
-            .await
-            .is_err());
+            assert!(
+                process_prekey_bundle(
+                    &bob_address,
+                    &alice_address,
+                    &mut alter_alice_store.session_store,
+                    &mut alter_alice_store.identity_store,
+                    &bad_bob_pre_key_bundle,
+                    SystemTime::now(),
+                    &mut csprng,
+                )
+                .await
+                .is_err()
+            );
 
             Ok(())
         }
@@ -310,12 +272,12 @@ fn test_chain_jump_over_limit() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -323,20 +285,33 @@ fn test_chain_jump_over_limit() -> TestResult {
             pub const MAX_FORWARD_JUMPS: usize = 25_000;
 
             for _i in 0..(MAX_FORWARD_JUMPS + 1) {
-                let _msg =
-                    encrypt(alice_store, &bob_address, "Yet another message for you").await?;
+                let _msg = encrypt(
+                    alice_store,
+                    &bob_address,
+                    &alice_address,
+                    "Yet another message for you",
+                )
+                .await?;
             }
 
-            let too_far = encrypt(alice_store, &bob_address, "Now you have gone too far").await?;
-
-            assert!(decrypt(
-                &mut bob_store_builder.store,
+            let too_far = encrypt(
+                alice_store,
+                &bob_address,
                 &alice_address,
-                &too_far,
-                UsePQRatchet::Yes
+                "Now you have gone too far",
             )
-            .await
-            .is_err());
+            .await?;
+
+            assert!(
+                decrypt(
+                    &mut bob_store_builder.store,
+                    &alice_address,
+                    &bob_address,
+                    &too_far,
+                )
+                .await
+                .is_err()
+            );
             Ok(())
         }
         .now_or_never()
@@ -364,9 +339,12 @@ fn test_chain_jump_over_limit_with_self() -> TestResult {
             let mut csprng = OsRng.unwrap_err();
 
             let device_id_1 = DeviceId::new(1).unwrap();
-            let a1_address = ProtocolAddress::new("+14151111111".to_owned(), device_id_1);
+            let a1_address = ProtocolAddress::new(
+                "820d0f85-c714-4611-8faf-4b1087f150ab".to_owned(),
+                device_id_1,
+            );
             let device_id_2 = DeviceId::new(2).unwrap();
-            let a2_address = ProtocolAddress::new("+14151111111".to_owned(), device_id_2);
+            let a2_address = ProtocolAddress::new(a1_address.name().to_string(), device_id_2);
 
             let a1_store = &mut a1_store_builder.store;
 
@@ -374,12 +352,12 @@ fn test_chain_jump_over_limit_with_self() -> TestResult {
 
             process_prekey_bundle(
                 &a2_address,
+                &a1_address,
                 &mut a1_store.session_store,
                 &mut a1_store.identity_store,
                 &a2_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -387,18 +365,28 @@ fn test_chain_jump_over_limit_with_self() -> TestResult {
             pub const MAX_FORWARD_JUMPS: usize = 25_000;
 
             for _i in 0..(MAX_FORWARD_JUMPS + 1) {
-                let _msg =
-                    encrypt(a1_store, &a2_address, "Yet another message for yourself").await?;
+                let _msg = encrypt(
+                    a1_store,
+                    &a2_address,
+                    &a1_address,
+                    "Yet another message for yourself",
+                )
+                .await?;
             }
 
-            let too_far =
-                encrypt(a1_store, &a2_address, "This is the song that never ends").await?;
+            let too_far = encrypt(
+                a1_store,
+                &a2_address,
+                &a1_address,
+                "This is the song that never ends",
+            )
+            .await?;
 
             let ptext = decrypt(
                 &mut a2_store_builder.store,
                 &a1_address,
+                &a2_address,
                 &too_far,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -419,6 +407,8 @@ fn test_chain_jump_over_limit_with_self() -> TestResult {
 fn test_bad_signed_pre_key_signature() -> TestResult {
     async {
         let mut csprng = OsRng.unwrap_err();
+        let alice_address =
+            ProtocolAddress::new("+14151111113".to_owned(), DeviceId::new(1).unwrap());
         let bob_address =
             ProtocolAddress::new("+14151111112".to_owned(), DeviceId::new(1).unwrap());
 
@@ -447,28 +437,30 @@ fn test_bad_signed_pre_key_signature() -> TestResult {
                 .modify(|content| content.signed_pre_key_signature = Some(bad_signature))
                 .expect("can recreate the bundle");
 
-            assert!(process_prekey_bundle(
-                &bob_address,
-                &mut alice_store.session_store,
-                &mut alice_store.identity_store,
-                &bad_bundle,
-                SystemTime::now(),
-                &mut csprng,
-                UsePQRatchet::Yes,
-            )
-            .await
-            .is_err());
+            assert!(
+                process_prekey_bundle(
+                    &bob_address,
+                    &alice_address,
+                    &mut alice_store.session_store,
+                    &mut alice_store.identity_store,
+                    &bad_bundle,
+                    SystemTime::now(),
+                    &mut csprng,
+                )
+                .await
+                .is_err()
+            );
         }
 
         // Finally check that the non-corrupted signature is accepted:
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &good_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -510,12 +502,12 @@ fn test_repeat_bundle_message() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -527,8 +519,10 @@ fn test_repeat_bundle_message() -> TestResult {
 
             let original_message = "L'homme est condamné à être libre";
 
-            let outgoing_message1 = encrypt(alice_store, &bob_address, original_message).await?;
-            let outgoing_message2 = encrypt(alice_store, &bob_address, original_message).await?;
+            let outgoing_message1 =
+                encrypt(alice_store, &bob_address, &alice_address, original_message).await?;
+            let outgoing_message2 =
+                encrypt(alice_store, &bob_address, &alice_address, original_message).await?;
 
             assert_eq!(
                 outgoing_message1.message_type(),
@@ -546,8 +540,8 @@ fn test_repeat_bundle_message() -> TestResult {
             let ptext = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &incoming_message,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -558,12 +552,13 @@ fn test_repeat_bundle_message() -> TestResult {
             let bob_outgoing = encrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 original_message,
             )
             .await?;
             assert_eq!(bob_outgoing.message_type(), CiphertextMessageType::Whisper);
             let alice_decrypts =
-                decrypt(alice_store, &bob_address, &bob_outgoing, UsePQRatchet::Yes).await?;
+                decrypt(alice_store, &bob_address, &alice_address, &bob_outgoing).await?;
             assert_eq!(
                 String::from_utf8(alice_decrypts).expect("valid utf8"),
                 original_message
@@ -578,8 +573,8 @@ fn test_repeat_bundle_message() -> TestResult {
             let ptext = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &incoming_message2,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -590,11 +585,12 @@ fn test_repeat_bundle_message() -> TestResult {
             let bob_outgoing = encrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 original_message,
             )
             .await?;
             let alice_decrypts =
-                decrypt(alice_store, &bob_address, &bob_outgoing, UsePQRatchet::Yes).await?;
+                decrypt(alice_store, &bob_address, &alice_address, &bob_outgoing).await?;
             assert_eq!(
                 String::from_utf8(alice_decrypts).expect("valid utf8"),
                 original_message
@@ -644,12 +640,12 @@ fn test_bad_message_bundle() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -662,7 +658,8 @@ fn test_bad_message_bundle() -> TestResult {
             let original_message = "L'homme est condamné à être libre";
 
             assert!(bob_store.get_pre_key(pre_key_id).await.is_ok());
-            let outgoing_message = encrypt(alice_store, &bob_address, original_message).await?;
+            let outgoing_message =
+                encrypt(alice_store, &bob_address, &alice_address, original_message).await?;
 
             assert_eq!(
                 outgoing_message.message_type(),
@@ -678,27 +675,18 @@ fn test_bad_message_bundle() -> TestResult {
                 PreKeySignalMessage::try_from(corrupted_message.as_slice())?,
             );
 
-            assert!(decrypt(
-                bob_store,
-                &alice_address,
-                &incoming_message,
-                UsePQRatchet::Yes
-            )
-            .await
-            .is_err());
+            assert!(
+                decrypt(bob_store, &alice_address, &bob_address, &incoming_message,)
+                    .await
+                    .is_err()
+            );
             assert!(bob_store.get_pre_key(pre_key_id).await.is_ok());
 
             let incoming_message = CiphertextMessage::PreKeySignalMessage(
                 PreKeySignalMessage::try_from(outgoing_message.as_slice())?,
             );
 
-            let ptext = decrypt(
-                bob_store,
-                &alice_address,
-                &incoming_message,
-                UsePQRatchet::Yes,
-            )
-            .await?;
+            let ptext = decrypt(bob_store, &alice_address, &bob_address, &incoming_message).await?;
 
             assert_eq!(
                 String::from_utf8(ptext).expect("valid utf8"),
@@ -749,12 +737,12 @@ fn test_optional_one_time_prekey() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -765,7 +753,8 @@ fn test_optional_one_time_prekey() -> TestResult {
 
             let original_message = "L'homme est condamné à être libre";
 
-            let outgoing_message = encrypt(alice_store, &bob_address, original_message).await?;
+            let outgoing_message =
+                encrypt(alice_store, &bob_address, &alice_address, original_message).await?;
 
             assert_eq!(
                 outgoing_message.message_type(),
@@ -779,8 +768,8 @@ fn test_optional_one_time_prekey() -> TestResult {
             let ptext = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &incoming_message,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -835,7 +824,13 @@ fn test_message_key_limits() -> TestResult {
 
             for i in 0..TOO_MANY_MESSAGES {
                 inflight.push(
-                    encrypt(&mut alice_store, &bob_address, &format!("It's over {i}")).await?,
+                    encrypt(
+                        &mut alice_store,
+                        &bob_address,
+                        &alice_address,
+                        &format!("It's over {i}"),
+                    )
+                    .await?,
                 );
             }
 
@@ -844,8 +839,8 @@ fn test_message_key_limits() -> TestResult {
                     decrypt(
                         &mut bob_store,
                         &alice_address,
+                        &bob_address,
                         &inflight[1000],
-                        UsePQRatchet::Yes
                     )
                     .await?
                 )
@@ -857,8 +852,8 @@ fn test_message_key_limits() -> TestResult {
                     decrypt(
                         &mut bob_store,
                         &alice_address,
+                        &bob_address,
                         &inflight[TOO_MANY_MESSAGES - 1],
-                        UsePQRatchet::Yes,
                     )
                     .await?
                 )
@@ -866,14 +861,9 @@ fn test_message_key_limits() -> TestResult {
                 format!("It's over {}", TOO_MANY_MESSAGES - 1)
             );
 
-            let err = decrypt(
-                &mut bob_store,
-                &alice_address,
-                &inflight[5],
-                UsePQRatchet::Yes,
-            )
-            .await
-            .unwrap_err();
+            let err = decrypt(&mut bob_store, &alice_address, &bob_address, &inflight[5])
+                .await
+                .unwrap_err();
             assert!(matches!(
                 err,
                 SignalProtocolError::DuplicatedMessage(2300, 5)
@@ -901,64 +891,12 @@ fn test_basic_simultaneous_initiate() -> TestResult {
         &mut alice_store_builder,
         &mut bob_store_builder,
         KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::Yes,
-        UsePQRatchet::Yes,
-    )?;
-
-    let mut alice_store_builder = TestStoreBuilder::new()
-        .with_pre_key(IdChoice::Random)
-        .with_signed_pre_key(IdChoice::Random)
-        .with_kyber_pre_key(IdChoice::Random);
-    let mut bob_store_builder = TestStoreBuilder::new()
-        .with_pre_key(IdChoice::Random)
-        .with_signed_pre_key(IdChoice::Random)
-        .with_kyber_pre_key(IdChoice::Random);
-    run(
-        &mut alice_store_builder,
-        &mut bob_store_builder,
-        KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::No,
-        UsePQRatchet::Yes,
-    )?;
-
-    let mut alice_store_builder = TestStoreBuilder::new()
-        .with_pre_key(IdChoice::Random)
-        .with_signed_pre_key(IdChoice::Random)
-        .with_kyber_pre_key(IdChoice::Random);
-    let mut bob_store_builder = TestStoreBuilder::new()
-        .with_pre_key(IdChoice::Random)
-        .with_signed_pre_key(IdChoice::Random)
-        .with_kyber_pre_key(IdChoice::Random);
-    run(
-        &mut alice_store_builder,
-        &mut bob_store_builder,
-        KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::Yes,
-        UsePQRatchet::No,
-    )?;
-
-    let mut alice_store_builder = TestStoreBuilder::new()
-        .with_pre_key(IdChoice::Random)
-        .with_signed_pre_key(IdChoice::Random)
-        .with_kyber_pre_key(IdChoice::Random);
-    let mut bob_store_builder = TestStoreBuilder::new()
-        .with_pre_key(IdChoice::Random)
-        .with_signed_pre_key(IdChoice::Random)
-        .with_kyber_pre_key(IdChoice::Random);
-    run(
-        &mut alice_store_builder,
-        &mut bob_store_builder,
-        KYBER_AWARE_MESSAGE_VERSION,
-        UsePQRatchet::No,
-        UsePQRatchet::No,
     )?;
 
     fn run(
         alice_store_builder: &mut TestStoreBuilder,
         bob_store_builder: &mut TestStoreBuilder,
         expected_session_version: u32,
-        alice_pqr: UsePQRatchet,
-        bob_pqr: UsePQRatchet,
     ) -> TestResult {
         async {
             let mut csprng = OsRng.unwrap_err();
@@ -978,28 +916,30 @@ fn test_basic_simultaneous_initiate() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                alice_pqr,
             )
             .await?;
 
             process_prekey_bundle(
                 &alice_address,
+                &bob_address,
                 &mut bob_store.session_store,
                 &mut bob_store.identity_store,
                 &alice_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                bob_pqr,
             )
             .await?;
 
-            let message_for_bob = encrypt(alice_store, &bob_address, "hi bob").await?;
-            let message_for_alice = encrypt(bob_store, &alice_address, "hi alice").await?;
+            let message_for_bob =
+                encrypt(alice_store, &bob_address, &alice_address, "hi bob").await?;
+            let message_for_alice =
+                encrypt(bob_store, &alice_address, &bob_address, "hi alice").await?;
 
             assert_eq!(
                 message_for_bob.message_type(),
@@ -1017,10 +957,10 @@ fn test_basic_simultaneous_initiate() -> TestResult {
             let alice_plaintext = decrypt(
                 alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     message_for_alice.serialize(),
                 )?),
-                alice_pqr,
             )
             .await?;
             assert_eq!(
@@ -1031,10 +971,10 @@ fn test_basic_simultaneous_initiate() -> TestResult {
             let bob_plaintext = decrypt(
                 bob_store,
                 &alice_address,
+                &bob_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     message_for_bob.serialize(),
                 )?),
-                bob_pqr,
             )
             .await?;
             assert_eq!(
@@ -1055,7 +995,8 @@ fn test_basic_simultaneous_initiate() -> TestResult {
                 !is_session_id_equal(alice_store, &alice_address, bob_store, &bob_address).await?
             );
 
-            let alice_response = encrypt(alice_store, &bob_address, "nice to see you").await?;
+            let alice_response =
+                encrypt(alice_store, &bob_address, &alice_address, "nice to see you").await?;
 
             assert_eq!(
                 alice_response.message_type(),
@@ -1065,10 +1006,10 @@ fn test_basic_simultaneous_initiate() -> TestResult {
             let response_plaintext = decrypt(
                 bob_store,
                 &alice_address,
+                &bob_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     alice_response.serialize(),
                 )?),
-                bob_pqr,
             )
             .await?;
             assert_eq!(
@@ -1080,17 +1021,18 @@ fn test_basic_simultaneous_initiate() -> TestResult {
                 is_session_id_equal(alice_store, &alice_address, bob_store, &bob_address).await?
             );
 
-            let bob_response = encrypt(bob_store, &alice_address, "you as well").await?;
+            let bob_response =
+                encrypt(bob_store, &alice_address, &bob_address, "you as well").await?;
 
             assert_eq!(bob_response.message_type(), CiphertextMessageType::Whisper);
 
             let response_plaintext = decrypt(
                 alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     bob_response.serialize(),
                 )?),
-                alice_pqr,
             )
             .await?;
             assert_eq!(
@@ -1150,28 +1092,30 @@ fn test_simultaneous_initiate_with_lossage() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
             process_prekey_bundle(
                 &alice_address,
+                &bob_address,
                 &mut bob_store.session_store,
                 &mut bob_store.identity_store,
                 &alice_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
-            let message_for_bob = encrypt(alice_store, &bob_address, "hi bob").await?;
-            let message_for_alice = encrypt(bob_store, &alice_address, "hi alice").await?;
+            let message_for_bob =
+                encrypt(alice_store, &bob_address, &alice_address, "hi bob").await?;
+            let message_for_alice =
+                encrypt(bob_store, &alice_address, &bob_address, "hi alice").await?;
 
             assert_eq!(
                 message_for_bob.message_type(),
@@ -1189,10 +1133,10 @@ fn test_simultaneous_initiate_with_lossage() -> TestResult {
             let bob_plaintext = decrypt(
                 bob_store,
                 &alice_address,
+                &bob_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     message_for_bob.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1209,17 +1153,18 @@ fn test_simultaneous_initiate_with_lossage() -> TestResult {
                 expected_session_version
             );
 
-            let alice_response = encrypt(alice_store, &bob_address, "nice to see you").await?;
+            let alice_response =
+                encrypt(alice_store, &bob_address, &alice_address, "nice to see you").await?;
 
             assert_eq!(alice_response.message_type(), CiphertextMessageType::PreKey);
 
             let response_plaintext = decrypt(
                 bob_store,
                 &alice_address,
+                &bob_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     alice_response.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1231,17 +1176,18 @@ fn test_simultaneous_initiate_with_lossage() -> TestResult {
                 is_session_id_equal(alice_store, &alice_address, bob_store, &bob_address).await?
             );
 
-            let bob_response = encrypt(bob_store, &alice_address, "you as well").await?;
+            let bob_response =
+                encrypt(bob_store, &alice_address, &bob_address, "you as well").await?;
 
             assert_eq!(bob_response.message_type(), CiphertextMessageType::Whisper);
 
             let response_plaintext = decrypt(
                 alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     bob_response.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1301,28 +1247,30 @@ fn test_simultaneous_initiate_lost_message() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
             process_prekey_bundle(
                 &alice_address,
+                &bob_address,
                 &mut bob_store.session_store,
                 &mut bob_store.identity_store,
                 &alice_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
-            let message_for_bob = encrypt(alice_store, &bob_address, "hi bob").await?;
-            let message_for_alice = encrypt(bob_store, &alice_address, "hi alice").await?;
+            let message_for_bob =
+                encrypt(alice_store, &bob_address, &alice_address, "hi bob").await?;
+            let message_for_alice =
+                encrypt(bob_store, &alice_address, &bob_address, "hi alice").await?;
 
             assert_eq!(
                 message_for_bob.message_type(),
@@ -1340,10 +1288,10 @@ fn test_simultaneous_initiate_lost_message() -> TestResult {
             let alice_plaintext = decrypt(
                 alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     message_for_alice.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1354,10 +1302,10 @@ fn test_simultaneous_initiate_lost_message() -> TestResult {
             let bob_plaintext = decrypt(
                 bob_store,
                 &alice_address,
+                &bob_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     message_for_bob.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1378,7 +1326,8 @@ fn test_simultaneous_initiate_lost_message() -> TestResult {
                 !is_session_id_equal(alice_store, &alice_address, bob_store, &bob_address).await?
             );
 
-            let alice_response = encrypt(alice_store, &bob_address, "nice to see you").await?;
+            let alice_response =
+                encrypt(alice_store, &bob_address, &alice_address, "nice to see you").await?;
 
             assert_eq!(
                 alice_response.message_type(),
@@ -1389,17 +1338,18 @@ fn test_simultaneous_initiate_lost_message() -> TestResult {
                 !is_session_id_equal(alice_store, &alice_address, bob_store, &bob_address).await?
             );
 
-            let bob_response = encrypt(bob_store, &alice_address, "you as well").await?;
+            let bob_response =
+                encrypt(bob_store, &alice_address, &bob_address, "you as well").await?;
 
             assert_eq!(bob_response.message_type(), CiphertextMessageType::Whisper);
 
             let response_plaintext = decrypt(
                 alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     bob_response.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1457,30 +1407,40 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
 
                 process_prekey_bundle(
                     &bob_address,
+                    &alice_address,
                     &mut alice_store_builder.store.session_store,
                     &mut alice_store_builder.store.identity_store,
                     &bob_pre_key_bundle,
                     SystemTime::now(),
                     &mut csprng,
-                    UsePQRatchet::Yes,
                 )
                 .await?;
 
                 process_prekey_bundle(
                     &alice_address,
+                    &bob_address,
                     &mut bob_store_builder.store.session_store,
                     &mut bob_store_builder.store.identity_store,
                     &alice_pre_key_bundle,
                     SystemTime::now(),
                     &mut csprng,
-                    UsePQRatchet::Yes,
                 )
                 .await?;
 
-                let message_for_bob =
-                    encrypt(&mut alice_store_builder.store, &bob_address, "hi bob").await?;
-                let message_for_alice =
-                    encrypt(&mut bob_store_builder.store, &alice_address, "hi alice").await?;
+                let message_for_bob = encrypt(
+                    &mut alice_store_builder.store,
+                    &bob_address,
+                    &alice_address,
+                    "hi bob",
+                )
+                .await?;
+                let message_for_alice = encrypt(
+                    &mut bob_store_builder.store,
+                    &alice_address,
+                    &bob_address,
+                    "hi alice",
+                )
+                .await?;
 
                 assert_eq!(
                     message_for_bob.message_type(),
@@ -1504,10 +1464,10 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
                 let alice_plaintext = decrypt(
                     &mut alice_store_builder.store,
                     &bob_address,
+                    &alice_address,
                     &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                         message_for_alice.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1518,10 +1478,10 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
                 let bob_plaintext = decrypt(
                     &mut bob_store_builder.store,
                     &alice_address,
+                    &bob_address,
                     &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                         message_for_bob.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1550,10 +1510,20 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
             }
 
             for _ in 0..50 {
-                let message_for_bob =
-                    encrypt(&mut alice_store_builder.store, &bob_address, "hi bob").await?;
-                let message_for_alice =
-                    encrypt(&mut bob_store_builder.store, &alice_address, "hi alice").await?;
+                let message_for_bob = encrypt(
+                    &mut alice_store_builder.store,
+                    &bob_address,
+                    &alice_address,
+                    "hi bob",
+                )
+                .await?;
+                let message_for_alice = encrypt(
+                    &mut bob_store_builder.store,
+                    &alice_address,
+                    &bob_address,
+                    "hi alice",
+                )
+                .await?;
 
                 assert_eq!(
                     message_for_bob.message_type(),
@@ -1577,10 +1547,10 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
                 let alice_plaintext = decrypt(
                     &mut alice_store_builder.store,
                     &bob_address,
+                    &alice_address,
                     &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                         message_for_alice.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1591,10 +1561,10 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
                 let bob_plaintext = decrypt(
                     &mut bob_store_builder.store,
                     &alice_address,
+                    &bob_address,
                     &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                         message_for_bob.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1625,6 +1595,7 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
             let alice_response = encrypt(
                 &mut alice_store_builder.store,
                 &bob_address,
+                &alice_address,
                 "nice to see you",
             )
             .await?;
@@ -1644,18 +1615,23 @@ fn test_simultaneous_initiate_repeated_messages() -> TestResult {
                 .await?
             );
 
-            let bob_response =
-                encrypt(&mut bob_store_builder.store, &alice_address, "you as well").await?;
+            let bob_response = encrypt(
+                &mut bob_store_builder.store,
+                &alice_address,
+                &bob_address,
+                "you as well",
+            )
+            .await?;
 
             assert_eq!(bob_response.message_type(), CiphertextMessageType::Whisper);
 
             let response_plaintext = decrypt(
                 &mut alice_store_builder.store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     bob_response.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1715,17 +1691,18 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store_builder.store.session_store,
                 &mut alice_store_builder.store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
             let lost_message_for_bob = encrypt(
                 &mut alice_store_builder.store,
                 &bob_address,
+                &alice_address,
                 "it was so long ago",
             )
             .await?;
@@ -1741,30 +1718,40 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
 
                 process_prekey_bundle(
                     &bob_address,
+                    &alice_address,
                     &mut alice_store_builder.store.session_store,
                     &mut alice_store_builder.store.identity_store,
                     &bob_pre_key_bundle,
                     SystemTime::now(),
                     &mut csprng,
-                    UsePQRatchet::Yes,
                 )
                 .await?;
 
                 process_prekey_bundle(
                     &alice_address,
+                    &bob_address,
                     &mut bob_store_builder.store.session_store,
                     &mut bob_store_builder.store.identity_store,
                     &alice_pre_key_bundle,
                     SystemTime::now(),
                     &mut csprng,
-                    UsePQRatchet::Yes,
                 )
                 .await?;
 
-                let message_for_bob =
-                    encrypt(&mut alice_store_builder.store, &bob_address, "hi bob").await?;
-                let message_for_alice =
-                    encrypt(&mut bob_store_builder.store, &alice_address, "hi alice").await?;
+                let message_for_bob = encrypt(
+                    &mut alice_store_builder.store,
+                    &bob_address,
+                    &alice_address,
+                    "hi bob",
+                )
+                .await?;
+                let message_for_alice = encrypt(
+                    &mut bob_store_builder.store,
+                    &alice_address,
+                    &bob_address,
+                    "hi alice",
+                )
+                .await?;
 
                 assert_eq!(
                     message_for_bob.message_type(),
@@ -1788,10 +1775,10 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
                 let alice_plaintext = decrypt(
                     &mut alice_store_builder.store,
                     &bob_address,
+                    &alice_address,
                     &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                         message_for_alice.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1802,10 +1789,10 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
                 let bob_plaintext = decrypt(
                     &mut bob_store_builder.store,
                     &alice_address,
+                    &bob_address,
                     &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                         message_for_bob.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1834,10 +1821,20 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
             }
 
             for _ in 0..50 {
-                let message_for_bob =
-                    encrypt(&mut alice_store_builder.store, &bob_address, "hi bob").await?;
-                let message_for_alice =
-                    encrypt(&mut bob_store_builder.store, &alice_address, "hi alice").await?;
+                let message_for_bob = encrypt(
+                    &mut alice_store_builder.store,
+                    &bob_address,
+                    &alice_address,
+                    "hi bob",
+                )
+                .await?;
+                let message_for_alice = encrypt(
+                    &mut bob_store_builder.store,
+                    &alice_address,
+                    &bob_address,
+                    "hi alice",
+                )
+                .await?;
 
                 assert_eq!(
                     message_for_bob.message_type(),
@@ -1861,10 +1858,10 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
                 let alice_plaintext = decrypt(
                     &mut alice_store_builder.store,
                     &bob_address,
+                    &alice_address,
                     &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                         message_for_alice.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1875,10 +1872,10 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
                 let bob_plaintext = decrypt(
                     &mut bob_store_builder.store,
                     &alice_address,
+                    &bob_address,
                     &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                         message_for_bob.serialize(),
                     )?),
-                    UsePQRatchet::Yes,
                 )
                 .await?;
                 assert_eq!(
@@ -1909,6 +1906,7 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
             let alice_response = encrypt(
                 &mut alice_store_builder.store,
                 &bob_address,
+                &alice_address,
                 "nice to see you",
             )
             .await?;
@@ -1928,18 +1926,23 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
                 .await?
             );
 
-            let bob_response =
-                encrypt(&mut bob_store_builder.store, &alice_address, "you as well").await?;
+            let bob_response = encrypt(
+                &mut bob_store_builder.store,
+                &alice_address,
+                &bob_address,
+                "you as well",
+            )
+            .await?;
 
             assert_eq!(bob_response.message_type(), CiphertextMessageType::Whisper);
 
             let response_plaintext = decrypt(
                 &mut alice_store_builder.store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     bob_response.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1960,10 +1963,10 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
             let blast_from_the_past = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(
                     lost_message_for_bob.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -1981,18 +1984,23 @@ fn test_simultaneous_initiate_lost_message_repeated_messages() -> TestResult {
                 .await?
             );
 
-            let bob_response =
-                encrypt(&mut bob_store_builder.store, &alice_address, "so it was").await?;
+            let bob_response = encrypt(
+                &mut bob_store_builder.store,
+                &alice_address,
+                &bob_address,
+                "so it was",
+            )
+            .await?;
 
             assert_eq!(bob_response.message_type(), CiphertextMessageType::Whisper);
 
             let response_plaintext = decrypt(
                 &mut alice_store_builder.store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::SignalMessage(SignalMessage::try_from(
                     bob_response.serialize(),
                 )?),
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -2039,12 +2047,12 @@ fn test_zero_is_a_valid_prekey_id() -> TestResult {
 
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -2059,7 +2067,13 @@ fn test_zero_is_a_valid_prekey_id() -> TestResult {
 
         let original_message = "L'homme est condamné à être libre";
 
-        let outgoing_message = encrypt(&mut alice_store, &bob_address, original_message).await?;
+        let outgoing_message = encrypt(
+            &mut alice_store,
+            &bob_address,
+            &alice_address,
+            original_message,
+        )
+        .await?;
 
         assert_eq!(
             outgoing_message.message_type(),
@@ -2073,8 +2087,8 @@ fn test_zero_is_a_valid_prekey_id() -> TestResult {
         let ptext = decrypt(
             &mut bob_store_builder.store,
             &alice_address,
+            &bob_address,
             &incoming_message,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -2095,6 +2109,8 @@ fn test_unacknowledged_sessions_eventually_expire() -> TestResult {
         const WELL_PAST_EXPIRATION: Duration = Duration::from_secs(60 * 60 * 24 * 90);
 
         let mut csprng = OsRng.unwrap_err();
+        let alice_address =
+            ProtocolAddress::new("+14151111111".to_owned(), DeviceId::new(1).unwrap());
         let bob_address =
             ProtocolAddress::new("+14151111112".to_owned(), DeviceId::new(1).unwrap());
 
@@ -2109,12 +2125,12 @@ fn test_unacknowledged_sessions_eventually_expire() -> TestResult {
 
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::UNIX_EPOCH,
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
@@ -2124,29 +2140,36 @@ fn test_unacknowledged_sessions_eventually_expire() -> TestResult {
             .await
             .expect("session can be loaded")
             .expect("session exists");
-        assert!(initial_session
-            .has_usable_sender_chain(
-                SystemTime::UNIX_EPOCH,
-                SessionUsabilityRequirements::NotStale
-            )
-            .expect("can check for a sender chain"));
-        assert!(!initial_session
-            .has_usable_sender_chain(
-                SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
-                SessionUsabilityRequirements::NotStale
-            )
-            .expect("can check for a sender chain"));
-        assert!(initial_session
-            .has_usable_sender_chain(
-                SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
-                SessionUsabilityRequirements::empty()
-            )
-            .expect("respects usability requirements"));
+        assert!(
+            initial_session
+                .has_usable_sender_chain(
+                    SystemTime::UNIX_EPOCH,
+                    SessionUsabilityRequirements::NotStale
+                )
+                .expect("can check for a sender chain")
+        );
+        assert!(
+            !initial_session
+                .has_usable_sender_chain(
+                    SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
+                    SessionUsabilityRequirements::NotStale
+                )
+                .expect("can check for a sender chain")
+        );
+        assert!(
+            initial_session
+                .has_usable_sender_chain(
+                    SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
+                    SessionUsabilityRequirements::empty()
+                )
+                .expect("respects usability requirements")
+        );
 
         let original_message = "L'homme est condamné à être libre";
         let outgoing_message = message_encrypt(
             original_message.as_bytes(),
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             SystemTime::UNIX_EPOCH + Duration::from_secs(1),
@@ -2165,22 +2188,27 @@ fn test_unacknowledged_sessions_eventually_expire() -> TestResult {
             .await
             .expect("session can be loaded")
             .expect("session exists");
-        assert!(updated_session
-            .has_usable_sender_chain(
-                SystemTime::UNIX_EPOCH,
-                SessionUsabilityRequirements::NotStale
-            )
-            .expect("can check for a sender chain"));
-        assert!(!updated_session
-            .has_usable_sender_chain(
-                SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
-                SessionUsabilityRequirements::NotStale
-            )
-            .expect("can check for a sender chain"));
+        assert!(
+            updated_session
+                .has_usable_sender_chain(
+                    SystemTime::UNIX_EPOCH,
+                    SessionUsabilityRequirements::NotStale
+                )
+                .expect("can check for a sender chain")
+        );
+        assert!(
+            !updated_session
+                .has_usable_sender_chain(
+                    SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
+                    SessionUsabilityRequirements::NotStale
+                )
+                .expect("can check for a sender chain")
+        );
 
         let error = message_encrypt(
             original_message.as_bytes(),
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             SystemTime::UNIX_EPOCH + WELL_PAST_EXPIRATION,
@@ -2189,7 +2217,7 @@ fn test_unacknowledged_sessions_eventually_expire() -> TestResult {
         .await
         .unwrap_err();
         assert!(
-            matches!(&error, SignalProtocolError::SessionNotFound(addr) if addr == &bob_address),
+            matches!(&error, SignalProtocolError::SessionNotFound(SessionNotFound{address: Some(address), op: _}) if address == &bob_address),
             "{error:?}"
         );
 
@@ -2220,12 +2248,12 @@ fn prekey_message_failed_decryption_does_not_update_stores() -> TestResult {
         let mut bob_store = TestStoreBuilder::new().store;
         process_prekey_bundle(
             &alice_address,
+            &bob_address,
             &mut bob_store.session_store,
             &mut bob_store.identity_store,
             &alice_pre_key_bundle,
             SystemTime::UNIX_EPOCH,
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("can receive bundle");
@@ -2235,6 +2263,7 @@ fn prekey_message_failed_decryption_does_not_update_stores() -> TestResult {
             let message = message_encrypt(
                 "from Bob".as_bytes(),
                 &alice_address,
+                &bob_address,
                 &mut bob_store.session_store,
                 &mut bob_store.identity_store,
                 SystemTime::UNIX_EPOCH,
@@ -2271,14 +2300,15 @@ fn prekey_message_failed_decryption_does_not_update_stores() -> TestResult {
             decrypt(
                 &mut alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::PreKeySignalMessage(pre_key_message),
-                UsePQRatchet::Yes,
             )
             .await,
             Err(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::PreKey,
-                "decryption failed"
+                msg,
             ))
+            if msg == "decryption failed"
         );
 
         // Because the decryption failed, the identity and session stores were
@@ -2292,12 +2322,14 @@ fn prekey_message_failed_decryption_does_not_update_stores() -> TestResult {
             None
         );
 
-        assert!(alice_store
-            .session_store
-            .load_session(&bob_address)
-            .await
-            .expect("can load")
-            .is_none());
+        assert!(
+            alice_store
+                .session_store
+                .load_session(&bob_address)
+                .await
+                .expect("can load")
+                .is_none()
+        );
 
         Ok(())
     }
@@ -2306,8 +2338,8 @@ fn prekey_message_failed_decryption_does_not_update_stores() -> TestResult {
 }
 
 #[test]
-fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_archived(
-) -> TestResult {
+fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_archived()
+-> TestResult {
     async {
         let mut csprng = OsRng.unwrap_err();
         let alice_address =
@@ -2327,25 +2359,25 @@ fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_
         let mut bob_store = TestStoreBuilder::new().store;
         process_prekey_bundle(
             &alice_address,
+            &bob_address,
             &mut bob_store.session_store,
             &mut bob_store.identity_store,
             &alice_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("can receive bundle");
 
         // Bob sends a message that decrypts just fine.
-        let bob_ciphertext = encrypt(&mut bob_store, &alice_address, "from Bob")
+        let bob_ciphertext = encrypt(&mut bob_store, &alice_address, &bob_address, "from Bob")
             .await
             .expect("valid");
         _ = decrypt(
             &mut alice_store,
             &bob_address,
+            &alice_address,
             &bob_ciphertext,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("valid");
@@ -2356,15 +2388,19 @@ fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_
             .await
             .expect("can load")
             .expect("has session record");
-        assert!(alice_session_with_bob
-            .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::all())
-            .expect("can ask about sender chains"));
+        assert!(
+            alice_session_with_bob
+                .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::all())
+                .expect("can ask about sender chains")
+        );
         alice_session_with_bob
             .archive_current_state()
             .expect("can archive");
-        assert!(!alice_session_with_bob
-            .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::empty())
-            .expect("can ask about sender chains"));
+        assert!(
+            !alice_session_with_bob
+                .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::empty())
+                .expect("can ask about sender chains")
+        );
         alice_store
             .store_session(&bob_address, &alice_session_with_bob)
             .await
@@ -2375,6 +2411,7 @@ fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_
             let message = message_encrypt(
                 "from Bob".as_bytes(),
                 &alice_address,
+                &bob_address,
                 &mut bob_store.session_store,
                 &mut bob_store.identity_store,
                 SystemTime::now(),
@@ -2411,14 +2448,15 @@ fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_
             decrypt(
                 &mut alice_store,
                 &bob_address,
+                &alice_address,
                 &CiphertextMessage::PreKeySignalMessage(pre_key_message),
-                UsePQRatchet::Yes,
             )
             .await,
             Err(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::PreKey,
-                "decryption failed"
+                msg
             ))
+            if msg == "decryption failed"
         );
 
         // Because the decryption failed, the session should still be archived.
@@ -2429,9 +2467,11 @@ fn prekey_message_failed_decryption_does_not_update_stores_even_when_previously_
             .expect("can load")
             .expect("has session record");
 
-        assert!(!alice_current_session_with_bob
-            .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::empty())
-            .expect("can ask about sender chains"));
+        assert!(
+            !alice_current_session_with_bob
+                .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::empty())
+                .expect("can ask about sender chains")
+        );
         assert_eq!(
             &alice_session_with_bob.serialize().expect("can serialize"),
             &alice_current_session_with_bob
@@ -2473,17 +2513,17 @@ fn prekey_message_to_archived_session() -> TestResult {
         // First Bob sends a message to Alice.
         process_prekey_bundle(
             &alice_address,
+            &bob_address,
             &mut bob_store.session_store,
             &mut bob_store.identity_store,
             &alice_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("can receive bundle");
 
-        let bob_ciphertext = encrypt(&mut bob_store, &alice_address, "from Bob")
+        let bob_ciphertext = encrypt(&mut bob_store, &alice_address, &bob_address, "from Bob")
             .await
             .expect("valid");
         assert_eq!(bob_ciphertext.message_type(), CiphertextMessageType::PreKey);
@@ -2492,8 +2532,8 @@ fn prekey_message_to_archived_session() -> TestResult {
         let received_message = decrypt(
             &mut alice_store,
             &bob_address,
+            &alice_address,
             &bob_ciphertext,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("valid");
@@ -2502,27 +2542,28 @@ fn prekey_message_to_archived_session() -> TestResult {
         // Alice decides to archive the session and then send a message to Bob on a new session.
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("can receive bundle");
 
         // (This is technically unnecessary, the process_prekey_bundle is sufficient, but it's illustrative.)
-        let unsent_alice_ciphertext = encrypt(&mut alice_store, &bob_address, "from Alice")
-            .await
-            .expect("valid");
+        let unsent_alice_ciphertext =
+            encrypt(&mut alice_store, &bob_address, &alice_address, "from Alice")
+                .await
+                .expect("valid");
         assert_eq!(
             unsent_alice_ciphertext.message_type(),
             CiphertextMessageType::PreKey
         );
 
         // But before Alice can send the message, she gets a second message from Bob.
-        let bob_ciphertext_2 = encrypt(&mut bob_store, &alice_address, "from Bob 2")
+        let bob_ciphertext_2 = encrypt(&mut bob_store, &alice_address, &bob_address, "from Bob 2")
             .await
             .expect("valid");
         assert_eq!(
@@ -2532,8 +2573,8 @@ fn prekey_message_to_archived_session() -> TestResult {
         let received_message_2 = decrypt(
             &mut alice_store,
             &bob_address,
+            &alice_address,
             &bob_ciphertext_2,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("valid");
@@ -2565,6 +2606,123 @@ fn prekey_message_to_archived_session() -> TestResult {
     .expect("sync")
 }
 
+#[test]
+fn prekey_message_must_not_have_changed_identity_key() -> TestResult {
+    async {
+        let mut csprng = OsRng.unwrap_err();
+        let alice_address =
+            ProtocolAddress::new("+14151111111".to_owned(), DeviceId::new(1).unwrap());
+        let bob_address =
+            ProtocolAddress::new("+14151111112".to_owned(), DeviceId::new(1).unwrap());
+
+        let alice_store_builder = TestStoreBuilder::new()
+            .with_pre_key(0.into())
+            .with_signed_pre_key(0.into())
+            .with_kyber_pre_key(0.into());
+        let alice_pre_key_bundle =
+            alice_store_builder.make_bundle_with_latest_keys(DeviceId::new(1).unwrap());
+
+        let mut alice_store = alice_store_builder.store;
+
+        let mut bob_store = TestStoreBuilder::new().store;
+        process_prekey_bundle(
+            &alice_address,
+            &bob_address,
+            &mut bob_store.session_store,
+            &mut bob_store.identity_store,
+            &alice_pre_key_bundle,
+            SystemTime::UNIX_EPOCH,
+            &mut csprng,
+        )
+        .await
+        .expect("can receive bundle");
+
+        // Bob sends a (valid) pre-key message.
+        let message = message_encrypt(
+            "from Bob".as_bytes(),
+            &alice_address,
+            &bob_address,
+            &mut bob_store.session_store,
+            &mut bob_store.identity_store,
+            SystemTime::UNIX_EPOCH,
+            &mut csprng,
+        )
+        .await
+        .expect("can encrypt");
+        assert_matches!(message, CiphertextMessage::PreKeySignalMessage(_));
+        decrypt(&mut alice_store, &bob_address, &alice_address, &message)
+            .await
+            .expect("Alice can receive the message");
+
+        // Now Bob sends another message but with the identity key replaced.
+        let pre_key_message = {
+            let message = message_encrypt(
+                "from Bob 2".as_bytes(),
+                &alice_address,
+                &bob_address,
+                &mut bob_store.session_store,
+                &mut bob_store.identity_store,
+                SystemTime::UNIX_EPOCH,
+                &mut csprng,
+            )
+            .await;
+            let message =
+                assert_matches!(message, Ok(CiphertextMessage::PreKeySignalMessage(m)) => m);
+
+            PreKeySignalMessage::new(
+                message.message_version(),
+                message.registration_id(),
+                message.pre_key_id(),
+                message.signed_pre_key_id(),
+                message
+                    .kyber_pre_key_id()
+                    .zip(message.kyber_ciphertext())
+                    .map(|(id, ciphertext)| KyberPayload::new(id, ciphertext.clone())),
+                *message.base_key(),
+                *IdentityKeyPair::generate(&mut csprng).identity_key(),
+                message.message().clone(),
+            )
+            .unwrap()
+        };
+
+        // Clear the old identity key out of the identity key store.
+        // (InMemIdentityKeyStore is stricter in some ways than the app IdentityKeyStores,
+        // but also we shouldn't be relying on it for this check anyway.)
+        alice_store.identity_store.reset();
+
+        // The decryption fails, as expected.
+        assert_matches!(
+            decrypt(
+                &mut alice_store,
+                &bob_address,
+                &alice_address,
+                &CiphertextMessage::PreKeySignalMessage(pre_key_message),
+            )
+            .await,
+            Err(SignalProtocolError::InvalidMessage(
+                CiphertextMessageType::PreKey,
+                msg,
+            ))
+            if msg == "remote identity key not consistent with previously-established session"
+        );
+
+        // Because the decryption failed, the identity store was not updated.
+        assert_eq!(
+            alice_store
+                .identity_store
+                .get_identity(&bob_address)
+                .await
+                .unwrap()
+                .as_ref(),
+            None,
+        );
+
+        Ok(())
+    }
+    .now_or_never()
+    .expect("sync")
+}
+
 #[expect(clippy::needless_range_loop)]
 fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRecord) -> TestResult {
     async {
@@ -2586,12 +2744,18 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
             .await?;
 
         let alice_plaintext = "This is Alice's message";
-        let alice_ciphertext = encrypt(&mut alice_store, &bob_address, alice_plaintext).await?;
+        let alice_ciphertext = encrypt(
+            &mut alice_store,
+            &bob_address,
+            &alice_address,
+            alice_plaintext,
+        )
+        .await?;
         let bob_decrypted = decrypt(
             &mut bob_store,
             &alice_address,
+            &bob_address,
             &alice_ciphertext,
-            UsePQRatchet::Yes,
         )
         .await?;
         assert_eq!(
@@ -2601,12 +2765,13 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
 
         let bob_plaintext = "This is Bob's reply";
 
-        let bob_ciphertext = encrypt(&mut bob_store, &alice_address, bob_plaintext).await?;
+        let bob_ciphertext =
+            encrypt(&mut bob_store, &alice_address, &bob_address, bob_plaintext).await?;
         let alice_decrypted = decrypt(
             &mut alice_store,
             &bob_address,
+            &alice_address,
             &bob_ciphertext,
-            UsePQRatchet::Yes,
         )
         .await?;
         assert_eq!(
@@ -2621,7 +2786,7 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
 
         for i in 0..ALICE_MESSAGE_COUNT {
             let ptext = format!("смерть за смерть {i}");
-            let ctext = encrypt(&mut alice_store, &bob_address, &ptext).await?;
+            let ctext = encrypt(&mut alice_store, &bob_address, &alice_address, &ptext).await?;
             alice_messages.push((ptext, ctext));
         }
 
@@ -2633,8 +2798,8 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
             let ptext = decrypt(
                 &mut bob_store,
                 &alice_address,
+                &bob_address,
                 &alice_messages[i].1,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -2647,7 +2812,7 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
 
         for i in 0..BOB_MESSAGE_COUNT {
             let ptext = format!("Relax in the safety of your own delusions. {i}");
-            let ctext = encrypt(&mut bob_store, &alice_address, &ptext).await?;
+            let ctext = encrypt(&mut bob_store, &alice_address, &bob_address, &ptext).await?;
             bob_messages.push((ptext, ctext));
         }
 
@@ -2657,8 +2822,8 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
             let ptext = decrypt(
                 &mut alice_store,
                 &bob_address,
+                &alice_address,
                 &bob_messages[i].1,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -2671,8 +2836,8 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
             let ptext = decrypt(
                 &mut bob_store,
                 &alice_address,
+                &bob_address,
                 &alice_messages[i].1,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -2685,8 +2850,8 @@ fn run_session_interaction(alice_session: SessionRecord, bob_session: SessionRec
             let ptext = decrypt(
                 &mut alice_store,
                 &bob_address,
+                &alice_address,
                 &bob_messages[i].1,
-                UsePQRatchet::Yes,
             )
             .await?;
             assert_eq!(
@@ -2706,47 +2871,49 @@ async fn run_interaction(
     alice_address: &ProtocolAddress,
     bob_store: &mut InMemSignalProtocolStore,
     bob_address: &ProtocolAddress,
-    alice_pqr: UsePQRatchet,
-    bob_pqr: UsePQRatchet,
 ) -> TestResult {
     let alice_ptext = "It's rabbit season";
 
-    let alice_message = encrypt(alice_store, bob_address, alice_ptext).await?;
+    let alice_message = encrypt(alice_store, bob_address, alice_address, alice_ptext).await?;
     assert_eq!(alice_message.message_type(), CiphertextMessageType::Whisper);
     assert_eq!(
-        String::from_utf8(decrypt(bob_store, alice_address, &alice_message, bob_pqr).await?)
+        String::from_utf8(decrypt(bob_store, alice_address, bob_address, &alice_message).await?)
             .expect("valid utf8"),
         alice_ptext
     );
 
     let bob_ptext = "It's duck season";
 
-    let bob_message = encrypt(bob_store, alice_address, bob_ptext).await?;
+    let bob_message = encrypt(bob_store, alice_address, bob_address, bob_ptext).await?;
     assert_eq!(bob_message.message_type(), CiphertextMessageType::Whisper);
     assert_eq!(
-        String::from_utf8(decrypt(alice_store, bob_address, &bob_message, alice_pqr).await?)
+        String::from_utf8(decrypt(alice_store, bob_address, alice_address, &bob_message).await?)
             .expect("valid utf8"),
         bob_ptext
     );
 
     for i in 0..10 {
         let alice_ptext = format!("A->B message {i}");
-        let alice_message = encrypt(alice_store, bob_address, &alice_ptext).await?;
+        let alice_message = encrypt(alice_store, bob_address, alice_address, &alice_ptext).await?;
         assert_eq!(alice_message.message_type(), CiphertextMessageType::Whisper);
         assert_eq!(
-            String::from_utf8(decrypt(bob_store, alice_address, &alice_message, bob_pqr).await?)
-                .expect("valid utf8"),
+            String::from_utf8(
+                decrypt(bob_store, alice_address, bob_address, &alice_message).await?
+            )
+            .expect("valid utf8"),
             alice_ptext
         );
     }
 
     for i in 0..10 {
         let bob_ptext = format!("B->A message {i}");
-        let bob_message = encrypt(bob_store, alice_address, &bob_ptext).await?;
+        let bob_message = encrypt(bob_store, alice_address, bob_address, &bob_ptext).await?;
         assert_eq!(bob_message.message_type(), CiphertextMessageType::Whisper);
         assert_eq!(
-            String::from_utf8(decrypt(alice_store, bob_address, &bob_message, alice_pqr).await?)
-                .expect("valid utf8"),
+            String::from_utf8(
+                decrypt(alice_store, bob_address, alice_address, &bob_message).await?
+            )
+            .expect("valid utf8"),
             bob_ptext
         );
     }
@@ -2755,35 +2922,39 @@ async fn run_interaction(
 
     for i in 0..10 {
         let alice_ptext = format!("A->B OOO message {i}");
-        let alice_message = encrypt(alice_store, bob_address, &alice_ptext).await?;
+        let alice_message = encrypt(alice_store, bob_address, alice_address, &alice_ptext).await?;
         alice_ooo_messages.push((alice_ptext, alice_message));
     }
 
     for i in 0..10 {
         let alice_ptext = format!("A->B post-OOO message {i}");
-        let alice_message = encrypt(alice_store, bob_address, &alice_ptext).await?;
+        let alice_message = encrypt(alice_store, bob_address, alice_address, &alice_ptext).await?;
         assert_eq!(alice_message.message_type(), CiphertextMessageType::Whisper);
         assert_eq!(
-            String::from_utf8(decrypt(bob_store, alice_address, &alice_message, bob_pqr).await?)
-                .expect("valid utf8"),
+            String::from_utf8(
+                decrypt(bob_store, alice_address, bob_address, &alice_message).await?
+            )
+            .expect("valid utf8"),
             alice_ptext
         );
     }
 
     for i in 0..10 {
         let bob_ptext = format!("B->A message post-OOO {i}");
-        let bob_message = encrypt(bob_store, alice_address, &bob_ptext).await?;
+        let bob_message = encrypt(bob_store, alice_address, bob_address, &bob_ptext).await?;
         assert_eq!(bob_message.message_type(), CiphertextMessageType::Whisper);
         assert_eq!(
-            String::from_utf8(decrypt(alice_store, bob_address, &bob_message, alice_pqr).await?)
-                .expect("valid utf8"),
+            String::from_utf8(
+                decrypt(alice_store, bob_address, alice_address, &bob_message).await?
+            )
+            .expect("valid utf8"),
             bob_ptext
         );
     }
 
     for (ptext, ctext) in alice_ooo_messages {
         assert_eq!(
-            String::from_utf8(decrypt(bob_store, alice_address, &ctext, bob_pqr).await?)
+            String::from_utf8(decrypt(bob_store, alice_address, bob_address, &ctext).await?)
                 .expect("valid utf8"),
             ptext
         );
@@ -2826,12 +2997,12 @@ fn test_signedprekey_not_saved() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -2844,11 +3015,13 @@ fn test_signedprekey_not_saved() -> TestResult {
             let original_message = "L'homme est condamné à être libre";
 
             // We encrypt a first message
-            let outgoing_message = encrypt(alice_store, &bob_address, original_message).await?;
+            let outgoing_message =
+                encrypt(alice_store, &bob_address, &alice_address, original_message).await?;
 
             // We encrypt a second message
             let original_message2 = "L'homme est condamné à nouveau à être libre";
-            let outgoing_message2 = encrypt(alice_store, &bob_address, original_message2).await?;
+            let outgoing_message2 =
+                encrypt(alice_store, &bob_address, &alice_address, original_message2).await?;
 
             assert_eq!(
                 outgoing_message.message_type(),
@@ -2863,8 +3036,8 @@ fn test_signedprekey_not_saved() -> TestResult {
             let ptext = decrypt(
                 &mut bob_store_builder.store,
                 &alice_address,
+                &bob_address,
                 &incoming_message,
-                UsePQRatchet::Yes,
             )
             .await?;
 
@@ -2912,8 +3085,8 @@ fn test_signedprekey_not_saved() -> TestResult {
                 decrypt(
                     &mut bob_store_builder.store,
                     &alice_address,
+                    &bob_address,
                     &incoming_message,
-                    UsePQRatchet::Yes,
                 )
                 .await
                 .expect_err("invalid"),
@@ -2977,8 +3150,6 @@ fn test_longer_sessions() -> TestResult {
             builder.add_signed_pre_key(IdChoice::Next);
             builder.add_kyber_pre_key(IdChoice::Next);
         },
-        UsePQRatchet::Yes,
-        UsePQRatchet::Yes,
         // All equally likely
         &[
             LongerSessionActions::AliceSend,
@@ -2999,8 +3170,6 @@ fn test_longer_sessions() -> TestResult {
             builder.add_signed_pre_key(IdChoice::Next);
             builder.add_kyber_pre_key(IdChoice::Next);
         },
-        UsePQRatchet::Yes,
-        UsePQRatchet::Yes,
         // All sends/drops more likely
         &[
             LongerSessionActions::AliceSend,
@@ -3025,8 +3194,6 @@ fn test_longer_sessions() -> TestResult {
             builder.add_signed_pre_key(IdChoice::Next);
             builder.add_kyber_pre_key(IdChoice::Next);
         },
-        UsePQRatchet::Yes,
-        UsePQRatchet::Yes,
         // All sends/reorders more likely
         &[
             LongerSessionActions::AliceSend,
@@ -3043,13 +3210,7 @@ fn test_longer_sessions() -> TestResult {
             LongerSessionActions::BobReorder,
         ],
     )?;
-    fn run<F>(
-        steps: usize,
-        add_keys: F,
-        alice_pqr: UsePQRatchet,
-        bob_pqr: UsePQRatchet,
-        actions: &[LongerSessionActions],
-    ) -> TestResult
+    fn run<F>(steps: usize, add_keys: F, actions: &[LongerSessionActions]) -> TestResult
     where
         F: Fn(&mut TestStoreBuilder),
     {
@@ -3077,22 +3238,22 @@ fn test_longer_sessions() -> TestResult {
 
             process_prekey_bundle(
                 &bob_address,
+                &alice_address,
                 &mut alice_store.session_store,
                 &mut alice_store.identity_store,
                 &bob_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                alice_pqr,
             )
             .await?;
             process_prekey_bundle(
                 &alice_address,
+                &bob_address,
                 &mut bob_store.session_store,
                 &mut bob_store.identity_store,
                 &alice_pre_key_bundle,
                 SystemTime::now(),
                 &mut csprng,
-                bob_pqr,
             )
             .await?;
 
@@ -3114,28 +3275,28 @@ fn test_longer_sessions() -> TestResult {
                         log::debug!("Send message to Alice");
                         to_alice.push_back((
                             false,
-                            encrypt(bob_store, &alice_address, "wheee1").await?,
+                            encrypt(bob_store, &alice_address, &bob_address, "wheee1").await?,
                         ));
                     }
                     LongerSessionActions::BobSend => {
                         log::debug!("Send message to Bob");
                         to_bob.push_back((
                             false,
-                            encrypt(alice_store, &bob_address, "wheee2").await?,
+                            encrypt(alice_store, &bob_address, &alice_address, "wheee2").await?,
                         ));
                     }
                     LongerSessionActions::AliceRecv => match to_alice.pop_front() {
                         None => {}
                         Some((_reordered, msg)) => {
                             log::debug!("Process message to Alice");
-                            decrypt(alice_store, &bob_address, &msg, alice_pqr).await?;
+                            decrypt(alice_store, &bob_address, &alice_address, &msg).await?;
                         }
                     },
                     LongerSessionActions::BobRecv => match to_bob.pop_front() {
                         None => {}
                         Some((_reordered, msg)) => {
                             log::debug!("Process message to Bob");
-                            decrypt(bob_store, &alice_address, &msg, bob_pqr).await?;
+                            decrypt(bob_store, &alice_address, &bob_address, &msg).await?;
                         }
                     },
                     LongerSessionActions::AliceDrop => {
@@ -3210,18 +3371,24 @@ fn test_duplicate_message_error_returned() -> TestResult {
 
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
-        let msg = encrypt(alice_store, &bob_address, "this_will_be_a_dup").await?;
-        decrypt(bob_store, &alice_address, &msg, UsePQRatchet::Yes).await?;
-        let err = decrypt(bob_store, &alice_address, &msg, UsePQRatchet::Yes)
+        let msg = encrypt(
+            alice_store,
+            &bob_address,
+            &alice_address,
+            "this_will_be_a_dup",
+        )
+        .await?;
+        decrypt(bob_store, &alice_address, &bob_address, &msg).await?;
+        let err = decrypt(bob_store, &alice_address, &bob_address, &msg)
             .await
             .expect_err("should be a duplicate");
         assert!(matches!(err, SignalProtocolError::DuplicatedMessage(_, _)));
@@ -3232,80 +3399,7 @@ fn test_duplicate_message_error_returned() -> TestResult {
 }
 
 #[test]
-fn test_pqr_state_empty_if_disabled() -> TestResult {
-    run(UsePQRatchet::No, UsePQRatchet::No)?;
-    run(UsePQRatchet::No, UsePQRatchet::Yes)?;
-    run(UsePQRatchet::Yes, UsePQRatchet::No)?;
-
-    fn run(alice_pqr: UsePQRatchet, bob_pqr: UsePQRatchet) -> TestResult {
-        async {
-            let mut csprng = OsRng.unwrap_err();
-
-            let alice_device_id = DeviceId::new(1).unwrap();
-            let bob_device_id = DeviceId::new(1).unwrap();
-
-            let alice_address = ProtocolAddress::new("+14151111111".to_owned(), alice_device_id);
-            let bob_address = ProtocolAddress::new("+14151111112".to_owned(), bob_device_id);
-
-            let mut alice_store_builder = TestStoreBuilder::new();
-            alice_store_builder.add_pre_key(IdChoice::Next);
-            alice_store_builder.add_signed_pre_key(IdChoice::Next);
-            alice_store_builder.add_kyber_pre_key(IdChoice::Next);
-            let mut bob_store_builder = TestStoreBuilder::new();
-            bob_store_builder.add_pre_key(IdChoice::Next);
-            bob_store_builder.add_signed_pre_key(IdChoice::Next);
-            bob_store_builder.add_kyber_pre_key(IdChoice::Next);
-
-            let bob_pre_key_bundle = bob_store_builder.make_bundle_with_latest_keys(bob_device_id);
-
-            let alice_store = &mut alice_store_builder.store;
-            let bob_store = &mut bob_store_builder.store;
-
-            process_prekey_bundle(
-                &bob_address,
-                &mut alice_store.session_store,
-                &mut alice_store.identity_store,
-                &bob_pre_key_bundle,
-                SystemTime::now(),
-                &mut csprng,
-                alice_pqr,
-            )
-            .await?;
-
-            let msg = encrypt(alice_store, &bob_address, "msg1").await?;
-            decrypt(bob_store, &alice_address, &msg, bob_pqr).await?;
-            let msg = encrypt(bob_store, &alice_address, "msg2").await?;
-            decrypt(alice_store, &bob_address, &msg, alice_pqr).await?;
-
-            assert!(alice_store
-                .session_store
-                .load_existing_sessions(&[&bob_address])?
-                .first()
-                .expect("should have Bob's address")
-                .current_pq_state()
-                .expect("should have Bob's PQ state")
-                .is_empty());
-
-            assert!(bob_store
-                .session_store
-                .load_existing_sessions(&[&alice_address])?
-                .first()
-                .expect("should have Alice's address")
-                .current_pq_state()
-                .expect("should have Alice's PQ state")
-                .is_empty());
-
-            Ok(())
-        }
-        .now_or_never()
-        .unwrap()
-    }
-
-    Ok(())
-}
-
-#[test]
-fn test_pqr_state_and_message_contents_nonempty_if_enabled() -> TestResult {
+fn test_pqr_state_and_message_contents_nonempty() -> TestResult {
     async {
         let mut csprng = OsRng.unwrap_err();
 
@@ -3331,24 +3425,24 @@ fn test_pqr_state_and_message_contents_nonempty_if_enabled() -> TestResult {
 
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::Yes,
         )
         .await?;
 
-        let msg = encrypt(alice_store, &bob_address, "msg1").await?;
+        let msg = encrypt(alice_store, &bob_address, &alice_address, "msg1").await?;
         assert_matches!(&msg, CiphertextMessage::PreKeySignalMessage(m) if !m.message().pq_ratchet().is_empty());
-        decrypt(bob_store, &alice_address, &msg, UsePQRatchet::Yes).await?;
+        decrypt(bob_store, &alice_address, &bob_address, &msg).await?;
 
-        let msg = encrypt(bob_store, &alice_address, "msg2").await?;
+        let msg = encrypt(bob_store, &alice_address, &bob_address, "msg2").await?;
         assert_matches!(&msg, CiphertextMessage::SignalMessage(m) if !m.pq_ratchet().is_empty());
-        decrypt(alice_store, &bob_address, &msg, UsePQRatchet::Yes).await?;
+        decrypt(alice_store, &bob_address, &alice_address, &msg).await?;
 
-        let msg = encrypt(alice_store, &bob_address, "msg3").await?;
+        let msg = encrypt(alice_store, &bob_address, &alice_address, "msg3").await?;
         assert_matches!(&msg, CiphertextMessage::SignalMessage(m) if !m.pq_ratchet().is_empty());
 
         assert!(!alice_store
@@ -3396,26 +3490,27 @@ fn x3dh_prekey_rejected_as_invalid_message_specifically() {
         let mut alice_store = TestStoreBuilder::new().store;
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::No,
         )
         .await
         .expect("valid");
 
-        let pre_key_message = support::encrypt(&mut alice_store, &bob_address, "bad")
-            .await
-            .expect("valid");
+        let pre_key_message =
+            support::encrypt(&mut alice_store, &bob_address, &alice_address, "bad")
+                .await
+                .expect("valid");
 
         let mut bob_one_off_store = bob_store_builder.store.clone();
         _ = support::decrypt(
             &mut bob_one_off_store,
             &alice_address,
+            &bob_address,
             &pre_key_message,
-            UsePQRatchet::Yes,
         )
         .await
         .expect("unmodified message is fine");
@@ -3437,8 +3532,8 @@ fn x3dh_prekey_rejected_as_invalid_message_specifically() {
         let err = support::decrypt(
             &mut bob_store_builder.store,
             &alice_address,
+            &bob_address,
             &CiphertextMessage::PreKeySignalMessage(modified_message.clone()),
-            UsePQRatchet::Yes,
         )
         .await
         .expect_err("we changed the version, it should be rejected early");
@@ -3475,41 +3570,39 @@ fn x3dh_established_session_is_or_is_not_usable() {
         let mut alice_store = TestStoreBuilder::new().store;
         process_prekey_bundle(
             &bob_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &bob_pre_key_bundle,
             SystemTime::now(),
             &mut csprng,
-            UsePQRatchet::No,
         )
         .await
         .expect("valid");
 
-        let pre_key_message = support::encrypt(&mut alice_store, &bob_address, "bad")
-            .await
-            .expect("valid");
+        let pre_key_message =
+            support::encrypt(&mut alice_store, &bob_address, &alice_address, "bad")
+                .await
+                .expect("valid");
 
         let bob_store = &mut bob_store_builder.store;
-        _ = support::decrypt(
-            bob_store,
-            &alice_address,
-            &pre_key_message,
-            UsePQRatchet::No,
-        )
-        .await
-        .expect("unmodified message is fine");
+        _ = support::decrypt(bob_store, &alice_address, &bob_address, &pre_key_message)
+            .await
+            .expect("unmodified message is fine");
 
         let bob_session_with_alice = bob_store
             .load_session(&alice_address)
             .await
             .expect("can load")
             .expect("has session");
-        assert!(bob_session_with_alice
-            .has_usable_sender_chain(
-                SystemTime::now(),
-                SessionUsabilityRequirements::EstablishedWithPqxdh
-            )
-            .expect("can check usability"));
+        assert!(
+            bob_session_with_alice
+                .has_usable_sender_chain(
+                    SystemTime::now(),
+                    SessionUsabilityRequirements::EstablishedWithPqxdh
+                )
+                .expect("can check usability")
+        );
 
         let mut serialized_session = bob_session_with_alice.serialize().expect("can serialize");
         let session_version: u8 = bob_session_with_alice
@@ -3540,16 +3633,236 @@ fn x3dh_established_session_is_or_is_not_usable() {
                 .expect("can get session version"),
             PRE_KYBER_MESSAGE_VERSION
         );
-        assert!(reconstituted_session
-            .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::empty())
-            .expect("can check usability"));
-        assert!(!reconstituted_session
-            .has_usable_sender_chain(
-                SystemTime::now(),
-                SessionUsabilityRequirements::EstablishedWithPqxdh
-            )
-            .expect("can check usability"));
+        assert!(
+            reconstituted_session
+                .has_usable_sender_chain(SystemTime::now(), SessionUsabilityRequirements::empty())
+                .expect("can check usability")
+        );
+        assert!(
+            !reconstituted_session
+                .has_usable_sender_chain(
+                    SystemTime::now(),
+                    SessionUsabilityRequirements::EstablishedWithPqxdh
+                )
+                .expect("can check usability")
+        );
     }
     .now_or_never()
     .expect("sync")
+}
+
+#[test]
+fn prekey_message_sent_from_different_user_is_rejected() {
+    async {
+        let mut csprng = OsRng.unwrap_err();
+
+        let alice_device_id = DeviceId::new(1).unwrap();
+        let bob_device_id = DeviceId::new(1).unwrap();
+        let mallory_device_id = DeviceId::new(b'M').unwrap();
+
+        let alice_address = ProtocolAddress::new("+14151111111".to_owned(), alice_device_id);
+        let bob_address = ProtocolAddress::new("+14151111112".to_owned(), bob_device_id);
+        let mallory_address = ProtocolAddress::new("+14151111113".to_owned(), mallory_device_id);
+
+        let mut bob_store_builder = TestStoreBuilder::new();
+        // No one-time EC key here.
+        bob_store_builder.add_signed_pre_key(IdChoice::Next);
+        bob_store_builder.add_kyber_pre_key(IdChoice::Next);
+
+        let bob_pre_key_bundle = bob_store_builder.make_bundle_with_latest_keys(bob_device_id);
+
+        let mut alice_store = TestStoreBuilder::new().store;
+        process_prekey_bundle(
+            &bob_address,
+            &alice_address,
+            &mut alice_store.session_store,
+            &mut alice_store.identity_store,
+            &bob_pre_key_bundle,
+            SystemTime::now(),
+            &mut csprng,
+        )
+        .await
+        .expect("valid");
+
+        let pre_key_message =
+            support::encrypt(&mut alice_store, &bob_address, &alice_address, "bad")
+                .await
+                .expect("valid");
+
+        let bob_store = &mut bob_store_builder.store;
+        _ = support::decrypt(bob_store, &alice_address, &bob_address, &pre_key_message)
+            .await
+            .expect("unmodified message is fine");
+        _ = bob_store
+            .load_session(&alice_address)
+            .await
+            .expect("can load sessions")
+            .expect("session successfully created");
+
+        let err = support::decrypt(bob_store, &mallory_address, &bob_address, &pre_key_message)
+            .await
+            .expect_err("should be rejected");
+        assert_matches!(
+            err,
+            SignalProtocolError::InvalidMessage(CiphertextMessageType::PreKey, msg)
+            if msg == "reused base key"
+        );
+        assert!(
+            bob_store
+                .load_session(&mallory_address)
+                .await
+                .expect("can load sessions")
+                .is_none(),
+            "should not have created second session"
+        )
+    }
+    .now_or_never()
+    .expect("sync")
+}
+
+#[test]
+fn prekey_message_rejects_wrong_local_recipient_address() {
+    async {
+        let mut csprng = OsRng.unwrap_err();
+
+        let alice_address = ProtocolAddress::new(
+            "9d0652a3-dcc3-4d11-975f-74d61598733f".to_owned(),
+            DeviceId::new(1).unwrap(),
+        );
+        let bob_address = ProtocolAddress::new(
+            "796abedb-ca4e-4f18-8803-1fde5b921f9f".to_owned(),
+            DeviceId::new(1).unwrap(),
+        );
+        let mallory_address = ProtocolAddress::new(
+            "e80f7bbe-5b94-471e-bd8c-2173654ea3d1".to_owned(),
+            DeviceId::new(1).unwrap(),
+        );
+
+        let mut bob_store_builder = TestStoreBuilder::new();
+        bob_store_builder.add_pre_key(IdChoice::Next);
+        bob_store_builder.add_signed_pre_key(IdChoice::Next);
+        bob_store_builder.add_kyber_pre_key(IdChoice::Next);
+
+        let bob_pre_key_bundle =
+            bob_store_builder.make_bundle_with_latest_keys(DeviceId::new(1).unwrap());
+
+        let mut alice_store = TestStoreBuilder::new().store;
+        process_prekey_bundle(
+            &bob_address,
+            &alice_address,
+            &mut alice_store.session_store,
+            &mut alice_store.identity_store,
+            &bob_pre_key_bundle,
+            SystemTime::now(),
+            &mut csprng,
+        )
+        .await
+        .expect("valid");
+
+        let pre_key_message =
+            support::encrypt(&mut alice_store, &bob_address, &alice_address, "hi bob")
+                .await
+                .expect("valid");
+
+        let err = support::decrypt(
+            &mut bob_store_builder.store,
+            &alice_address,
+            &mallory_address,
+            &pre_key_message,
+        )
+        .await
+        .expect_err("recipient binding should reject wrong local address");
+        assert_matches!(
+            err,
+            SignalProtocolError::InvalidMessage(CiphertextMessageType::PreKey, msg)
+            if msg == "decryption failed"
+        );
+    }
+    .now_or_never()
+    .expect("sync")
+}
+
+#[test]
+fn proptest_session_resets() {
+    // This is the same test setup as fuzz/fuzz_targets/session_management.rs. If this test fails,
+    // you should run the fuzz target as well after any fixes, for (slightly) increased confidence.
+    proptest!(|(actions in proptest::collection::vec(
+        (proptest::bool::ANY, proptest_arbitrary_interop::arb::<libsignal_protocol_test_support::Event>()),
+        ..40
+    ))| {
+        async {
+            let mut csprng = rand::rngs::StdRng::seed_from_u64(0);
+
+            let mut alice = libsignal_protocol_test_support::Participant::new(
+                "alice",
+                ProtocolAddress::new("+14151111111".to_owned(), DeviceId::new(1).unwrap()),
+                &mut csprng,
+            );
+            let mut bob = libsignal_protocol_test_support::Participant::new(
+                "bob",
+                ProtocolAddress::new("+14151111112".to_owned(), DeviceId::new(1).unwrap()),
+                &mut csprng,
+            );
+
+            for (who, event) in actions {
+                let (me, them) = match who {
+                    true => (&mut alice, &mut bob),
+                    false => (&mut bob, &mut alice),
+                };
+                event.run(me, them, &mut csprng).await
+            }
+
+            // Allow time to quiesce: bring both sides up to speed, send one message in each direction
+            // (synchronized), and service resend requests until both queues are empty.
+            log::info!("Quiescing...");
+            while alice.has_pending_incoming_messages() || bob.has_pending_incoming_messages() {
+                alice.receive_messages(&mut bob, &mut csprng).await;
+                bob.receive_messages(&mut alice, &mut csprng).await;
+            }
+
+            async fn exchange_messages_until_agreement(
+                attempts: usize,
+                alice: &mut libsignal_protocol_test_support::Participant,
+                bob: &mut libsignal_protocol_test_support::Participant,
+                rng: &mut (impl rand::Rng + rand::CryptoRng),
+            ) {
+                for _ in 0..attempts {
+                    // Go back to taking turns and see if things even out.
+                    alice.send_message(bob, rng).await;
+                    bob.receive_messages(alice, rng).await;
+                    bob.send_message(alice, rng).await;
+                    alice.receive_messages(bob, rng).await;
+
+                    let a_to_b_session = alice
+                        .current_store()
+                        .load_session(bob.address())
+                        .await
+                        .expect("can load")
+                        .expect("Alice has a session with Bob");
+                    let b_to_a_session = bob
+                        .current_store()
+                        .load_session(alice.address())
+                        .await
+                        .expect("can load")
+                        .expect("Bob has a session with Alice");
+                    if a_to_b_session
+                        .alice_base_key()
+                        .expect("A->B session established")
+                        == b_to_a_session
+                            .alice_base_key()
+                            .expect("B->A session established")
+                    {
+                        return;
+                    }
+                }
+                panic!(
+                    "even after {attempts} more messages in each direction, Alice and Bob are not on the same session"
+                );
+            }
+
+            exchange_messages_until_agreement(10, &mut alice, &mut bob, &mut csprng).await;
+        }
+        .now_or_never()
+        .expect("sync");
+    });
 }

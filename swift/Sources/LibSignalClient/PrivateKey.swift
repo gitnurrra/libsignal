@@ -8,10 +8,10 @@ import SignalFfi
 
 public class PrivateKey: ClonableHandleOwner<SignalMutPointerPrivateKey>, @unchecked Sendable {
     public convenience init<Bytes: ContiguousBytes>(_ bytes: Bytes) throws {
-        let handle = try bytes.withUnsafeBorrowedBuffer {
-            var result = SignalMutPointerPrivateKey()
-            try checkError(signal_privatekey_deserialize(&result, $0))
-            return result
+        let handle = try bytes.withUnsafeBorrowedBuffer { bytes in
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_privatekey_deserialize($0, bytes)
+            }
         }
         self.init(owned: NonNull(handle)!)
     }
@@ -69,7 +69,7 @@ public class PrivateKey: ClonableHandleOwner<SignalMutPointerPrivateKey>, @unche
         }
     }
 
-    /// Opens a ciphertext sealed with ``PublicKey/seal(_:info:associatedData:)-iyot``.
+    /// Opens a ciphertext sealed with ``PublicKey/seal(_:info:associatedData:)-(_,ContiguousBytes,_)``.
     ///
     /// Uses HPKE ([RFC 9180][]). The input should include its original type byte indicating the
     /// chosen algorithms and ciphertext layout. The `info` and `associatedData` must match those
@@ -92,7 +92,7 @@ public class PrivateKey: ClonableHandleOwner<SignalMutPointerPrivateKey>, @unche
         }
     }
 
-    /// Convenience overload for ``open(_:info:associatedData:)-55nax``, using the UTF-8 bytes of `info`.
+    /// Convenience overload for ``open(_:info:associatedData:)-(_,ContiguousBytes,_)``, using the UTF-8 bytes of `info`.
     public func open(
         _ ciphertext: some ContiguousBytes,
         info: String,

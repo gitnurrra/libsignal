@@ -31,13 +31,15 @@
  * @module Mp4Sanitizer
  */
 
-import * as Native from '../Native';
+import type { Bytes } from '@signalapp/types';
+
+import * as Native from './Native.js';
 import {
   IoError,
   InvalidMediaInputError,
   UnsupportedMediaInputError,
-} from './Errors';
-import { InputStream } from './io';
+} from './Errors.js';
+import { _bridgeInputStream, InputStream } from './io.js';
 
 export class SanitizedMetadata {
   readonly _nativeHandle: Native.SanitizedMetadata;
@@ -56,7 +58,7 @@ export class SanitizedMetadata {
    * Get the sanitized metadata, if any.
    * @returns The sanitized metadata, or `null` if it didn't need to be sanitized.
    */
-  getMetadata(): Uint8Array | null {
+  getMetadata(): Bytes | null {
     const metadata = Native.SanitizedMetadata_GetMetadata(this);
     if (metadata.length == 0) {
       return null;
@@ -96,7 +98,7 @@ export async function sanitize(
   len: bigint
 ): Promise<SanitizedMetadata> {
   const sanitizedMetadataNativeHandle = await Native.Mp4Sanitizer_Sanitize(
-    input,
+    _bridgeInputStream(input),
     len
   );
   return SanitizedMetadata._fromNativeHandle(sanitizedMetadataNativeHandle);

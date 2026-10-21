@@ -19,8 +19,13 @@ use crate::backup::sticker::MessageStickerError;
 use crate::backup::time::{
     Duration, ReportUnusualTimestamp, Timestamp, TimestampError, TimestampOrForever,
 };
-use crate::backup::{likely_empty, BackupMeta, CallError, ReferencedTypes, TryIntoWith};
+use crate::backup::{
+    BackupMeta, CallError, HasUnknownFields, ReferencedTypes, TryIntoWith, likely_empty,
+};
 use crate::proto::backup as proto;
+
+mod admin_deleted;
+use admin_deleted::*;
 
 mod contact_message;
 use contact_message::*;
@@ -66,6 +71,12 @@ use view_once_message::*;
 mod voice_message;
 use voice_message::*;
 
+mod pinned;
+use pinned::*;
+
+mod poll;
+use poll::*;
+
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ChatError {
@@ -90,6 +101,10 @@ pub enum ChatError {
     Style(#[from] ChatStyleError),
     /// {0}
     InvalidTimestamp(#[from] TimestampError),
+    /// chat with {0:?} is not a group but sets {1}
+    GroupOnlyNotifySetting(RecipientId, &'static str),
+    /// conflicting dontNotifyForMentionsIfMuted and notifyForMentionsIfMuted in chat with {0:?}
+    MentionsIfMutedConflict(RecipientId),
 }
 
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
@@ -107,8 +122,8 @@ pub enum ChatItemError {
     OutgoingMessageFrom(RecipientId, DestinationKind),
     /// incoming message authored by contact {0:?} with no ACI or e164
     IncomingMessageFromContactWithoutAciOrE164(RecipientId),
-    /// ChatItem.item is a oneof but is empty
-    MissingItem,
+    /// ChatItem.item is a oneof but is empty with {0}
+    MissingItem(HasUnknownFields),
     /// StandardMessage has neither text nor attachments
     StandardMessageIsEmpty,
     /// text: {0}
@@ -125,14 +140,14 @@ pub enum ChatItemError {
     Reaction(#[from] ReactionError),
     /// payment: {0}
     Payment(#[from] PaymentError),
-    /// ChatUpdateMessage.update is a oneof but is empty
-    UpdateIsEmpty,
+    /// ChatUpdateMessage.update is a oneof but is empty with {0}
+    UpdateIsEmpty(HasUnknownFields),
     /// call error: {0}
     Call(#[from] CallError),
     /// GroupChange has no changes.
     GroupChangeIsEmpty,
-    /// for GroupUpdate change {0}, Update.update is a oneof but is empty
-    GroupChangeUpdateIsEmpty(usize),
+    /// for GroupUpdate change {0}, Update.update is a oneof but is empty with {1}
+    GroupChangeUpdateIsEmpty(usize, HasUnknownFields),
     /// group update: {0}
     GroupUpdate(#[from] GroupUpdateError),
     /// StickerMessage has no sticker
@@ -145,8 +160,8 @@ pub enum ChatItemError {
     ViewOnce(#[from] ViewOnceMessageError),
     /// direct story reply: {0}
     DirectStoryReply(#[from] DirectStoryReplyError),
-    /// ChatItem.directionalDetails is a oneof but is empty
-    NoDirection,
+    /// ChatItem.directionalDetails is a oneof but is empty with {0}
+    NoDirection(HasUnknownFields),
     /// directionless ChatItem wasn't an update message
     DirectionlessMessage,
     /// update message wasn't directionless
@@ -195,8 +210,8 @@ pub enum ChatItemError {
     ExpirationTimerChangeNotFromContact,
     /// profile change not from contact
     ProfileChangeNotFromContact,
-    /// thread merge not from ACI
-    ThreadMergeNotFromAci,
+    /// thread merge not from ACI contact or Self
+    ThreadMergeNotFromAciOrSelf,
     /// session switchover from release notes
     SessionSwitchoverFromReleaseNotes,
     /// call not from contact or self
@@ -237,6 +252,24 @@ pub enum ChatItemError {
     InvalidE164,
     /// {0}
     InvalidTimestamp(#[from] TimestampError),
+    /// invalid poll {0}
+    InvalidPoll(#[from] PollError),
+    /// unexpected poll destination {0:?}
+    PollUnexpectedDestination(DestinationKind),
+    /// unexpected poll terminate destination {0:?}
+    PollTerminateUnexpectedDestination(DestinationKind),
+    /// poll terminate not from contact or self
+    PollTerminateNotFromContact,
+    /// pin message not from contact or self
+    PinMessageNotFromContact,
+    /// pin message sent to release notes
+    PinMessageToReleaseNotes,
+    /// invalid pin message {0}
+    InvalidPinMessage(#[from] PinMessageError),
+    /// admin deleted message: {0}
+    AdminDeletedMessage(#[from] AdminDeletedMessageError),
+    /// admin deleted message in non-group chat: {0:?}
+    AdminDeletedNotInGroup(DestinationKind),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -286,6 +319,8 @@ pub enum InvalidExpiration {
     TooSoon(#[from] ExpirationTooSoon),
     #[error("{0}")]
     TooShort(#[from] ExpirationTooShort),
+    #[error("expiration timers are not allowed for {0}")]
+    NotAllowedForPurpose(crate::backup::Purpose),
 }
 
 /// Validated version of [`proto::Chat`].
@@ -314,6 +349,10 @@ pub struct ChatData<M: Method + ReferencedTypes> {
     pub style: Option<ChatStyle<M>>,
     pub pinned_order: Option<PinOrder>,
     pub dont_notify_for_mentions_if_muted: bool,
+    pub notify_for_calls_if_muted: Option<bool>,
+    pub notify_for_mentions_if_muted: Option<bool>,
+    pub notify_for_replies_if_muted: Option<bool>,
+    pub show_unread_reminders: Option<bool>,
     pub marked_unread: bool,
     pub archived: bool,
 }
@@ -345,6 +384,7 @@ pub struct ChatItemData<M: Method + ReferencedTypes> {
     /// The position of this chat item among all chat items (across chats) in
     /// the source stream.
     pub total_chat_item_order_index: usize,
+    pub pin_details: Option<PinDetails>,
     _limit_construction_to_module: (),
 }
 
@@ -368,9 +408,10 @@ pub enum ChatItemMessage<M: Method + ReferencedTypes> {
     GiftBadge(M::BoxedValue<GiftBadge>),
     ViewOnce(ViewOnceMessage<M::RecipientReference>),
     DirectStoryReply(DirectStoryReplyMessage<M::RecipientReference>),
+    Poll(Poll<M::RecipientReference>),
+    AdminDeleted(AdminDeletedMessage<M::RecipientReference>),
 }
 
-#[expect(dead_code)]
 const CHAT_ITEM_MESSAGE_SIZE_LIMIT: usize = 200;
 static_assertions::const_assert!(
     std::mem::size_of::<StandardMessage<RecipientId>>() < CHAT_ITEM_MESSAGE_SIZE_LIMIT
@@ -396,6 +437,9 @@ static_assertions::const_assert!(
 static_assertions::const_assert!(
     std::mem::size_of::<ViewOnceMessage<RecipientId>>() < CHAT_ITEM_MESSAGE_SIZE_LIMIT
 );
+static_assertions::const_assert!(
+    std::mem::size_of::<AdminDeletedMessage<RecipientId>>() < CHAT_ITEM_MESSAGE_SIZE_LIMIT
+);
 
 #[derive(Debug, serde::Serialize, strum::EnumDiscriminants)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -406,10 +450,11 @@ pub enum Direction<Recipient> {
         read: bool,
         sealed_sender: bool,
     },
-    Outgoing(
+    Outgoing {
         #[serde(bound(serialize = "Recipient: serde::Serialize + SerializeOrder"))]
-        UnorderedList<OutgoingSend<Recipient>>,
-    ),
+        recipients: UnorderedList<OutgoingSend<Recipient>>,
+        received: Timestamp,
+    },
     Directionless,
 }
 
@@ -456,12 +501,12 @@ pub enum OutgoingSendError {
 }
 
 impl<
-        M: Method + ReferencedTypes,
-        C: LookupPair<RecipientId, MinimalRecipientData, M::RecipientReference>
-            + Lookup<PinOrder, M::RecipientReference>
-            + Lookup<CustomColorId, M::CustomColorReference>
-            + ReportUnusualTimestamp,
-    > TryIntoWith<ChatData<M>, C> for proto::Chat
+    M: Method + ReferencedTypes,
+    C: LookupPair<RecipientId, MinimalRecipientData, M::RecipientReference>
+        + Lookup<PinOrder, M::RecipientReference>
+        + Lookup<CustomColorId, M::CustomColorReference>
+        + ReportUnusualTimestamp,
+> TryIntoWith<ChatData<M>, C> for proto::Chat
 {
     type Error = ChatError;
 
@@ -477,6 +522,10 @@ impl<
             markedUnread,
             dontNotifyForMentionsIfMuted,
             style,
+            notifyForCallsIfMuted,
+            notifyForMentionsIfMuted,
+            notifyForRepliesIfMuted,
+            showUnreadReminders,
             special_fields: _,
         } = self;
 
@@ -486,6 +535,26 @@ impl<
         };
         let cached_recipient_info = ChatRecipientKind::try_from(recipient_data)
             .map_err(|kind| ChatError::InvalidRecipient(recipient_id, kind))?;
+
+        if cached_recipient_info.is_group() {
+            // if notifyForMentionsIfMuted is unset - the client may not know about it yet, so don't check for conflicts
+            if dontNotifyForMentionsIfMuted && notifyForMentionsIfMuted == Some(true) {
+                return Err(ChatError::MentionsIfMutedConflict(recipient_id));
+            }
+        } else {
+            if notifyForMentionsIfMuted.is_some() {
+                return Err(ChatError::GroupOnlyNotifySetting(
+                    recipient_id,
+                    "notifyForMentionsIfMuted",
+                ));
+            }
+            if notifyForRepliesIfMuted.is_some() {
+                return Err(ChatError::GroupOnlyNotifySetting(
+                    recipient_id,
+                    "notifyForRepliesIfMuted",
+                ));
+            }
+        }
 
         let pinned_order = pinnedOrder.map(PinOrder);
         if let Some(pinned_order) = pinned_order {
@@ -522,16 +591,20 @@ impl<
             archived,
             marked_unread: markedUnread,
             dont_notify_for_mentions_if_muted: dontNotifyForMentionsIfMuted,
+            notify_for_calls_if_muted: notifyForCallsIfMuted,
+            notify_for_mentions_if_muted: notifyForMentionsIfMuted,
+            notify_for_replies_if_muted: notifyForRepliesIfMuted,
+            show_unread_reminders: showUnreadReminders,
         })
     }
 }
 
 impl<
-        C: LookupPair<RecipientId, MinimalRecipientData, M::RecipientReference>
-            + AsRef<BackupMeta>
-            + ReportUnusualTimestamp,
-        M: Method + ReferencedTypes,
-    > TryIntoWith<ChatItemData<M>, C> for proto::ChatItem
+    C: LookupPair<RecipientId, MinimalRecipientData, M::RecipientReference>
+        + AsRef<BackupMeta>
+        + ReportUnusualTimestamp,
+    M: Method + ReferencedTypes,
+> TryIntoWith<ChatItemData<M>, C> for proto::ChatItem
 {
     type Error = ChatItemError;
 
@@ -539,6 +612,7 @@ impl<
         let proto::ChatItem {
             chatId: _,
             authorId,
+            pinDetails,
             item,
             directionalDetails,
             revisions,
@@ -546,11 +620,11 @@ impl<
             expiresInMs,
             dateSent,
             sms,
-            special_fields: _,
+            special_fields,
         } = self;
 
         let direction = directionalDetails
-            .ok_or(ChatItemError::NoDirection)?
+            .ok_or_else(|| ChatItemError::NoDirection(HasUnknownFields::check(&special_fields)))?
             .try_into_with(context)?;
 
         let author_id = RecipientId(authorId);
@@ -577,7 +651,10 @@ impl<
 
             (
                 MinimalRecipientData::Contact { .. } | MinimalRecipientData::ReleaseNotes,
-                Direction::Outgoing(_),
+                Direction::Outgoing {
+                    recipients: _,
+                    received: _,
+                },
             ) => Err(ChatItemError::OutgoingMessageFrom(
                 author_id,
                 *author_data.as_ref(),
@@ -588,13 +665,20 @@ impl<
                     e164: None,
                     aci: None,
                     pni: _,
+                    username: _,
                 },
                 Direction::Incoming { .. },
             ) => Err(ChatItemError::IncomingMessageFromContactWithoutAciOrE164(
                 author_id,
             )),
 
-            (MinimalRecipientData::Self_, Direction::Outgoing(_))
+            (
+                MinimalRecipientData::Self_,
+                Direction::Outgoing {
+                    recipients: _,
+                    received: _,
+                },
+            )
             | (MinimalRecipientData::Self_, Direction::Directionless) => {
                 Ok(ChatItemAuthorKind::Self_)
             }
@@ -612,8 +696,10 @@ impl<
         }?;
 
         let message = item
-            .ok_or(ChatItemError::MissingItem)?
+            .ok_or_else(|| ChatItemError::MissingItem(HasUnknownFields::check(&special_fields)))?
             .try_into_with(context)?;
+
+        let purpose = context.as_ref().purpose;
 
         match (&direction, &message) {
             (Direction::Directionless, ChatItemMessage::Update(_)) => Ok(()),
@@ -628,6 +714,14 @@ impl<
             update.validate_author(&cached_author_kind)?;
         }
 
+        if let (crate::backup::Purpose::TakeoutExport, ChatItemMessage::ViewOnce(view_once)) =
+            (purpose, &message)
+        {
+            if view_once.attachment.is_some() {
+                return Err(InvalidExpiration::NotAllowedForPurpose(purpose).into());
+            }
+        }
+
         if !revisions.is_empty() {
             match &message {
                 ChatItemMessage::Standard(_) | ChatItemMessage::DirectStoryReply(_) => {}
@@ -638,7 +732,9 @@ impl<
                 | ChatItemMessage::Update(_)
                 | ChatItemMessage::PaymentNotification(_)
                 | ChatItemMessage::GiftBadge(_)
-                | ChatItemMessage::ViewOnce(_) => {
+                | ChatItemMessage::ViewOnce(_)
+                | ChatItemMessage::Poll(_)
+                | ChatItemMessage::AdminDeleted(_) => {
                     return Err(ChatItemError::NonStandardMessageHasRevisions);
                 }
             }
@@ -701,8 +797,11 @@ impl<
                         read,
                         sealed_sender: _,
                     } => *read,
-                    Direction::Outgoing(outgoing) => {
-                        outgoing.0.iter().all(|send| match send.status {
+                    Direction::Outgoing {
+                        recipients,
+                        received: _,
+                    } => {
+                        recipients.0.iter().all(|send| match send.status {
                             DeliveryStatus::Failed(_) => false,
                             DeliveryStatus::Pending => false,
 
@@ -722,29 +821,38 @@ impl<
                 if should_have_started {
                     return Err(ChatItemError::ExpirationNotStarted);
                 }
-                if expires_in < MAX_REMOTE_BACKUP_DISAPPEARING_MESSAGE_TIME {
-                    match context.as_ref().purpose {
-                        crate::backup::Purpose::DeviceTransfer => {
-                            // For device transfer, we allow short expiring messages
-                        }
-                        crate::backup::Purpose::RemoteBackup => {
+                match purpose {
+                    crate::backup::Purpose::DeviceTransfer => {
+                        // For device transfer, we allow short expiring messages
+                    }
+                    crate::backup::Purpose::RemoteBackup => {
+                        if expires_in < MAX_REMOTE_BACKUP_DISAPPEARING_MESSAGE_TIME {
                             return Err(InvalidExpiration::TooShort(ExpirationTooShort {
                                 expiration_duration: expires_in,
                             })
                             .into());
                         }
                     }
+                    crate::backup::Purpose::TakeoutExport => {
+                        return Err(InvalidExpiration::NotAllowedForPurpose(purpose).into());
+                    }
                 }
             }
             (Some(expire_start), Some(expires_in)) => {
+                if matches!(purpose, crate::backup::Purpose::TakeoutExport) {
+                    return Err(InvalidExpiration::NotAllowedForPurpose(purpose).into());
+                }
                 let expires_at = expire_start + expires_in;
                 // Ensure that ephemeral content that's due to expire soon isn't backed up.
                 let backup_time = context.as_ref().backup_time;
                 let allowed_expire_at = backup_time
-                    + match context.as_ref().purpose {
+                    + match purpose {
                         crate::backup::Purpose::DeviceTransfer => Duration::ZERO,
                         crate::backup::Purpose::RemoteBackup => {
                             MAX_REMOTE_BACKUP_DISAPPEARING_MESSAGE_TIME
+                        }
+                        crate::backup::Purpose::TakeoutExport => {
+                            unreachable!("TakeoutExport handled above")
                         }
                     };
 
@@ -758,6 +866,11 @@ impl<
             }
         }
 
+        let pin_details = pinDetails
+            .into_option()
+            .map(|x| x.try_into_with(context))
+            .transpose()?;
+
         Ok(ChatItemData {
             author: author.clone(),
             cached_author_kind,
@@ -768,6 +881,7 @@ impl<
             expire_start,
             expires_in,
             sms,
+            pin_details,
             total_chat_item_order_index: Default::default(),
             _limit_construction_to_module: (),
         })
@@ -839,6 +953,21 @@ impl<M: Method + ReferencedTypes> ChatItemData<M> {
                     ));
                 }
             }
+            ChatItemMessage::Poll(_) => {
+                if matches!(recipient_data, ChatRecipientKind::ReleaseNotes) {
+                    return Err(ChatItemError::PollUnexpectedDestination(
+                        (*recipient_data).into(),
+                    ));
+                }
+            }
+            ChatItemMessage::AdminDeleted(_) => {
+                // Admin deleted messages can only appear in group chats
+                if !matches!(recipient_data, ChatRecipientKind::Group) {
+                    return Err(ChatItemError::AdminDeletedNotInGroup(
+                        (*recipient_data).into(),
+                    ));
+                }
+            }
         }
 
         Ok(())
@@ -879,13 +1008,19 @@ impl<R: Clone, C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusu
             }
             DirectionalDetails::Outgoing(OutgoingMessageDetails {
                 sendStatus,
+                dateReceived,
                 special_fields: _,
-            }) => Ok(Direction::Outgoing(
-                sendStatus
+            }) => Ok(Direction::Outgoing {
+                recipients: sendStatus
                     .into_iter()
                     .map(|s| s.try_into_with(context))
                     .collect::<Result<_, _>>()?,
-            )),
+                received: Timestamp::from_millis(
+                    dateReceived,
+                    "OutgoingMessageDetails.dateReceived",
+                    context,
+                )?,
+            }),
             DirectionalDetails::Directionless(DirectionlessMessageDetails {
                 special_fields: _,
             }) => Ok(Direction::Directionless),
@@ -986,11 +1121,11 @@ impl<R: Clone, C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusu
 }
 
 impl<
-        C: LookupPair<RecipientId, MinimalRecipientData, M::RecipientReference>
-            + AsRef<BackupMeta>
-            + ReportUnusualTimestamp,
-        M: Method + ReferencedTypes,
-    > TryIntoWith<ChatItemMessage<M>, C> for proto::chat_item::Item
+    C: LookupPair<RecipientId, MinimalRecipientData, M::RecipientReference>
+        + AsRef<BackupMeta>
+        + ReportUnusualTimestamp,
+    M: Method + ReferencedTypes,
+> TryIntoWith<ChatItemMessage<M>, C> for proto::chat_item::Item
 {
     type Error = ChatItemError;
 
@@ -1033,6 +1168,10 @@ impl<
             Item::DirectStoryReplyMessage(message) => {
                 ChatItemMessage::DirectStoryReply(message.try_into_with(context)?)
             }
+            Item::Poll(poll) => ChatItemMessage::Poll(poll.try_into_with(context)?),
+            Item::AdminDeletedMessage(message) => {
+                ChatItemMessage::AdminDeleted(message.try_into_with(context)?)
+            }
         })
     }
 }
@@ -1046,10 +1185,10 @@ mod test {
     use test_case::test_case;
 
     use super::*;
+    use crate::backup::Purpose;
     use crate::backup::method::Store;
     use crate::backup::testutil::TestContext;
     use crate::backup::time::testutil::MillisecondsSinceEpoch;
-    use crate::backup::Purpose;
 
     impl proto::ChatItem {
         pub(crate) fn test_data() -> Self {
@@ -1069,6 +1208,7 @@ mod test {
                 expireStartDate: Some(MillisecondsSinceEpoch::TEST_VALUE.0),
                 expiresInMs: Some(24 * 60 * 60 * 1000),
                 dateSent: MillisecondsSinceEpoch::TEST_VALUE.0,
+                pinDetails: Some(proto::chat_item::PinDetails::test_data()).into(),
                 ..Default::default()
             }
         }
@@ -1078,6 +1218,7 @@ mod test {
         fn test_data() -> Self {
             Self {
                 sendStatus: vec![proto::SendStatus::test_data()],
+                dateReceived: MillisecondsSinceEpoch::TEST_VALUE.0,
                 special_fields: SpecialFields::default(),
             }
         }
@@ -1115,8 +1256,43 @@ mod test {
                 archived: false,
                 marked_unread: false,
                 dont_notify_for_mentions_if_muted: false,
+                notify_for_calls_if_muted: None,
+                notify_for_mentions_if_muted: None,
+                notify_for_replies_if_muted: None,
+                show_unread_reminders: None,
             })
         );
+    }
+
+    #[test]
+    fn chat_notify_settings() {
+        const VALUES: [Option<bool>; 3] = [None, Some(true), Some(false)];
+
+        for (calls, mentions, replies, reminders) in
+            itertools::iproduct!(VALUES, VALUES, VALUES, VALUES)
+        {
+            let mut chat = proto::Chat::test_data();
+            // The mention and reply settings are only allowed on group chats.
+            chat.recipientId = TestContext::GROUP_ID.0;
+            chat.notifyForCallsIfMuted = calls;
+            chat.notifyForMentionsIfMuted = mentions;
+            chat.notifyForRepliesIfMuted = replies;
+            chat.showUnreadReminders = reminders;
+
+            let chat: ChatData<Store> = chat
+                .try_into_with(&TestContext::default())
+                .expect("valid chat");
+
+            assert_eq!(
+                (
+                    chat.notify_for_calls_if_muted,
+                    chat.notify_for_mentions_if_muted,
+                    chat.notify_for_replies_if_muted,
+                    chat.show_unread_reminders,
+                ),
+                (calls, mentions, replies, reminders)
+            );
+        }
     }
 
     #[test_case(|x| {
@@ -1142,6 +1318,33 @@ mod test {
     #[test_case(|x| {
         x.recipientId = 0;
     } => Err(ChatError::NoRecipient(RecipientId(0))); "unknown recipient")]
+    #[test_case(|x| {
+        x.notifyForMentionsIfMuted = Some(true);
+    } => Err(ChatError::GroupOnlyNotifySetting(TestContext::CONTACT_ID, "notifyForMentionsIfMuted"));
+    "notify for mentions outside a group")]
+    #[test_case(|x| {
+        x.notifyForRepliesIfMuted = Some(true);
+    } => Err(ChatError::GroupOnlyNotifySetting(TestContext::CONTACT_ID, "notifyForRepliesIfMuted"));
+    "notify for replies outside a group")]
+    #[test_case(|x| {
+        x.recipientId = TestContext::GROUP_ID.0;
+        x.dontNotifyForMentionsIfMuted = true;
+        x.notifyForMentionsIfMuted = Some(false);
+    } => Ok(()); "dont notify agrees with notify for mentions")]
+    #[test_case(|x| {
+        x.recipientId = TestContext::GROUP_ID.0;
+        x.dontNotifyForMentionsIfMuted = true;
+        x.notifyForMentionsIfMuted = Some(true);
+    } => Err(ChatError::MentionsIfMutedConflict(TestContext::GROUP_ID));
+    "dont notify conflicts with notify for mentions")]
+    #[test_case(|x| {
+        x.recipientId = TestContext::GROUP_ID.0;
+        x.dontNotifyForMentionsIfMuted = true;
+        x.notifyForMentionsIfMuted = None;
+    } => Ok(()); "dont notify without notify for mentions")]
+    #[test_case(|x| {
+        x.dontNotifyForMentionsIfMuted = true;
+    } => Ok(()); "dont notify alone outside a group")]
     fn chat(modifier: fn(&mut proto::Chat)) -> Result<(), ChatError> {
         let mut chat = proto::Chat::test_data();
         modifier(&mut chat);
@@ -1172,6 +1375,7 @@ mod test {
                 sent_at: Timestamp::test_value(),
                 sms: false,
                 total_chat_item_order_index: 0,
+                pin_details: Some(PinDetails::from_proto_test_data()),
                 _limit_construction_to_module: (),
             })
         )
@@ -1180,7 +1384,7 @@ mod test {
     #[test_case(|x| x.authorId = 0xffff => Err(ChatItemError::AuthorNotFound(RecipientId(0xffff))); "unknown_author")]
     #[test_case(|x| x.authorId = TestContext::GROUP_ID.0 => Err(ChatItemError::InvalidAuthor(TestContext::GROUP_ID, DestinationKind::Group)); "invalid author")]
     #[test_case(|x| x.authorId = TestContext::PNI_ONLY_ID.0 => Err(ChatItemError::IncomingMessageFromContactWithoutAciOrE164(TestContext::PNI_ONLY_ID)); "pni-only author")]
-    #[test_case(|x| x.directionalDetails = None => Err(ChatItemError::NoDirection); "no_direction")]
+    #[test_case(|x| x.directionalDetails = None => Err(ChatItemError::NoDirection(HasUnknownFields::No)); "no_direction")]
     #[test_case(|x| {
         x.authorId = TestContext::SELF_ID.0;
         x.directionalDetails = Some(proto::chat_item::OutgoingMessageDetails::test_data().into());
@@ -1344,6 +1548,11 @@ mod test {
     #[test_case(Purpose::DeviceTransfer, 3600, Ok(()))]
     #[test_case(Purpose::RemoteBackup, 86400, Ok(()))]
     #[test_case(
+        Purpose::TakeoutExport,
+        86400,
+        Err("expiration timers are not allowed for takeout-export")
+    )]
+    #[test_case(
         Purpose::RemoteBackup,
         3600,
         Err("expires 3600s after backup creation")
@@ -1390,9 +1599,8 @@ mod test {
         );
         item.expiresInMs = Some(until_expiration_ms);
 
-        let result = item
-            .try_into_with(&TestContext(meta))
-            .map(|_: ChatItemData<Store>| ())
+        let result = TryIntoWith::<ChatItemData<Store>, _>::try_into_with(item, &TestContext(meta))
+            .map(|_| ())
             .map_err(|e| assert_matches!(e, ChatItemError::InvalidExpiration(e) => e).to_string());
         assert_eq!(result, expected.map_err(ToString::to_string));
     }
@@ -1401,6 +1609,7 @@ mod test {
     #[test_case(Purpose::DeviceTransfer, Duration::from_hours(12), Ok(()); "DeviceTransfer with short expiration")]
     #[test_case(Purpose::RemoteBackup, Duration::from_hours(25), Ok(()); "RemoteBackup with long expiration")]
     #[test_case(Purpose::DeviceTransfer, Duration::from_hours(25), Ok(()); "DeviceTransfer with long expiration")]
+    #[test_case(Purpose::TakeoutExport, Duration::from_hours(12), Err("expiration timers are not allowed for takeout-export"); "TakeoutExport short expiration")]
     fn expiring_message_timer_not_started(
         backup_purpose: Purpose,
         expiration_duration: Duration,
@@ -1431,17 +1640,74 @@ mod test {
             first_app_version: "".into(),
         };
 
-        let result = item
-            .try_into_with(&TestContext(meta))
-            .map(|_: ChatItemData<Store>| ())
-            .map_err(|e| match e {
-                ChatItemError::InvalidExpiration(InvalidExpiration::TooShort(err)) => {
-                    err.to_string()
-                }
-                _ => panic!("Unexpected error: {e:?}"),
-            });
+        let result = TryIntoWith::<ChatItemData<Store>, _>::try_into_with(item, &TestContext(meta))
+            .map(|_| ())
+            .map_err(|e| assert_matches!(e, ChatItemError::InvalidExpiration(e) => e).to_string());
 
         assert_eq!(result, expected.map_err(ToString::to_string));
+    }
+
+    #[test]
+    fn takeout_export_rejects_view_once_messages_with_attachment() {
+        let mut item = proto::ChatItem::test_data();
+        item.expireStartDate = None;
+        item.expiresInMs = None;
+        item.item = Some(proto::chat_item::Item::ViewOnceMessage(
+            proto::ViewOnceMessage {
+                attachment: Some(proto::MessageAttachment::test_data()).into(),
+                reactions: vec![proto::Reaction::test_data()],
+                ..Default::default()
+            },
+        ));
+
+        let meta = BackupMeta {
+            purpose: Purpose::TakeoutExport,
+            backup_time: Timestamp::test_value(),
+            media_root_backup_key: libsignal_account_keys::BackupKey(
+                [0xab; libsignal_account_keys::BACKUP_KEY_LEN],
+            ),
+            version: 0,
+            current_app_version: "libsignal-testing 0.0.2".into(),
+            first_app_version: "libsignal-testing 0.0.1".into(),
+        };
+
+        let error = TryIntoWith::<ChatItemData<Store>, _>::try_into_with(item, &TestContext(meta))
+            .expect_err("view-once message with attachment should be rejected");
+
+        assert_matches!(
+            error,
+            ChatItemError::InvalidExpiration(InvalidExpiration::NotAllowedForPurpose(
+                Purpose::TakeoutExport
+            ))
+        );
+    }
+
+    #[test]
+    fn takeout_export_allows_view_once_messages_without_attachment() {
+        let mut item = proto::ChatItem::test_data();
+        item.expireStartDate = None;
+        item.expiresInMs = None;
+        item.item = Some(proto::chat_item::Item::ViewOnceMessage(
+            proto::ViewOnceMessage {
+                attachment: None.into(),
+                reactions: vec![proto::Reaction::test_data()],
+                ..Default::default()
+            },
+        ));
+
+        let meta = BackupMeta {
+            purpose: Purpose::TakeoutExport,
+            backup_time: Timestamp::test_value(),
+            media_root_backup_key: libsignal_account_keys::BackupKey(
+                [0xab; libsignal_account_keys::BACKUP_KEY_LEN],
+            ),
+            version: 0,
+            current_app_version: "libsignal-testing 0.0.2".into(),
+            first_app_version: "libsignal-testing 0.0.1".into(),
+        };
+
+        let result = TryIntoWith::<ChatItemData<Store>, _>::try_into_with(item, &TestContext(meta));
+        assert_matches!(result, Ok(_));
     }
 
     #[test]
@@ -1530,8 +1796,14 @@ mod test {
             last_status_update: Timestamp::test_value(),
         };
 
-        let message1 = Direction::Outgoing(vec![send1.clone(), send2.clone()].into());
-        let message2 = Direction::Outgoing(vec![send2, send1].into());
+        let message1 = Direction::Outgoing {
+            recipients: vec![send1.clone(), send2.clone()].into(),
+            received: Timestamp::test_value(),
+        };
+        let message2 = Direction::Outgoing {
+            recipients: vec![send2, send1].into(),
+            received: Timestamp::test_value(),
+        };
 
         assert_eq!(
             serde_json::to_string_pretty(&message1).expect("valid"),
@@ -1599,6 +1871,27 @@ mod test {
         Err(ChatItemError::DirectStoryReplyNotInContactThread(DestinationKind::Group));
         "direct story reply in group chat"
     )]
+    #[test_case(
+        TestContext::RELEASE_NOTES_ID,
+        |x| {
+            x.authorId = TestContext::RELEASE_NOTES_ID.0;
+            x.item = Some(proto::chat_item::Item::Poll(proto::Poll::test_data()))
+        } => Err(ChatItemError::PollUnexpectedDestination(DestinationKind::ReleaseNotes));
+        "poll from release notes"
+    )]
+    #[test_case(
+        TestContext::RELEASE_NOTES_ID,
+        |x| {
+            x.directionalDetails = Some(
+                proto::chat_item::DirectionalDetails::Directionless(
+                    proto::chat_item::DirectionlessMessageDetails::default()));
+            x.authorId = TestContext::SELF_ID.0;
+            x.item = Some(proto::chat_item::Item::UpdateMessage(proto::ChatUpdateMessage {
+                update: Some(proto::chat_update_message::Update::PollTerminate(proto::PollTerminateUpdate::test_data())),
+                ..proto::ChatUpdateMessage::default()
+            }))
+        } => Err(ChatItemError::PollTerminateUnexpectedDestination(DestinationKind::ReleaseNotes));
+        "poll terminate update to release notes")]
     fn validate_chat_recipient(
         recipient_id: RecipientId,
         modifier: fn(&mut proto::ChatItem),

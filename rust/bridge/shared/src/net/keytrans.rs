@@ -3,27 +3,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::time::SystemTime;
+
 use itertools::Itertools;
 use libsignal_bridge_macros::{bridge_fn, bridge_io};
-use libsignal_bridge_types::keytrans::BridgeError;
 use libsignal_bridge_types::net::chat::UnauthenticatedChatConnection;
 pub use libsignal_bridge_types::net::{Environment, TokioAsyncContext};
 use libsignal_bridge_types::support::AsType;
 use libsignal_core::{Aci, E164};
-use libsignal_keytrans::{AccountData, LocalStateUpdate, StoredAccountData, StoredTreeHead};
+use libsignal_keytrans::{AccountData, StoredAccountData};
+use libsignal_net_chat::api::RequestError;
 use libsignal_net_chat::api::keytrans::{
-    monitor_and_search, Error, KeyTransparencyClient, MaybePartial, SearchKey,
-    UnauthenticatedChatApi as _, UsernameHash,
+    AccountDataField, AccountDataFieldReset as _, CheckMode, Error, KeyTransparencyClient,
+    MaybePartial, SearchKey, TreeHeadWithTimestamp, UsernameHash, check,
 };
-use libsignal_net_chat::api::Unauth;
 use libsignal_protocol::PublicKey;
 use prost::{DecodeError, Message};
 
 use crate::support::*;
 use crate::*;
-
-/// An alias to make using `from` cleaner.
-type UnauthConnectionRef<'a, T> = &'a Unauth<T>;
 
 #[bridge_fn]
 fn KeyTransparency_AciSearchKey(aci: Aci) -> Vec<u8> {
@@ -40,6 +38,120 @@ fn KeyTransparency_UsernameHashSearchKey(hash: &[u8]) -> Vec<u8> {
     UsernameHash::from_slice(hash).as_search_key()
 }
 
+#[bridge_fn]
+fn KeyTransparency_ResetDataField(
+    account_data: Box<[u8]>,
+    field: AsType<AccountDataField, u8>,
+) -> Vec<u8> {
+    // The only failure is decoding error, we'll use empty vec for that.
+    let decoded: Result<StoredAccountData, _> = try_decode(account_data);
+    let Ok(account_data) = decoded else {
+        log::warn!("Failed to decode stored account data");
+        return vec![];
+    };
+    account_data.reset(field.into_inner()).encode_to_vec()
+}
+
+#[bridge_io(TokioAsyncContext)]
+#[expect(clippy::too_many_arguments)]
+async fn KeyTransparency_Check(
+    // TODO: it is currently possible to pass an env that does not match chat
+    environment: AsType<Environment, u8>,
+    chat_connection: &UnauthenticatedChatConnection,
+    aci: Aci,
+    aci_identity_key: &PublicKey,
+    e164: Option<E164>,
+    unidentified_access_key: Option<Box<[u8]>>,
+    username_hash: Option<Box<[u8]>>,
+    account_data: Option<Box<[u8]>>,
+    last_distinguished_tree_head: Option<Box<[u8]>>,
+    is_self_check: bool,
+    is_e164_discoverable: bool,
+    // Return a pair of (serialized account data, serialized distinguished)
+    // If the last_distinguished_tree_head was reused, serialized distinguished will be empty.
+    // Could have been an Option<Vec<u8>>, but that would be another layer of <> to handle in
+    // the bridging macro to the same effect.
+) -> Result<(Vec<u8>, Vec<u8>), RequestError<Error>> {
+    let config = environment.into_inner().env().keytrans_config;
+
+    let username_hash = username_hash.map(UsernameHash::from);
+    let maybe_hash_search_key = username_hash.as_ref().map(|x| x.as_search_key());
+
+    let account_data = account_data.map(try_decode_account_data).transpose()?;
+
+    let mode = if is_self_check {
+        CheckMode::SelfCheck {
+            is_e164_discoverable,
+        }
+    } else {
+        CheckMode::ContactCheck
+    };
+
+    let e164_pair = make_e164_pair(e164, unidentified_access_key)?;
+
+    let last_distinguished_tree_head =
+        last_distinguished_tree_head.and_then(try_decode_distinguished);
+
+    let previously_stored_distinguished = last_distinguished_tree_head.clone();
+
+    let (maybe_partial_result, updated_distinguished) = chat_connection
+        .as_typed(|chat| {
+            Box::pin(async move {
+                let kt = KeyTransparencyClient::new(*chat, config);
+
+                check(
+                    &kt,
+                    &aci,
+                    aci_identity_key,
+                    e164_pair,
+                    username_hash,
+                    account_data,
+                    last_distinguished_tree_head,
+                    mode,
+                )
+                .await
+            })
+        })
+        .await?;
+
+    let now = SystemTime::now();
+    let serialized_account_data = maybe_partial_result.into_serialized_account_data(
+        aci.as_search_key(),
+        e164.map(|x| x.as_search_key()),
+        maybe_hash_search_key,
+        now,
+    )?;
+    let distinguished_to_be_stored = if let Some(known) = previously_stored_distinguished
+        && known.tree_head == updated_distinguished
+    {
+        // Distinguished has not been updated, we must keep its stored_at
+        vec![]
+    } else {
+        updated_distinguished.into_stored(now).encode_to_vec()
+    };
+    Ok((serialized_account_data, distinguished_to_be_stored))
+}
+
+fn invalid_request(msg: &'static str) -> RequestError<Error> {
+    RequestError::Other(Error::InvalidRequest(msg))
+}
+
+fn invalid_response(msg: String) -> RequestError<Error> {
+    RequestError::Other(Error::InvalidResponse(msg))
+}
+
+fn make_e164_pair(
+    e164: Option<E164>,
+    unidentified_access_key: Option<Box<[u8]>>,
+) -> Result<Option<(E164, Vec<u8>)>, RequestError<Error>> {
+    match (e164, unidentified_access_key) {
+        (None, None) => Ok(None),
+        (Some(e164), Some(uak)) => Ok(Some((e164, uak.into_vec()))),
+        (None, Some(_uak)) => Err(invalid_request("Unidentified access key without an E164")),
+        (Some(_e164), None) => Err(invalid_request("E164 without unidentified access key")),
+    }
+}
+
 fn try_decode<B, T>(bytes: B) -> Result<T, DecodeError>
 where
     B: AsRef<[u8]>,
@@ -48,163 +160,51 @@ where
     T::decode(bytes.as_ref())
 }
 
-#[bridge_io(TokioAsyncContext)]
-#[expect(clippy::too_many_arguments)]
-async fn KeyTransparency_Search(
-    // TODO: it is currently possible to pass an env that does not match chat
-    environment: AsType<Environment, u8>,
-    chat_connection: &UnauthenticatedChatConnection,
-    aci: Aci,
-    aci_identity_key: &PublicKey,
-    e164: Option<E164>,
-    unidentified_access_key: Option<Box<[u8]>>,
-    username_hash: Option<Box<[u8]>>,
-    account_data: Option<Box<[u8]>>,
-    last_distinguished_tree_head: Box<[u8]>,
-) -> Result<Vec<u8>, BridgeError> {
-    let username_hash = username_hash.map(UsernameHash::from);
-    let config = environment.into_inner().env().keytrans_config;
-    let kt = KeyTransparencyClient::new(UnauthConnectionRef::from(chat_connection), config);
+fn try_decode_account_data(bytes: Box<[u8]>) -> Result<AccountData, RequestError<Error>> {
+    let stored: StoredAccountData =
+        try_decode(bytes).map_err(|_| invalid_request("could not decode account data"))?;
+    AccountData::try_from(stored).map_err(|err| RequestError::Other(Error::from(err)))
+}
 
-    let e164_pair = make_e164_pair(e164, unidentified_access_key)?;
+fn try_decode_distinguished(bytes: Box<[u8]>) -> Option<TreeHeadWithTimestamp> {
+    try_decode(bytes)
+        .ok()
+        .and_then(TreeHeadWithTimestamp::from_stored)
+}
 
-    let account_data = account_data
-        .map(|bytes| {
-            let stored: StoredAccountData = try_decode(bytes)
-                .map_err(|_| Error::InvalidRequest("could not decode account data"))?;
-            AccountData::try_from(stored).map_err(Error::from)
+trait MaybePartialExt {
+    fn into_serialized_account_data(
+        self,
+        aci_search_key: Vec<u8>,
+        maybe_e164_search_key: Option<Vec<u8>>,
+        maybe_hash_search_key: Option<Vec<u8>>,
+        stored_at: SystemTime,
+    ) -> Result<Vec<u8>, RequestError<Error>>;
+}
+
+impl MaybePartialExt for MaybePartial<AccountData> {
+    fn into_serialized_account_data(
+        self,
+        aci_search_key: Vec<u8>,
+        maybe_e164_search_key: Option<Vec<u8>>,
+        maybe_hash_search_key: Option<Vec<u8>>,
+        stored_at: SystemTime,
+    ) -> Result<Vec<u8>, RequestError<Error>> {
+        self.map(|data| {
+            data.into_stored(
+                aci_search_key,
+                maybe_e164_search_key,
+                maybe_hash_search_key,
+                stored_at,
+            )
+            .encode_to_vec()
         })
-        .transpose()?;
-
-    let last_distinguished_tree_head = try_decode(last_distinguished_tree_head)
-        .map(|stored: StoredTreeHead| stored.into_last_tree_head())
-        .map_err(|_| Error::InvalidRequest("could not decode last distinguished tree head"))?
-        .ok_or(Error::InvalidRequest("last distinguished tree is required"))?;
-
-    let MaybePartial {
-        inner: returned_account_data,
-        missing_fields,
-    } = kt
-        .search(
-            &aci,
-            aci_identity_key,
-            e164_pair,
-            username_hash,
-            account_data,
-            &last_distinguished_tree_head,
-        )
-        .await?;
-
-    if missing_fields.is_empty() {
-        Ok(StoredAccountData::from(returned_account_data).encode_to_vec())
-    } else {
-        Err(Error::InvalidResponse(format!(
-            "some fields are missing from the response: {}",
-            &itertools::join(&missing_fields, ", ")
-        ))
-        .into())
-    }
-}
-
-#[bridge_io(TokioAsyncContext)]
-#[expect(clippy::too_many_arguments)]
-async fn KeyTransparency_Monitor(
-    // TODO: it is currently possible to pass an env that does not match chat
-    environment: AsType<Environment, u8>,
-    chat_connection: &UnauthenticatedChatConnection,
-    aci: Aci,
-    aci_identity_key: &PublicKey,
-    e164: Option<E164>,
-    unidentified_access_key: Option<Box<[u8]>>,
-    username_hash: Option<Box<[u8]>>,
-    // Bridging this as optional even though it is required because it is
-    // simpler to produce an error once here than on all platforms.
-    account_data: Option<Box<[u8]>>,
-    last_distinguished_tree_head: Box<[u8]>,
-) -> Result<Vec<u8>, BridgeError> {
-    let username_hash = username_hash.map(UsernameHash::from);
-
-    let Some(account_data) = account_data else {
-        return Err(Error::InvalidRequest("account data not found in store").into());
-    };
-
-    let account_data = {
-        let stored: StoredAccountData = try_decode(account_data)
-            .map_err(|_| Error::InvalidRequest("could not decode account data"))?;
-        AccountData::try_from(stored).map_err(Error::from)?
-    };
-
-    let last_distinguished_tree_head = try_decode(last_distinguished_tree_head)
-        .map(|stored: StoredTreeHead| stored.into_last_tree_head())
-        .map_err(|_| Error::InvalidRequest("could not decode last distinguished tree head"))?
-        .ok_or(Error::InvalidRequest("last distinguished tree is required"))?;
-
-    let config = environment.into_inner().env().keytrans_config;
-    let kt = KeyTransparencyClient::new(UnauthConnectionRef::from(chat_connection), config);
-
-    let e164_pair = make_e164_pair(e164, unidentified_access_key)?;
-    let MaybePartial {
-        inner: updated_account_data,
-        missing_fields,
-    } = monitor_and_search(
-        &kt,
-        &aci,
-        aci_identity_key,
-        e164_pair,
-        username_hash,
-        account_data,
-        &last_distinguished_tree_head,
-    )
-    .await?;
-
-    if !missing_fields.is_empty() {
-        return Err(Error::InvalidResponse(format!(
-            "Missing fields: {}",
-            missing_fields.iter().join(", ")
-        ))
-        .into());
-    }
-
-    Ok(StoredAccountData::from(updated_account_data).encode_to_vec())
-}
-
-#[bridge_io(TokioAsyncContext)]
-async fn KeyTransparency_Distinguished(
-    // TODO: it is currently possible to pass an env that does not match chat
-    environment: AsType<Environment, u8>,
-    chat_connection: &UnauthenticatedChatConnection,
-    last_distinguished_tree_head: Option<Box<[u8]>>,
-) -> Result<Vec<u8>, BridgeError> {
-    let config = environment.into_inner().env().keytrans_config;
-    let kt = KeyTransparencyClient::new(UnauthConnectionRef::from(chat_connection), config);
-
-    let known_distinguished = last_distinguished_tree_head
-        .map(try_decode)
-        .transpose()
-        .map_err(|_| Error::InvalidRequest("could not decode account data"))?
-        .and_then(|stored: StoredTreeHead| stored.into_last_tree_head());
-    let LocalStateUpdate {
-        tree_head,
-        tree_root,
-        monitoring_data: _,
-    } = kt.distinguished(known_distinguished).await?;
-    let updated_distinguished = StoredTreeHead::from((tree_head, tree_root));
-    let serialized = updated_distinguished.encode_to_vec();
-    Ok(serialized)
-}
-
-fn make_e164_pair(
-    e164: Option<E164>,
-    unidentified_access_key: Option<Box<[u8]>>,
-) -> Result<Option<(E164, Vec<u8>)>, Error> {
-    match (e164, unidentified_access_key) {
-        (None, None) => Ok(None),
-        (Some(e164), Some(uak)) => Ok(Some((e164, uak.into_vec()))),
-        (None, Some(_uak)) => Err(Error::InvalidRequest(
-            "Unidentified access key without an E164",
-        )),
-        (Some(_e164), None) => Err(Error::InvalidRequest(
-            "E164 without unidentified access key",
-        )),
+        .into_result()
+        .map_err(|missing| {
+            invalid_response(format!(
+                "Some fields are missing from the response: {}",
+                missing.iter().join(", ")
+            ))
+        })
     }
 }

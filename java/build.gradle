@@ -1,74 +1,59 @@
+import org.gradle.api.publish.PublishingExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     id "base"
     id "signing"
-    id "com.diffplug.spotless" version "6.20.0"
-    id "io.github.gradle-nexus.publish-plugin" version "2.0.0"
+    id "com.diffplug.spotless" version "7.2.1"
 
-    id "org.jetbrains.kotlin.jvm" version "2.1.0" apply false
-    id "org.jetbrains.dokka" version "2.0.0" apply false
+    id "org.jetbrains.kotlin.jvm" version "2.2.20" apply false
+    id "org.jetbrains.dokka" version "2.1.0" apply false
+    id "org.jetbrains.dokka-javadoc" version "2.1.0" apply false
 
-    // These plugins need to be loaded together, so we must declare them up front.
-    id 'com.android.library' version "8.9.0" apply false
-    id 'org.jetbrains.kotlin.android' version "2.1.0" apply false
+    // Declared here so the Android subprojects can apply it without a version.
+    id 'com.android.library' version "9.4.0" apply false
+}
+
+repositories {
+    mavenCentral()
+    google()
+    mavenLocal()
 }
 
 allprojects {
-    version = "0.78.0"
+    version = "0.105.2"
     group   = "org.signal"
 
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+        options.compilerArgs += ["-Xlint:deprecation", "-Xlint:fallthrough", "-Xlint:unchecked"]
+    }
+    tasks.withType(Javadoc) {
+        options.encoding = 'UTF-8'
+        options.addStringOption('Xdoclint:none', '-quiet')
+    }
     tasks.withType(KotlinCompile).configureEach {
-        compilerOptions.jvmTarget = JvmTarget.JVM_17
+        compilerOptions.jvmTarget = JvmTarget.JVM_21
     }
-}
-
-subprojects {
-    if (JavaVersion.current().isJava8Compatible()) {
-        allprojects {
-            tasks.withType(Javadoc) {
-                options.encoding = 'UTF-8'
-                options.addStringOption('Xdoclint:none', '-quiet')
-            }
-        }
+    tasks.withType(AbstractArchiveTask) {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
     }
 
-    allprojects {
-        tasks.withType(JavaCompile) {
-            options.encoding = 'UTF-8'
-            options.compilerArgs += ["-Xlint:deprecation", "-Xlint:fallthrough", "-Xlint:unchecked"]
-        }
-        tasks.withType(AbstractArchiveTask) {
-            preserveFileTimestamps = false
-            reproducibleFileOrder = true
-        }
-    }
-
-    apply plugin: "com.diffplug.spotless"
     apply plugin: "org.jetbrains.dokka"
-    spotless {
-        kotlin {
-            target('**/*.kt')
-            targetExclude("**/acknowledgments/**")
-            ktlint()
-        }
-        java {
-            target('**/*.java')
-            targetExclude('**/Native.java', '**/NativeTesting.java')
-            importOrder()
-            removeUnusedImports()
+    apply plugin: "org.jetbrains.dokka-javadoc"
 
-            googleJavaFormat()
-            formatAnnotations()
-            licenseHeaderFile rootProject.file('license_header.txt')
+    dokka {
+        dokkaPublications.html {
+            failOnWarning.set(System.getProperty("org.gradle.warning.mode") == "fail")
         }
     }
 }
 
 task makeJniLibrariesDesktop(type:Exec) {
-  group 'Rust'
-  description 'Build the JNI libraries'
+  group = 'Rust'
+  description = 'Build the JNI libraries'
 
   def debugLevelLogsFlag = project.hasProperty('debugLevelLogs') ? ['--debug-level-logs'] : []
   def jniTypeTaggingFlag = project.hasProperty('jniTypeTagging') ? ['--jni-type-tagging'] : []
@@ -79,8 +64,8 @@ task makeJniLibrariesDesktop(type:Exec) {
 }
 
 task makeJniLibrariesServer(type:Exec) {
-  group 'Rust'
-  description 'Build the JNI libraries'
+  group = 'Rust'
+  description = 'Build the JNI libraries'
 
   def debugLevelLogsFlag = project.hasProperty('debugLevelLogs') ? ['--debug-level-logs'] : []
   def jniTypeTaggingFlag = project.hasProperty('jniTypeTagging') ? ['--jni-type-tagging'] : []
@@ -92,12 +77,12 @@ task makeJniLibrariesServer(type:Exec) {
 }
 
 task cargoClean(type:Exec) {
-  group 'Rust'
+  group = 'Rust'
   commandLine 'cargo', 'clean'
 }
 
 task cleanJni(type: Delete) {
-  description 'Clean JNI libs'
+  description = 'Clean JNI libs'
   delete fileTree('./android/src/main/jniLibs') {
     include '**/*.so'
   }
@@ -126,19 +111,58 @@ ext.setUpSigningKey = { signingExt ->
     }
 }
 
-nexusPublishing {
-    repositories {
-        sonatype {
-            username = project.findProperty('sonatypeUsername') ?: ""
-            password = project.findProperty('sonatypePassword') ?: ""
-            // This is the recommended configuration from the README for the plugin we use, gradle-nexus/publish-plugin.
-            // The URLs are from https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/#configuration
-            nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
+subprojects { subproject ->
+    subproject.plugins.withId('maven-publish') {
+        subproject.extensions.configure(PublishingExtension) { publishing ->
+            publishing.repositories {
+                maven {
+                    name = "SignalBuildArtifacts"
+                    // We can't use Gradle's built-in GCS support with the way we authenticate
+                    // GitHub Actions. Fortunately, GCS's REST APIs are basically just normal HTTP
+                    // GET/PUT with an auth token, which is compatible with what Gradle will do.
+                    url = subproject.uri("https://storage.googleapis.com/build-artifacts.signal.org/libraries/maven")
+                    credentials(HttpHeaderCredentials) {
+                        name = "Authorization"
+                        value = "Bearer ${System.getenv("CLOUDSDK_AUTH_ACCESS_TOKEN") ?: ""}"
+                    }
+                    authentication {
+                        header(HttpHeaderAuthentication)
+                    }
+                }
+            }
         }
     }
 }
 
-def isReleaseBuild() {
+ext.isReleaseBuild = { ->
     return version.contains("SNAPSHOT") == false
+}
+
+// Late evaluation after this point.
+
+evaluationDependsOnChildren()
+
+spotless {
+    kotlin {
+        target allprojects.collectMany {
+            return it.tasks.withType(KotlinCompile)
+        }.inject(files()) { collected, next ->
+            collected + next.sources
+        }
+        targetExclude('**/Native.kt', '**/NativeTesting.kt', '**/org/rustls/**')
+        ktlint()
+    }
+    java {
+        target allprojects.collectMany {
+            return it.tasks.withType(JavaCompile)
+        }.inject(files()) { collected, next ->
+            collected + next.source
+        }
+        importOrder()
+        removeUnusedImports()
+
+        googleJavaFormat()
+        formatAnnotations()
+        licenseHeaderFile rootProject.file('license_header.txt')
+    }
 }

@@ -42,8 +42,9 @@ impl<E> InterfaceChangedOr<E> {
 
 /// An implementation detail of InterfaceMonitor.
 ///
-/// Essentially an [`AsyncFn`] with a few extra constraints; once our MSRV is 1.85, we could
-/// consider removing this trait.
+/// Essentially an [`AsyncFn`] with a few extra constraints. We would need `async_fn_traits` to
+/// stabilize so we can constrain the `Future` returned by the call, but it might be more trouble
+/// than it's worth anyway until we get trait aliases.
 pub trait GetCurrentInterface {
     // This is overly general, but there's no reason not to allow it.
     type Representation: Eq + Send + Sync;
@@ -171,6 +172,22 @@ impl GetCurrentInterface for DefaultGetCurrentInterface {
     }
 }
 
+/// Convenient for tests.
+#[cfg(any(test, feature = "test-util"))]
+impl<T, F: Fn(IpAddr) -> T> GetCurrentInterface for F
+where
+    T: Future<Output: Eq + Send + Sync> + Send,
+{
+    type Representation = T::Output;
+
+    fn get_interface_for(
+        &self,
+        target: IpAddr,
+    ) -> impl Future<Output = Self::Representation> + Send {
+        self(target)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::convert::Infallible;
@@ -182,23 +199,9 @@ mod test {
     use tokio::time::Instant;
 
     use super::*;
+    use crate::OverrideNagleAlgorithm;
     use crate::route::testutils::{ConnectFn, FakeConnectError, NeverConnect};
     use crate::route::{ConnectorExt as _, TcpRoute};
-
-    /// Convenient for tests.
-    impl<T, F: Fn(IpAddr) -> T> GetCurrentInterface for F
-    where
-        T: Future<Output: Eq + Send + Sync> + Send,
-    {
-        type Representation = T::Output;
-
-        fn get_interface_for(
-            &self,
-            target: IpAddr,
-        ) -> impl Future<Output = Self::Representation> + Send {
-            self(target)
-        }
-    }
 
     const ROUTE_CHANGE_INTERVAL: Duration = Duration::from_secs(10);
     const POST_CHANGE_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -250,6 +253,7 @@ mod test {
         let route = TcpRoute {
             address: ip_addr!("192.0.2.1"),
             port: nonzero!(443u16),
+            override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
         };
 
         let result = connector.connect(route, "test").await;

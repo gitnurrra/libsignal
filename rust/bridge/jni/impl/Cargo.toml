@@ -8,7 +8,7 @@ name = "libsignal-jni-impl"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
-edition = "2021"
+edition = "2024"
 
 [lints]
 workspace = true
@@ -22,12 +22,16 @@ signal-crypto = { workspace = true }
 cfg-if = { workspace = true }
 jni = { workspace = true }
 log = { workspace = true }
-log-panics = { workspace = true, features = ["with-backtrace"] }
+zerocopy = { workspace = true }
+
+[features]
+metadata = ["libsignal-bridge/metadata"]
 
 [target.aarch64-linux-android.dependencies]
 cpufeatures = "0.2.6" # Make sure 64-bit Android gets optimized crypto
 
 [target.'cfg(target_os = "android")'.dependencies]
+assert_matches = { workspace = true }
 rustls-platform-verifier = { workspace = true }
 # Make sure we're using the system zlib on Android.
 flate2 = { workspace = true, features = ["zlib"] }

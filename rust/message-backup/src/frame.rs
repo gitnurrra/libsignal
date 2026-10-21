@@ -5,13 +5,13 @@
 
 use std::borrow::BorrowMut;
 
-use aes::cipher::Unsigned;
+use aes::cipher::typenum::Unsigned;
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::io::{BufReader, Take};
 use futures::{AsyncRead, AsyncReadExt};
 use hmac::digest::OutputSizeUser;
-use hmac::{Hmac, Mac as _};
+use hmac::{Hmac, KeyInit as _};
 use mediasan_common::{AsyncSkip, AsyncSkipExt as _};
 use sha2::Sha256;
 use subtle::ConstantTimeEq as _;
@@ -29,7 +29,7 @@ mod unpad;
 #[cfg(feature = "test-util")]
 pub use aes_read::AES_KEY_SIZE;
 #[cfg_attr(feature = "test-util", visibility::make(pub))]
-use aes_read::{Aes256CbcReader, AES_IV_SIZE};
+use aes_read::{AES_IV_SIZE, Aes256CbcReader};
 #[cfg_attr(feature = "test-util", visibility::make(pub))]
 use mac_read::MacReader;
 pub use reader_factory::{CursorFactory, FileReaderFactory, LimitedReaderFactory, ReaderFactory};
@@ -51,8 +51,12 @@ pub enum ValidationError {
     Io(#[from] futures::io::Error),
     /// missing field '{0}' in unencrypted metadata
     MissingMetadataField(&'static str),
-    /// invalid field '{0}' in unencrypted metadata: {1}
-    InvalidMetadataField(&'static str, &'static str),
+    /// unencrypted metadata field '{field}' was {actual} bytes long (expected {expected})
+    InvalidLength {
+        field: &'static str,
+        expected: usize,
+        actual: usize,
+    },
     /// unencrypted metadata contains {0} forward secrecy pairs
     TooManyForwardSecrecyPairs(usize),
     /// HMAC doesn't match: {0}
@@ -279,14 +283,15 @@ async fn hmac_sha256(
 
 #[cfg(test)]
 mod test {
-    use aes::cipher::crypto_common::rand_core::{OsRng, RngCore as _};
     use assert_matches::assert_matches;
     use async_compression::futures::write::GzipEncoder;
     use const_str::{concat_bytes, hex};
+    use futures::AsyncWriteExt;
     use futures::executor::block_on;
     use futures::io::{Cursor, ErrorKind};
-    use futures::AsyncWriteExt;
     use protobuf::Message as _;
+    use rand::TryRngCore as _;
+    use rand::rngs::OsRng;
     use test_case::{test_case, test_matrix};
 
     use super::*;
@@ -370,7 +375,9 @@ mod test {
         }
 
         let mut iv = [0; AES_IV_SIZE];
-        OsRng.fill_bytes(&mut iv);
+        OsRng
+            .try_fill_bytes(&mut iv)
+            .expect("OS randomness available");
         let mut ctext = signal_crypto::aes_256_cbc_encrypt(&compressed, &key.aes_key, &iv)
             .expect("can encrypt");
         drop(compressed);
@@ -449,7 +456,7 @@ mod test {
             .expect("encoded HMAC is valid");
         block_on(futures::io::copy(&mut reader, &mut futures::io::sink())).expect("can read");
 
-        let hmac_tail = |bytes: &[u8]| bytes[bytes.len() - HMAC_LEN..].try_into().unwrap();
+        let hmac_tail = |bytes: &[u8]| *bytes.last_chunk::<HMAC_LEN>().unwrap();
         let hmac_err = block_on(reader.verify_hmac());
         let err = assert_matches!( hmac_err, Err(VerifyHmacError::HmacMismatch(e)) => e);
         assert_eq!(
@@ -472,6 +479,7 @@ mod test {
     #[test_case(const_str::concat_bytes!(MAGIC_NUMBER, 1) => using assert_io_error(ErrorKind::UnexpectedEof))]
     #[test_case(const_str::concat_bytes!(MAGIC_NUMBER, [1, 0]) => using assert_io_error(ErrorKind::InvalidData))]
     #[test_case(const_str::concat_bytes!(MAGIC_NUMBER, [0x80, 0x80, 0x80, 0x80, 0x80, 0x01]) => using assert_io_error(ErrorKind::InvalidData))]
+    #[test_case(const_str::concat_bytes!(MAGIC_NUMBER, [0xFF, 0xFF, 0xFF, 0xFF, 0x0F]) => using assert_io_error(ErrorKind::InvalidData); "huge metadata length")]
     fn invalid_start_of_file(input: &[u8]) -> ValidationError {
         block_on(FramesReader::new(
             &FAKE_MESSAGE_BACKUP_KEY,

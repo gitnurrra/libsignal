@@ -9,12 +9,16 @@ import SignalFfi
 public func signalEncrypt<Bytes: ContiguousBytes>(
     message: Bytes,
     for address: ProtocolAddress,
+    localAddress: ProtocolAddress,
     sessionStore: SessionStore,
     identityStore: IdentityKeyStore,
     now: Date = Date(),
     context: StoreContext
 ) throws -> CiphertextMessage {
-    return try withAllBorrowed(address, .bytes(message)) { addressHandle, messageBuffer in
+    return try withAllBorrowed(address, localAddress, .bytes(message)) {
+        addressHandle,
+        localAddressHandle,
+        messageBuffer in
         try withSessionStore(sessionStore, context) { ffiSessionStore in
             try withIdentityKeyStore(identityStore, context) { ffiIdentityStore in
                 try invokeFnReturningNativeHandle {
@@ -22,6 +26,7 @@ public func signalEncrypt<Bytes: ContiguousBytes>(
                         $0,
                         messageBuffer,
                         addressHandle.const(),
+                        localAddressHandle.const(),
                         ffiSessionStore,
                         ffiIdentityStore,
                         UInt64(now.timeIntervalSince1970 * 1000)
@@ -35,11 +40,12 @@ public func signalEncrypt<Bytes: ContiguousBytes>(
 public func signalDecrypt(
     message: SignalMessage,
     from address: ProtocolAddress,
+    to toAddress: ProtocolAddress,
     sessionStore: SessionStore,
     identityStore: IdentityKeyStore,
     context: StoreContext
 ) throws -> Data {
-    return try withAllBorrowed(message, address) { messageHandle, addressHandle in
+    return try withAllBorrowed(message, address, toAddress) { messageHandle, addressHandle, toAddressHandle in
         try withSessionStore(sessionStore, context) { ffiSessionStore in
             try withIdentityKeyStore(identityStore, context) { ffiIdentityStore in
                 try invokeFnReturningData {
@@ -47,6 +53,7 @@ public func signalDecrypt(
                         $0,
                         messageHandle.const(),
                         addressHandle.const(),
+                        toAddressHandle.const(),
                         ffiSessionStore,
                         ffiIdentityStore
                     )
@@ -59,15 +66,15 @@ public func signalDecrypt(
 public func signalDecryptPreKey(
     message: PreKeySignalMessage,
     from address: ProtocolAddress,
+    localAddress: ProtocolAddress,
     sessionStore: SessionStore,
     identityStore: IdentityKeyStore,
     preKeyStore: PreKeyStore,
     signedPreKeyStore: SignedPreKeyStore,
     kyberPreKeyStore: KyberPreKeyStore,
-    context: StoreContext,
-    usePqRatchet: Bool
+    context: StoreContext
 ) throws -> Data {
-    return try withAllBorrowed(message, address) { messageHandle, addressHandle in
+    return try withAllBorrowed(message, address, localAddress) { messageHandle, addressHandle, localAddressHandle in
         try withSessionStore(sessionStore, context) { ffiSessionStore in
             try withIdentityKeyStore(identityStore, context) { ffiIdentityStore in
                 try withPreKeyStore(preKeyStore, context) { ffiPreKeyStore in
@@ -78,12 +85,12 @@ public func signalDecryptPreKey(
                                     $0,
                                     messageHandle.const(),
                                     addressHandle.const(),
+                                    localAddressHandle.const(),
                                     ffiSessionStore,
                                     ffiIdentityStore,
                                     ffiPreKeyStore,
                                     ffiSignedPreKeyStore,
-                                    ffiKyberPreKeyStore,
-                                    usePqRatchet
+                                    ffiKyberPreKeyStore
                                 )
                             }
                         }
@@ -97,23 +104,23 @@ public func signalDecryptPreKey(
 public func processPreKeyBundle(
     _ bundle: PreKeyBundle,
     for address: ProtocolAddress,
+    ourAddress: ProtocolAddress,
     sessionStore: SessionStore,
     identityStore: IdentityKeyStore,
     now: Date = Date(),
-    context: StoreContext,
-    usePqRatchet: Bool
+    context: StoreContext
 ) throws {
-    return try withAllBorrowed(bundle, address) { bundleHandle, addressHandle in
+    return try withAllBorrowed(bundle, address, ourAddress) { bundleHandle, addressHandle, ourAddressHandle in
         try withSessionStore(sessionStore, context) { ffiSessionStore in
             try withIdentityKeyStore(identityStore, context) { ffiIdentityStore in
                 try checkError(
                     signal_process_prekey_bundle(
                         bundleHandle.const(),
                         addressHandle.const(),
+                        ourAddressHandle.const(),
                         ffiSessionStore,
                         ffiIdentityStore,
-                        UInt64(now.timeIntervalSince1970 * 1000),
-                        usePqRatchet
+                        UInt64(now.timeIntervalSince1970 * 1000)
                     )
                 )
             }

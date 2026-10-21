@@ -109,12 +109,13 @@ public class PinHash: NativeHandleOwner<SignalMutPointerPinHash>, @unchecked Sen
         normalizedPin: PinBytes,
         salt: SaltBytes
     ) throws {
-        var result = SignalMutPointerPinHash()
-        try normalizedPin.withUnsafeBorrowedBuffer { pinBytes in
+        let result = try normalizedPin.withUnsafeBorrowedBuffer { pinBytes in
             try salt.withUnsafeBytes { saltBytes in
                 try ByteArray(newContents: Data(saltBytes), expectedLength: 32).withUnsafePointerToSerialized {
                     saltTuple in
-                    try checkError(signal_pin_hash_from_salt(&result, pinBytes, saltTuple))
+                    try invokeFnReturningValueByPointer(.init()) {
+                        signal_pin_hash_from_salt($0, pinBytes, saltTuple)
+                    }
                 }
             }
         }
@@ -134,13 +135,12 @@ public class PinHash: NativeHandleOwner<SignalMutPointerPinHash>, @unchecked Sen
         username: String,
         mrenclave: MrenclaveBytes
     ) throws {
-        var result = SignalMutPointerPinHash()
-        try normalizedPin.withUnsafeBorrowedBuffer { pinBytes in
+        let result = try normalizedPin.withUnsafeBorrowedBuffer { pinBytes in
             try mrenclave.withUnsafeBorrowedBuffer { mrenclaveBytes in
                 try username.withCString { userBytes in
-                    try checkError(
-                        signal_pin_hash_from_username_mrenclave(&result, pinBytes, userBytes, mrenclaveBytes)
-                    )
+                    try invokeFnReturningValueByPointer(.init()) {
+                        signal_pin_hash_from_username_mrenclave($0, pinBytes, userBytes, mrenclaveBytes)
+                    }
                 }
             }
         }
@@ -193,6 +193,50 @@ public enum AccountEntropyPool {
     public static func deriveBackupKey(_ accountEntropyPool: String) throws -> BackupKey {
         try invokeFnReturningSerialized {
             signal_account_entropy_pool_derive_backup_key($0, accountEntropyPool)
+        }
+    }
+}
+
+/// An account's SVR key: the 32-byte root from which account-related secrets are derived.
+///
+/// This is the same key that ``AccountEntropyPool/deriveSvrKey(_:)`` produces. Signal clients
+/// historically call these bytes the "master key"; libsignal calls it the SVR key. The two names
+/// refer to the same value.
+///
+/// - SeeAlso: ``AuthAccountsService/setRegistrationLock(_:)``
+public class SvrKey: ByteArray, @unchecked Sendable {
+    public static let SIZE = 32
+
+    /// Throws if `contents` is not ``SIZE`` (32) bytes.
+    public required init(contents: Data) throws {
+        try super.init(newContents: contents, expectedLength: Self.SIZE)
+    }
+
+    /// Derives the raw 32-byte token used to enable registration lock.
+    public func deriveRegistrationLock() -> Data {
+        failOnError {
+            try NativeNice.SvrKey_DeriveRegistrationLock(svrKey: serialize())
+        }
+    }
+
+    /// Derives the raw 32-byte password used to recover an account without SMS verification.
+    public func deriveRegistrationRecoveryPassword() -> Data {
+        failOnError {
+            try NativeNice.SvrKey_DeriveRegistrationRecoveryPassword(svrKey: serialize())
+        }
+    }
+
+    /// Derives the raw 32-byte root key used to encrypt data in Storage Service.
+    public func deriveStorageServiceKey() -> Data {
+        failOnError {
+            try NativeNice.SvrKey_DeriveStorageServiceKey(svrKey: serialize())
+        }
+    }
+
+    /// Derives the raw 32-byte key used to obscure sensitive identifiers in logs.
+    public func deriveLoggingKey() -> Data {
+        failOnError {
+            try NativeNice.SvrKey_DeriveLoggingKey(svrKey: serialize())
         }
     }
 }

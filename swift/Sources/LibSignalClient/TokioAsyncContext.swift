@@ -8,8 +8,11 @@ import SignalFfi
 
 internal class TokioAsyncContext: NativeHandleOwner<SignalMutPointerTokioAsyncContext>, @unchecked Sendable {
     convenience init() {
-        var handle = SignalMutPointerTokioAsyncContext()
-        failOnError(signal_tokio_async_context_new(&handle))
+        let handle = failOnError {
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_tokio_async_context_new($0)
+            }
+        }
         self.init(owned: NonNull(handle)!)
     }
 
@@ -109,7 +112,7 @@ internal class TokioAsyncContext: NativeHandleOwner<SignalMutPointerTokioAsyncCo
     ///   signal_do_async_work(promise, runtime, someInput, someOtherInput)
     /// }
     /// ```
-    internal func invokeAsyncFunction<Promise: PromiseStruct>(
+    internal func invokeAsyncFunction<Promise: SignalCPromise>(
         _ body: (UnsafeMutablePointer<Promise>, SignalMutPointerTokioAsyncContext) -> SignalFfiErrorRef?
     ) async throws -> Promise.Result {
         let cancellationHelper = CancellationHandoffHelper(context: self)

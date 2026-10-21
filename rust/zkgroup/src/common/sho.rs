@@ -3,19 +3,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use curve25519_dalek_signal::ristretto::RistrettoPoint;
-use curve25519_dalek_signal::scalar::Scalar;
-use poksho::shoapi::ShoApiExt as _;
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::scalar::Scalar;
 use poksho::ShoApi;
+use poksho::shoapi::ShoApiExt as _;
 
+#[derive(Clone)]
 pub struct Sho {
     internal_sho: poksho::ShoHmacSha256,
 }
 
 impl Sho {
+    /// Creates a Sho and immediately absorbs `data` and ratchets.
+    ///
+    /// This is exactly equivalent to calling [`Sho::new_seed`] followed by
+    /// [`Sho::absorb_and_ratchet`]. Meant for when you're not doing any other absorbing.
     pub fn new(label: &[u8], data: &[u8]) -> Self {
-        let mut sho = poksho::ShoHmacSha256::new(label);
+        let mut sho = Self::new_seed(label);
         sho.absorb_and_ratchet(data);
+        sho
+    }
+
+    pub fn new_seed(label: &[u8]) -> Self {
+        let sho = poksho::ShoHmacSha256::new(label);
         Sho { internal_sho: sho }
     }
 
@@ -36,9 +46,7 @@ impl Sho {
     }
 
     pub fn get_point_single_elligator(&mut self) -> RistrettoPoint {
-        RistrettoPoint::from_uniform_bytes_single_elligator(
-            &self.internal_sho.squeeze_and_ratchet_as_array(),
-        )
+        RistrettoPoint::map_to_curve(self.internal_sho.squeeze_and_ratchet_as_array())
     }
 
     pub fn get_scalar(&mut self) -> Scalar {

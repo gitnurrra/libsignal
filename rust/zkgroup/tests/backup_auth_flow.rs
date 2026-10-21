@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use zkgroup::{RandomnessBytes, Timestamp, RANDOMNESS_LEN};
+use zkgroup::{RANDOMNESS_LEN, RandomnessBytes, Timestamp};
 
 const DAY_ALIGNED_TIMESTAMP: Timestamp = Timestamp::from_epoch_seconds(1681344000); // 2023-04-13 00:00:00 UTC
 
@@ -34,7 +34,8 @@ fn test_backup_auth_request_response() {
 
     // server generated materials; issuance request -> issuance response
     let server_secret_params =
-        zkgroup::generic_server_params::GenericServerSecretParams::generate(randomness1);
+        zkgroup::generic_server_params::GenericServerSecretParamsLegacy::generate(randomness1)
+            .into();
     let blinded_credential = request.issue(
         redemption_time,
         backup_level,

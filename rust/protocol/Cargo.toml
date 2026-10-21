@@ -8,22 +8,25 @@ name = "libsignal-protocol"
 version = "0.1.0"
 authors.workspace = true
 license.workspace = true
-edition = "2021"
-rust-version = "1.83"
+edition = "2024"
+rust-version = "1.85"
 
 [lints]
 workspace = true
 
 [dependencies]
 libsignal-core = { workspace = true }
+libsignal-debug = { workspace = true }
 signal-crypto = { workspace = true }
 
 aes = { workspace = true, features = ["zeroize"] }
-aes-gcm-siv = { workspace = true }
+aes-gcm-siv = { workspace = true, features = ["zeroize"] }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 bitflags = { workspace = true }
+const-str = { workspace = true }
 ctr = { workspace = true, features = ["zeroize"] }
+data-encoding-macro = { workspace = true }
 derive-where = { workspace = true }
 derive_more = { workspace = true, features = ["deref", "from", "into", "try_from"] }
 displaydoc = { workspace = true }
@@ -53,12 +56,15 @@ kyber768 = ["libcrux-ml-kem/kyber", "libcrux-ml-kem/mlkem768"]
 mlkem1024 = []
 
 [dev-dependencies]
+libsignal-protocol-test-support = { path = "test-support" }
+
 clap = { workspace = true, features = ["derive"] }
-const-str = { workspace = true }
 criterion = { workspace = true }
+curve25519-dalek = { workspace = true, features = ["digest"] }
 env_logger = { workspace = true }
 futures-util = { workspace = true }
 proptest = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
 

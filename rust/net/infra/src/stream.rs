@@ -3,10 +3,85 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::fmt::Debug;
 use std::pin::Pin;
 use std::task::Poll;
 
 use futures_util::ready;
+
+use crate::TransportInfo;
+
+/// A wrapper around an [`AsyncDuplexStream`](crate::AsyncDuplexStream) with manually-provided
+/// [`TransportInfo`].
+///
+/// Intended for use with wrapper streams that don't expose their underlying stream; the underlying
+/// stream's transport info can be captured ahead of time.
+#[derive(Debug)]
+pub struct StreamWithFixedTransportInfo<T> {
+    inner: T,
+    transport_info: TransportInfo,
+}
+
+impl<T> StreamWithFixedTransportInfo<T> {
+    pub fn new(inner: T, transport_info: TransportInfo) -> Self {
+        Self {
+            inner,
+            transport_info,
+        }
+    }
+}
+
+impl<T: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for StreamWithFixedTransportInfo<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for StreamWithFixedTransportInfo<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+}
+
+impl<T> crate::Connection for StreamWithFixedTransportInfo<T> {
+    fn transport_info(&self) -> TransportInfo {
+        self.transport_info.clone()
+    }
+}
 
 #[derive(Debug)]
 pub struct WorkaroundWriteBugDuplexStream<T> {
@@ -109,8 +184,8 @@ impl<T: crate::Connection> crate::Connection for WorkaroundWriteBugDuplexStream<
 mod test {
     use std::borrow::Cow;
     use std::io::IoSlice;
-    use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     use boring_signal::ssl::{SslConnector, SslMethod};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -119,8 +194,8 @@ mod test {
     use super::*;
     use crate::certs::RootCertificates;
     use crate::tcp_ssl::testutil::{
-        localhost_https_server, make_http_request_response_over, SERVER_CERTIFICATE,
-        SERVER_HOSTNAME,
+        SERVER_CERTIFICATE, SERVER_HOSTNAME, make_http_request_response_over,
+        simple_localhost_https_server,
     };
 
     #[tokio::test]
@@ -243,10 +318,10 @@ mod test {
 
     #[tokio::test]
     async fn problematic_stream_causes_ssl_abort() {
-        let (addr, server) = localhost_https_server();
+        let (addr, server) = simple_localhost_https_server();
         let _server_handle = tokio::spawn(server);
 
-        let mut ssl = SslConnector::builder(SslMethod::tls_client()).expect("valid");
+        let mut ssl = SslConnector::builder(SslMethod::tls()).expect("valid");
         RootCertificates::FromDer(Cow::Borrowed(SERVER_CERTIFICATE.cert.der()))
             .apply_to_connector(&mut ssl, crate::host::Host::Domain(SERVER_HOSTNAME))
             .expect("can configure TLS");

@@ -12,6 +12,7 @@ use itertools::Itertools as _;
 use libsignal_net::chat;
 use libsignal_net::env::{DomainConfig, STAGING};
 use libsignal_net::infra::errors::TransportConnectError;
+use libsignal_net::infra::route::HttpVersion;
 use libsignal_net_infra::dns::dns_lookup::{DnsLookup, DnsLookupRequest};
 use libsignal_net_infra::dns::lookup_result::LookupResult;
 use libsignal_net_infra::dns::{self, DnsResolver};
@@ -24,13 +25,13 @@ use tokio::time::{Duration, Instant};
 
 mod fake_transport;
 use fake_transport::{
-    allow_domain_fronting, connect_websockets_on_incoming, error_all_hosts_after,
-    only_direct_routes, FakeDeps,
+    FakeDeps, allow_domain_fronting, connect_websockets_on_incoming, error_all_hosts_after,
+    only_direct_routes,
 };
 
 use crate::fake_transport::{
-    allow_all_routes, Behavior, FakeTransportTarget, TransportConnectEvent,
-    TransportConnectEventStage,
+    Behavior, FakeTransportTarget, TransportConnectEvent, TransportConnectEventStage,
+    allow_all_routes,
 };
 
 #[test_log::test(tokio::test(start_paused = true))]
@@ -163,7 +164,9 @@ async fn connect_again_skips_timed_out_routes(
 
 #[test_log::test(tokio::test(start_paused = true))]
 async fn runs_one_tls_handshake_at_a_time() {
-    let domain_config = STAGING.chat_domain_config;
+    let mut domain_config = STAGING.chat_domain_config;
+    // This test exercises TLS-handshake scheduling; the fake websocket server only supports HTTP/1.
+    domain_config.connect.http_version = Some(HttpVersion::Http1_1);
     let (deps, incoming_streams) = FakeDeps::new(&domain_config);
 
     // This is set to be less than MIN_TLS_HANDSHAKE_TIMEOUT, so that we don't have to otherwise

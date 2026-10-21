@@ -5,11 +5,11 @@
 
 use std::time::SystemTime;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use futures_util::FutureExt;
 use libsignal_protocol::*;
-use rand::rngs::OsRng;
 use rand::TryRngCore as _;
+use rand::rngs::OsRng;
 
 #[path = "../tests/support/mod.rs"]
 mod support;
@@ -32,18 +32,27 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
         .now_or_never()
         .expect("sync")?;
 
-    let message_to_decrypt = support::encrypt(&mut alice_store, &bob_address, "a short message")
-        .now_or_never()
-        .expect("sync")?;
+    let message_to_decrypt = support::encrypt(
+        &mut alice_store,
+        &bob_address,
+        &alice_address,
+        "a short message",
+    )
+    .now_or_never()
+    .expect("sync")?;
+    assert_eq!(
+        message_to_decrypt.message_type(),
+        CiphertextMessageType::Whisper
+    );
 
-    c.bench_function("session decrypt first message", |b| {
+    c.bench_function("decrypting the first message on a chain", |b| {
         b.iter(|| {
             let mut bob_store = bob_store.clone();
             support::decrypt(
                 &mut bob_store,
                 &alice_address,
+                &bob_address,
                 &message_to_decrypt,
-                UsePQRatchet::No,
             )
             .now_or_never()
             .expect("sync")
@@ -54,31 +63,46 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
     let _ = support::decrypt(
         &mut bob_store,
         &alice_address,
+        &bob_address,
         &message_to_decrypt,
-        UsePQRatchet::No,
     )
     .now_or_never()
     .expect("sync")?;
-    let message_to_decrypt = support::encrypt(&mut alice_store, &bob_address, "a short message")
-        .now_or_never()
-        .expect("sync")?;
 
-    c.bench_function("session encrypt", |b| {
+    let message_to_decrypt = support::encrypt(
+        &mut alice_store,
+        &bob_address,
+        &alice_address,
+        "a short message",
+    )
+    .now_or_never()
+    .expect("sync")?;
+    assert_eq!(
+        message_to_decrypt.message_type(),
+        CiphertextMessageType::Whisper
+    );
+
+    c.bench_function("encrypting on an existing chain", |b| {
         b.iter(|| {
-            support::encrypt(&mut alice_store, &bob_address, "a short message")
-                .now_or_never()
-                .expect("sync")
-                .expect("success");
+            support::encrypt(
+                &mut alice_store,
+                &bob_address,
+                &alice_address,
+                "a short message",
+            )
+            .now_or_never()
+            .expect("sync")
+            .expect("success");
         })
     });
-    c.bench_function("session decrypt", |b| {
+    c.bench_function("decrypting on an existing chain", |b| {
         b.iter(|| {
             let mut bob_store = bob_store.clone();
             support::decrypt(
                 &mut bob_store,
                 &alice_address,
+                &bob_address,
                 &message_to_decrypt,
-                UsePQRatchet::No,
             )
             .now_or_never()
             .expect("sync")
@@ -173,14 +197,32 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
     alice_store.identity_store.reset();
     bob_store.identity_store.reset();
 
+    c.bench_function("process_prekey_bundle", |b| {
+        b.iter(|| {
+            let mut alice_store = alice_store.clone();
+            process_prekey_bundle(
+                &bob_address,
+                &alice_address,
+                &mut alice_store.session_store,
+                &mut alice_store.identity_store,
+                &bob_pre_key_bundle,
+                SystemTime::now(),
+                &mut OsRng.unwrap_err(),
+            )
+            .now_or_never()
+            .expect("sync")
+            .expect("success");
+        })
+    });
+
     process_prekey_bundle(
         &bob_address,
+        &alice_address,
         &mut alice_store.session_store,
         &mut alice_store.identity_store,
         &bob_pre_key_bundle,
         SystemTime::now(),
         &mut OsRng.unwrap_err(),
-        UsePQRatchet::No,
     )
     .now_or_never()
     .expect("sync")?;
@@ -188,54 +230,98 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
     let original_message_to_decrypt = message_to_decrypt;
 
     // ...send another message to archive on Bob's side...
-    let message_to_decrypt = support::encrypt(&mut alice_store, &bob_address, "a short message")
-        .now_or_never()
-        .expect("sync")?;
+    let message_to_decrypt = support::encrypt(
+        &mut alice_store,
+        &bob_address,
+        &alice_address,
+        "a short message",
+    )
+    .now_or_never()
+    .expect("sync")?;
+    assert_eq!(
+        message_to_decrypt.message_type(),
+        CiphertextMessageType::PreKey,
+    );
+
+    c.bench_function(
+        "decrypting a PreKeySignalMessage for an unknown session",
+        |b| {
+            b.iter(|| {
+                let mut bob_store = bob_store.clone();
+                support::decrypt(
+                    &mut bob_store,
+                    &alice_address,
+                    &bob_address,
+                    &message_to_decrypt,
+                )
+                .now_or_never()
+                .expect("sync")
+                .expect("success")
+            })
+        },
+    );
+
     let _ = support::decrypt(
         &mut bob_store,
         &alice_address,
+        &bob_address,
         &message_to_decrypt,
-        UsePQRatchet::No,
     )
     .now_or_never()
     .expect("sync")?;
     // ...and prepare another message to benchmark decrypting.
-    let message_to_decrypt = support::encrypt(&mut alice_store, &bob_address, "a short message")
-        .now_or_never()
-        .expect("sync")?;
+    let message_to_decrypt = support::encrypt(
+        &mut alice_store,
+        &bob_address,
+        &alice_address,
+        "a short message",
+    )
+    .now_or_never()
+    .expect("sync")?;
+    assert_eq!(
+        message_to_decrypt.message_type(),
+        CiphertextMessageType::PreKey,
+        "Alice still hasn't received an acknowledgment"
+    );
 
-    c.bench_function("session decrypt with archived state", |b| {
-        b.iter(|| {
-            let mut bob_store = bob_store.clone();
-            support::decrypt(
-                &mut bob_store,
-                &alice_address,
-                &message_to_decrypt,
-                UsePQRatchet::No,
-            )
-            .now_or_never()
-            .expect("sync")
-            .expect("success");
-        })
-    });
+    c.bench_function(
+        "decrypting on an existing chain with an (unused) archived session",
+        |b| {
+            b.iter(|| {
+                let mut bob_store = bob_store.clone();
+                support::decrypt(
+                    &mut bob_store,
+                    &alice_address,
+                    &bob_address,
+                    &message_to_decrypt,
+                )
+                .now_or_never()
+                .expect("sync")
+                .expect("success");
+            })
+        },
+    );
 
     // Reset once more to go back to the original message.
     bob_store.identity_store.reset();
 
-    c.bench_function("session decrypt using previous state", |b| {
-        b.iter(|| {
-            let mut bob_store = bob_store.clone();
-            support::decrypt(
-                &mut bob_store,
-                &alice_address,
-                &original_message_to_decrypt,
-                UsePQRatchet::No,
-            )
-            .now_or_never()
-            .expect("sync")
-            .expect("success");
-        })
-    });
+    c.bench_function(
+        "decrypt using an existing chain in an archived session",
+        |b| {
+            b.iter(|| {
+                let mut bob_store = bob_store.clone();
+                support::decrypt(
+                    &mut bob_store,
+                    &alice_address,
+                    &bob_address,
+                    &original_message_to_decrypt,
+                )
+                .now_or_never()
+                .expect("sync")
+                .expect("success");
+            })
+        },
+    );
 
     Ok(())
 }
@@ -259,22 +345,32 @@ pub fn session_encrypt_decrypt_result(c: &mut Criterion) -> Result<(), SignalPro
         .expect("sync")?;
 
     // Get the pre-key message out of the way.
-    let ctext = support::encrypt(&mut alice_store, &bob_address, "a short message")
-        .now_or_never()
-        .expect("sync")
-        .expect("success");
-    let _ptext = support::decrypt(&mut bob_store, &alice_address, &ctext, UsePQRatchet::No)
+    let ctext = support::encrypt(
+        &mut alice_store,
+        &bob_address,
+        &alice_address,
+        "a short message",
+    )
+    .now_or_never()
+    .expect("sync")
+    .expect("success");
+    let _ptext = support::decrypt(&mut bob_store, &alice_address, &bob_address, &ctext)
         .now_or_never()
         .expect("sync")
         .expect("success");
 
     c.bench_function("session encrypt+decrypt 1 way", |b| {
         b.iter(|| {
-            let ctext = support::encrypt(&mut alice_store, &bob_address, "a short message")
-                .now_or_never()
-                .expect("sync")
-                .expect("success");
-            let _ptext = support::decrypt(&mut bob_store, &alice_address, &ctext, UsePQRatchet::No)
+            let ctext = support::encrypt(
+                &mut alice_store,
+                &bob_address,
+                &alice_address,
+                "a short message",
+            )
+            .now_or_never()
+            .expect("sync")
+            .expect("success");
+            let _ptext = support::decrypt(&mut bob_store, &alice_address, &bob_address, &ctext)
                 .now_or_never()
                 .expect("sync")
                 .expect("success");
@@ -283,20 +379,30 @@ pub fn session_encrypt_decrypt_result(c: &mut Criterion) -> Result<(), SignalPro
 
     c.bench_function("session encrypt+decrypt ping pong", |b| {
         b.iter(|| {
-            let ctext = support::encrypt(&mut alice_store, &bob_address, "a short message")
-                .now_or_never()
-                .expect("sync")
-                .expect("success");
-            let _ptext = support::decrypt(&mut bob_store, &alice_address, &ctext, UsePQRatchet::No)
+            let ctext = support::encrypt(
+                &mut alice_store,
+                &bob_address,
+                &alice_address,
+                "a short message",
+            )
+            .now_or_never()
+            .expect("sync")
+            .expect("success");
+            let _ptext = support::decrypt(&mut bob_store, &alice_address, &bob_address, &ctext)
                 .now_or_never()
                 .expect("sync")
                 .expect("success");
 
-            let ctext = support::encrypt(&mut bob_store, &alice_address, "a short message")
-                .now_or_never()
-                .expect("sync")
-                .expect("success");
-            let _ptext = support::decrypt(&mut alice_store, &bob_address, &ctext, UsePQRatchet::No)
+            let ctext = support::encrypt(
+                &mut bob_store,
+                &alice_address,
+                &bob_address,
+                "a short message",
+            )
+            .now_or_never()
+            .expect("sync")
+            .expect("success");
+            let _ptext = support::decrypt(&mut alice_store, &bob_address, &alice_address, &ctext)
                 .now_or_never()
                 .expect("sync")
                 .expect("success");

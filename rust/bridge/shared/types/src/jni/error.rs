@@ -2,13 +2,13 @@
 // Copyright 2020-2021 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
+
 use std::fmt::{self, Debug};
 use std::io::Error as IoError;
+use std::mem::ManuallyDrop;
 
-use jni::objects::{GlobalRef, JObject, JString, JThrowable};
-use jni::{JNIEnv, JavaVM};
-use libsignal_net::cdsi::CdsiProtocolError;
-use libsignal_protocol::*;
+use jni::JavaVM;
+use jni::objects::{Auto, Global, JObject, JString, JThrowable};
 
 use super::*;
 use crate::net::cdsi::CdsiError;
@@ -26,20 +26,48 @@ pub struct TestingError {
 }
 
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
-/// connect timed out
-pub(super) struct ConnectTimedOut;
+/// no connection attempts succeeded before timeout
+pub(super) struct AllConnectionAttemptsFailed;
 
 impl SignalJniError {
+    #[cold]
     pub(super) fn to_throwable<'a>(
         &self,
-        env: &mut JNIEnv<'a>,
+        env: &mut jni::Env<'a>,
     ) -> Result<JThrowable<'a>, BridgeLayerError> {
-        self.0.to_throwable(env)
+        self.0
+            .to_throwable_impl(env)
+            .and_then(|obj| env.cast_local::<JThrowable>(obj).expect_no_exceptions())
+            .or_else(|convert_error| {
+                // Recover by producing *some* throwable (AssertionError). This is particularly important
+                // for Futures, which will otherwise hang. However, if this fails, give up and return the
+                // *original* BridgeLayerError.
+                try_scoped(|| {
+                    let message = new_jstring_from_owned_utf8(
+                        env,
+                        format!("failed to convert error \"{self}\": {convert_error}"),
+                    )?;
+                    let error_obj = new_instance(
+                        env,
+                        ClassName("java.lang.AssertionError"),
+                        jni_args!((message => java.lang.Object) -> void),
+                    )?;
+                    env.cast_local::<JThrowable>(error_obj)
+                        .expect_no_exceptions()
+                })
+                .map_err(|_: BridgeLayerError| convert_error)
+            })
     }
 }
 
-pub(super) trait JniError: Debug + Display {
-    fn to_throwable<'a>(&self, env: &mut JNIEnv<'a>) -> Result<JThrowable<'a>, BridgeLayerError>;
+pub(crate) trait JniError: Debug + Display {
+    // It might seem better for this to return `JThrowable`, but in practice most implementations
+    // construct a new method, and `new_instance` doesn't have strong enough static types to produce
+    // anything but `JObject`. This way we can write just one downcast in the caller.
+    fn to_throwable_impl<'a>(
+        &self,
+        env: &mut jni::Env<'a>,
+    ) -> Result<JObject<'a>, BridgeLayerError>;
 }
 
 /// Simpler trait that provides a blanket impl of [`JniError`].
@@ -53,15 +81,14 @@ pub(super) trait MessageOnlyExceptionJniError: Debug + Display {
 }
 
 impl<M: MessageOnlyExceptionJniError> JniError for M {
-    fn to_throwable<'a>(&self, env: &mut JNIEnv<'a>) -> Result<JThrowable<'a>, BridgeLayerError> {
+    fn to_throwable_impl<'a>(
+        &self,
+        env: &mut jni::Env<'a>,
+    ) -> Result<JObject<'a>, BridgeLayerError> {
         let class = self.exception_class();
-        let throwable = env
-            .new_string(self.to_string())
-            .check_exceptions(env, "JniError::into_throwable")
-            .and_then(|message| {
-                new_instance(env, class, jni_args!((message => java.lang.String) -> void))
-            });
-        throwable.map(Into::into)
+        new_jstring_from_owned_utf8(env, self.to_string()).and_then(|message| {
+            new_instance(env, class, jni_args!((message => java.lang.String) -> void))
+        })
     }
 }
 
@@ -79,7 +106,7 @@ where
 /// These errors will always be converted to RuntimeExceptions or Errors, i.e. unchecked throwables,
 /// except for the [`Self::CallbackException`] case, which is rethrown.
 #[derive(Debug)]
-pub enum BridgeLayerError {
+pub enum BridgeLayerErrorInner {
     Jni(jni::errors::Error),
     BadArgument(String),
     BadJniParameter(&'static str),
@@ -91,7 +118,7 @@ pub enum BridgeLayerError {
     UnexpectedPanic(std::boxed::Box<dyn std::any::Any + std::marker::Send>),
 }
 
-impl fmt::Display for BridgeLayerError {
+impl fmt::Display for BridgeLayerErrorInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Jni(s) => write!(f, "JNI error {s}"),
@@ -116,6 +143,112 @@ impl fmt::Display for BridgeLayerError {
             Self::UnexpectedPanic(e) => {
                 write!(f, "unexpected panic: {}", describe_panic(e))
             }
+        }
+    }
+}
+
+pub struct BridgeLayerError {
+    // This is ManuallyDrop, so we can manually drop it in an #[inline(never)] drop implementation,
+    // to prevent the destructor from being inlined into every place where the error gets dropped.
+    inner: ManuallyDrop<Box<BridgeLayerErrorInner>>,
+}
+
+impl BridgeLayerError {
+    #[inline(never)]
+    pub fn jni(x: jni::errors::Error) -> Self {
+        BridgeLayerErrorInner::Jni(x).into()
+    }
+    #[inline(never)]
+    pub fn bad_argument(x: String) -> Self {
+        BridgeLayerErrorInner::BadArgument(x).into()
+    }
+    #[inline(never)]
+    pub fn bad_jni_parameter(x: &'static str) -> Self {
+        BridgeLayerErrorInner::BadJniParameter(x).into()
+    }
+    #[inline(never)]
+    pub fn unexpected_jni_result_type(x: &'static str, y: &'static str) -> Self {
+        BridgeLayerErrorInner::UnexpectedJniResultType(x, y).into()
+    }
+    #[inline(never)]
+    pub fn null_pointer(x: Option<&'static str>) -> Self {
+        BridgeLayerErrorInner::NullPointer(x).into()
+    }
+    #[inline(never)]
+    pub fn integer_overflow(x: String) -> Self {
+        BridgeLayerErrorInner::IntegerOverflow(x).into()
+    }
+    #[inline(never)]
+    pub fn callback_exception(x: &'static str, y: ThrownException) -> Self {
+        BridgeLayerErrorInner::CallbackException(x, y).into()
+    }
+    #[inline(never)]
+    pub fn unexpected_panic(x: std::boxed::Box<dyn std::any::Any + std::marker::Send>) -> Self {
+        BridgeLayerErrorInner::UnexpectedPanic(x).into()
+    }
+    #[inline(never)]
+    pub fn incorrect_array_length(expected: usize, actual: usize) -> Self {
+        BridgeLayerErrorInner::IncorrectArrayLength { expected, actual }.into()
+    }
+}
+
+impl From<BridgeLayerErrorInner> for BridgeLayerError {
+    fn from(value: BridgeLayerErrorInner) -> Self {
+        Self {
+            inner: ManuallyDrop::new(Box::new(value)),
+        }
+    }
+}
+
+impl std::fmt::Debug for BridgeLayerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::Debug::fmt(self.as_ref(), f)
+    }
+}
+
+impl std::fmt::Display for BridgeLayerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::Display::fmt(self.as_ref(), f)
+    }
+}
+
+impl std::ops::Drop for BridgeLayerError {
+    #[inline(never)]
+    fn drop(&mut self) {
+        unsafe { ManuallyDrop::drop(&mut self.inner) }
+    }
+}
+
+impl AsRef<BridgeLayerErrorInner> for BridgeLayerError {
+    fn as_ref(&self) -> &BridgeLayerErrorInner {
+        &self.inner
+    }
+}
+
+impl BridgeLayerError {
+    pub fn into_inner(mut self) -> BridgeLayerErrorInner {
+        *unsafe {
+            let out = ManuallyDrop::take(&mut self.inner);
+            std::mem::forget(self);
+            out
+        }
+    }
+}
+
+impl From<WithContext<BridgeLayerError>> for SignalProtocolError {
+    fn from(value: WithContext<BridgeLayerError>) -> Self {
+        let WithContext {
+            operation: _,
+            inner,
+        } = value;
+        match inner.into_inner() {
+            BridgeLayerErrorInner::BadJniParameter(m) => {
+                SignalProtocolError::InvalidArgument(m.to_string())
+            }
+            BridgeLayerErrorInner::CallbackException(callback, exception) => {
+                SignalProtocolError::ApplicationCallbackError(callback, Box::new(exception))
+            }
+            err => SignalProtocolError::FfiBindingError(err.to_string()),
         }
     }
 }
@@ -146,20 +279,19 @@ impl From<libsignal_net::cdsi::LookupError> for SignalJniError {
     fn from(e: libsignal_net::cdsi::LookupError) -> SignalJniError {
         use libsignal_net::cdsi::LookupError;
         let cdsi_error = match e {
-            LookupError::ConnectionTimedOut => return ConnectTimedOut.into(),
+            LookupError::AllConnectionAttemptsFailed => return AllConnectionAttemptsFailed.into(),
             LookupError::AttestationError(e) => return e.into(),
             LookupError::ConnectTransport(e) => return IoError::from(e).into(),
             LookupError::WebSocket(e) => return e.into(),
             LookupError::InvalidArgument { server_reason: _ } => {
-                return SignalProtocolError::InvalidArgument(e.to_string()).into()
+                // Normally we wouldn't produce an unchecked error for something validated
+                // server-side, but getting an argument validation error for *CDS* does suggest that
+                // the operation was performed with bad arguments.
+                return IllegalArgumentError::new(e.to_string()).into();
             }
-            LookupError::InvalidResponse => CdsiError::InvalidResponse,
             LookupError::EnclaveProtocol(_) => CdsiError::Protocol,
-            LookupError::CdsiProtocol(CdsiProtocolError::NoTokenInResponse) => {
-                CdsiError::NoTokenInResponse
-            }
+            LookupError::CdsiProtocol(inner) => CdsiError::CdsiProtocol(inner),
             LookupError::RateLimited(retry_later) => CdsiError::RateLimited(retry_later),
-            LookupError::ParseError => CdsiError::ParseError,
             LookupError::InvalidToken => CdsiError::InvalidToken,
             LookupError::Server { reason } => CdsiError::Server { reason },
         };
@@ -179,18 +311,18 @@ pub type SignalJniResult<T> = Result<T, SignalJniError>;
 pub struct ThrownException {
     // GlobalRef already carries a JavaVM reference, but it's not accessible to us.
     jvm: JavaVM,
-    exception_ref: GlobalRef,
+    exception_ref: Global<JThrowable<'static>>,
 }
 
 impl ThrownException {
     /// Gets the wrapped exception as a live object with a lifetime.
     pub fn as_obj(&self) -> &JThrowable<'static> {
-        self.exception_ref.as_obj().into()
+        self.exception_ref.as_ref()
     }
 
     /// Persists the given throwable.
     pub fn new<'a>(
-        env: &JNIEnv<'a>,
+        env: &jni::Env<'a>,
         throwable: impl AsRef<JThrowable<'a>>,
     ) -> Result<Self, BridgeLayerError> {
         assert!(!throwable.as_ref().is_null());
@@ -202,66 +334,72 @@ impl ThrownException {
         })
     }
 
-    pub fn class_name(&self, env: &mut JNIEnv) -> Result<String, BridgeLayerError> {
-        let class_type = env
-            .get_object_class(self.exception_ref.as_obj())
-            .check_exceptions(env, "ThrownException::class_name")?;
-        let class_name: JObject = call_method_checked(
+    pub fn class_name(&self, env: &mut jni::Env) -> Result<String, BridgeLayerError> {
+        let class_type = Auto::new(
+            env.get_object_class(self.exception_ref.as_obj())
+                .check_exceptions(env, "ThrownException::class_name")?,
+        );
+        let class_name = Auto::new(call_method_checked(
             env,
             class_type,
             "getCanonicalName",
             jni_args!(() -> java.lang.String),
-        )?;
-
-        Ok(env
-            .get_string(&JString::from(class_name))
-            .check_exceptions(env, "ThrownException::class_name")?
-            .into())
+        )?);
+        let class_name_str = env
+            .as_cast::<JString>(&class_name)
+            .and_then(|s| s.try_to_string(env))
+            .check_exceptions(env, "ThrownException::class_name")?;
+        Ok(class_name_str)
     }
 
-    pub fn message(&self, env: &mut JNIEnv) -> Result<String, BridgeLayerError> {
-        let message: JObject = call_method_checked(
+    pub fn message(&self, env: &mut jni::Env) -> Result<String, BridgeLayerError> {
+        let message = Auto::new(call_method_checked(
             env,
             self.exception_ref.as_obj(),
             "getMessage",
             jni_args!(() -> java.lang.String),
-        )?;
-        Ok(env
-            .get_string(&JString::from(message))
-            .check_exceptions(env, "ThrownException::class_name")?
-            .into())
+        )?);
+        let message_str = env
+            .as_cast::<JString>(&message)
+            .and_then(|s| s.try_to_string(env))
+            .check_exceptions(env, "ThrownException::message")?;
+        Ok(message_str)
     }
 }
 
 impl fmt::Display for ThrownException {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let env = &mut self.jvm.attach_current_thread().map_err(|_| fmt::Error)?;
+        self.jvm
+            .attach_current_thread_for_scope(|env| -> jni::errors::Result<_> {
+                let exn_type = self.class_name(env);
+                let exn_type = exn_type.as_deref().unwrap_or("<unknown>");
 
-        let exn_type = self.class_name(env);
-        let exn_type = exn_type.as_deref().unwrap_or("<unknown>");
-
-        if let Ok(message) = self.message(env) {
-            write!(f, "exception {exn_type} \"{message}\"")
-        } else {
-            write!(f, "exception {exn_type}")
-        }
+                Ok(if let Ok(message) = self.message(env) {
+                    write!(f, "exception {exn_type} \"{message}\"")
+                } else {
+                    write!(f, "exception {exn_type}")
+                })
+            })
+            .unwrap_or(Err(fmt::Error))
     }
 }
 
 impl fmt::Debug for ThrownException {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let env = &mut self.jvm.attach_current_thread().map_err(|_| fmt::Error)?;
+        self.jvm
+            .attach_current_thread_for_scope(|env| -> jni::errors::Result<_> {
+                let exn_type = self.class_name(env);
+                let exn_type = exn_type.as_deref().unwrap_or("<unknown>");
 
-        let exn_type = self.class_name(env);
-        let exn_type = exn_type.as_deref().unwrap_or("<unknown>");
+                let obj_addr = **self.exception_ref.as_obj();
 
-        let obj_addr = **self.exception_ref.as_obj();
-
-        if let Ok(message) = self.message(env) {
-            write!(f, "exception {exn_type} ({obj_addr:p}) \"{message}\"")
-        } else {
-            write!(f, "exception {exn_type} ({obj_addr:p})")
-        }
+                Ok(if let Ok(message) = self.message(env) {
+                    write!(f, "exception {exn_type} ({obj_addr:p}) \"{message}\"")
+                } else {
+                    write!(f, "exception {exn_type} ({obj_addr:p})")
+                })
+            })
+            .unwrap_or(Err(fmt::Error))
     }
 }
 
@@ -281,7 +419,7 @@ impl MessageOnlyExceptionJniError for FutureCancelled {
 pub trait HandleJniError<T> {
     fn check_exceptions(
         self,
-        env: &mut JNIEnv<'_>,
+        env: &mut jni::Env<'_>,
         context: &'static str,
     ) -> Result<T, BridgeLayerError>;
 
@@ -291,22 +429,21 @@ pub trait HandleJniError<T> {
 impl<T> HandleJniError<T> for Result<T, jni::errors::Error> {
     fn check_exceptions(
         self,
-        env: &mut JNIEnv<'_>,
+        env: &mut jni::Env<'_>,
         context: &'static str,
     ) -> Result<T, BridgeLayerError> {
         // Do the bulk of the work in a non-generic helper function.
         fn check_error(
             e: jni::errors::Error,
-            env: &mut JNIEnv<'_>,
+            env: &mut jni::Env<'_>,
             context: &'static str,
         ) -> Result<std::convert::Infallible, BridgeLayerError> {
             // Returning a Result is convenient because it lets us use ?, but it is always an error,
             // so we use Infallible as the success type, which can't be instantiated.
             if matches!(e, jni::errors::Error::JavaException) {
-                let throwable = env.exception_occurred().expect_no_exceptions()?;
-                if **throwable != *JObject::null() {
-                    env.exception_clear().expect_no_exceptions()?;
-                    return Err(BridgeLayerError::CallbackException(
+                if let Some(throwable) = env.exception_occurred() {
+                    env.exception_clear();
+                    return Err(BridgeLayerError::callback_exception(
                         context,
                         ThrownException::new(env, throwable)?,
                     ));
@@ -315,7 +452,7 @@ impl<T> HandleJniError<T> for Result<T, jni::errors::Error> {
                     "'{context}' produced a Java exception, but it has already been cleared from the JVM state"
                 );
             }
-            Err(BridgeLayerError::Jni(e))
+            Err(BridgeLayerError::jni(e))
         }
 
         self.map_err(|e| match check_error(e, env, context) {
@@ -329,7 +466,7 @@ impl<T> HandleJniError<T> for Result<T, jni::errors::Error> {
                 !matches!(e, jni::errors::Error::JavaException),
                 "catching Java exceptions is not supported here"
             );
-            BridgeLayerError::Jni(e)
+            BridgeLayerError::jni(e)
         })
     }
 }

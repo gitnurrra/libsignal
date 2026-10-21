@@ -6,7 +6,7 @@
 use std::hint::black_box;
 use std::time::SystemTime;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use futures_util::FutureExt;
 use libsignal_protocol::*;
 use rand::rngs::OsRng;
@@ -38,12 +38,12 @@ pub fn v1(c: &mut Criterion) {
 
     process_prekey_bundle(
         &bob_address,
+        &alice_address,
         &mut alice_store.session_store,
         &mut alice_store.identity_store,
         &bob_pre_key_bundle,
         SystemTime::now(),
         &mut rng,
-        UsePQRatchet::No,
     )
     .now_or_never()
     .expect("sync")
@@ -136,12 +136,12 @@ pub fn v2(c: &mut Criterion) {
 
     process_prekey_bundle(
         &bob_address,
+        &alice_address,
         &mut alice_store.session_store,
         &mut alice_store.identity_store,
         &bob_pre_key_bundle,
         SystemTime::now(),
         &mut rng,
-        UsePQRatchet::No,
     )
     .now_or_never()
     .expect("sync")
@@ -220,9 +220,16 @@ pub fn v2(c: &mut Criterion) {
     c.bench_function("v2/encrypt", |b| b.iter(&mut encrypt_it));
     c.bench_function("v2/decrypt", |b| b.iter(&mut decrypt_it));
 
+    // Use cfg!(debug_assertions) as a proxy for "no optimizations".
+    let recipient_counts: &[usize] = if cfg!(debug_assertions) {
+        &[50]
+    } else {
+        &[2, 5, 10, 100, 1000]
+    };
+
     // Fill out additional recipients.
     let mut recipients = vec![bob_address.clone()];
-    while recipients.len() < 1000 {
+    while recipients.len() < *recipient_counts.last().unwrap() {
         let next_address = ProtocolAddress::new(
             Uuid::from_bytes(rng.random()).to_string(),
             DeviceId::new(1).unwrap(),
@@ -237,12 +244,12 @@ pub fn v2(c: &mut Criterion) {
 
         process_prekey_bundle(
             &next_address,
+            &alice_address,
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &next_pre_key_bundle,
             SystemTime::now(),
             &mut rng,
-            UsePQRatchet::No,
         )
         .now_or_never()
         .expect("sync")
@@ -252,7 +259,7 @@ pub fn v2(c: &mut Criterion) {
     }
 
     let mut group = c.benchmark_group("v2/encrypt/multi-recipient");
-    for recipient_count in [2, 5, 10, 100, 1000] {
+    for &recipient_count in recipient_counts {
         group.bench_with_input(
             BenchmarkId::from_parameter(recipient_count),
             &recipient_count,

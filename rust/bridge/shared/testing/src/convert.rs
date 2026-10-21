@@ -7,11 +7,12 @@ use std::future::Future;
 
 use futures_util::{AsyncReadExt as _, FutureExt};
 use io::{AsyncInput, InputStream};
+use itertools::Itertools as _;
 use libsignal_bridge_macros::*;
 use libsignal_bridge_types::net::TokioAsyncContext;
 use libsignal_bridge_types::support::*;
 use libsignal_bridge_types::*;
-use libsignal_protocol::SignalProtocolError;
+use libsignal_core::DeviceId;
 use uuid::Uuid;
 
 use crate::types::*;
@@ -20,13 +21,13 @@ pub struct NonSuspendingBackgroundThreadRuntime;
 bridge_as_handle!(
     NonSuspendingBackgroundThreadRuntime,
     ffi = testing_NonSuspendingBackgroundThreadRuntime,
-    jni = TESTING_1NonSuspendingBackgroundThreadRuntime
+    jni = TESTING_NonSuspendingBackgroundThreadRuntime
 );
 bridge_handle_fns!(
     NonSuspendingBackgroundThreadRuntime,
     clone = false,
     ffi = testing_NonSuspendingBackgroundThreadRuntime,
-    jni = TESTING_1NonSuspendingBackgroundThreadRuntime
+    jni = TESTING_NonSuspendingBackgroundThreadRuntime
 );
 
 impl AsyncRuntimeBase for NonSuspendingBackgroundThreadRuntime {}
@@ -41,6 +42,7 @@ where
         &self,
         make_future: impl FnOnce(Self::Cancellation) -> F,
         completer: <F::Output as ResultReporter>::Receiver,
+        _label: &'static str,
     ) -> CancellationId {
         let future = make_future(std::future::pending());
         std::thread::spawn(move || {
@@ -69,9 +71,14 @@ async fn TESTING_FutureSuccess(input: u8) -> i32 {
     i32::from(input) * 2
 }
 
+#[bridge_io(TokioAsyncContext, nice = true)]
+async fn TESTING_TokioAsyncContext_FutureSuccessBytes(count: i32) -> Vec<u8> {
+    vec![0; usize::try_from(count).unwrap()]
+}
+
 #[bridge_io(NonSuspendingBackgroundThreadRuntime)]
-async fn TESTING_FutureFailure(_input: u8) -> Result<i32, SignalProtocolError> {
-    Err(SignalProtocolError::InvalidArgument("failure".to_string()))
+async fn TESTING_FutureFailure(_input: u8) -> Result<i32, IllegalArgumentError> {
+    Err(IllegalArgumentError::new("failure"))
 }
 
 bridge_handle_fns!(TestingFutureCancellationCounter, clone = false);
@@ -250,6 +257,26 @@ async fn TESTING_FutureThrowsCustomErrorType() -> Result<(), CustomErrorType> {
     std::future::ready(Err(CustomErrorType)).await
 }
 
+#[cfg(feature = "jni")]
+struct PoisonErrorType;
+
+#[cfg(feature = "jni")]
+impl From<PoisonErrorType> for crate::jni::SignalJniError {
+    fn from(PoisonErrorType: PoisonErrorType) -> Self {
+        crate::jni::TestingError {
+            exception_class: crate::jni::ClassName(
+                "org.signal.libsignal.internal.GuaranteedNonexistentException",
+            ),
+        }
+        .into()
+    }
+}
+
+#[bridge_io(NonSuspendingBackgroundThreadRuntime, ffi = false, node = false)]
+async fn TESTING_FutureThrowsPoisonErrorType() -> Result<(), PoisonErrorType> {
+    std::future::ready(Err(PoisonErrorType)).await
+}
+
 #[bridge_fn]
 fn TESTING_ReturnStringArray() -> Box<[String]> {
     ["easy", "as", "ABC", "123"]
@@ -265,10 +292,10 @@ fn TESTING_JoinStringArray(array: Box<[String]>, join_with: String) -> String {
 }
 
 #[bridge_fn]
-fn TESTING_ProcessBytestringArray(input: Vec<&[u8]>) -> Box<[Vec<u8>]> {
+fn TESTING_ProcessBytestringArray(input: &[&[u8]]) -> Box<[Vec<u8>]> {
     input
-        .into_iter()
-        .map(|x| [x, x].concat())
+        .iter()
+        .map(|&x| [x, x].concat())
         .collect::<Vec<Vec<u8>>>()
         .into_boxed_slice()
 }
@@ -342,8 +369,367 @@ async fn TESTING_InputStreamReadIntoZeroLengthSlice(
 fn TESTING_FingerprintVersionMismatchError(
     theirs: u32,
     ours: u32,
-) -> Result<(), SignalProtocolError> {
-    Err(SignalProtocolError::FingerprintVersionMismatch(
-        theirs, ours,
-    ))
+) -> Result<(), libsignal_protocol::FingerprintError> {
+    Err(libsignal_protocol::FingerprintError::VersionMismatch { theirs, ours })
+}
+
+pub mod test_conversions {
+    //! We test (primitive) conversions via:
+    //! ```ignore
+    //! #[bridge_fn(nice=true)]
+    //! fn to_string(x: T) -> String;
+    //! #[bridge_fn(nice=true)]
+    //! fn identity(x: T) -> T;
+    //! #[bridge_fn(nice=true, ffi=false, jni=false)]
+    //! async fn identity_async(x: T) -> T;
+    //! ```
+    //!
+    //! `to_string` checks that argument parsing is working propery, and `identity` checks that
+    //! return types are working properly.
+    //!
+    //! Node async arguments are handled differently than Node sync arguments, so we make sure to
+    //! test async specially.
+
+    use std::collections::HashMap;
+
+    use libsignal_core::ServiceId;
+    use libsignal_protocol::Timestamp;
+
+    use super::*;
+
+    // to_string for String would just be identity
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_string_identity(x: String) -> String {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_string_identity_async(x: String) -> String {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_bool_to_string(x: bool) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_bool_identity(x: bool) -> bool {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_bool_identity_async(x: bool) -> bool {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_u8_to_string(x: u8) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_u8_identity(x: u8) -> u8 {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_u8_identity_async(x: u8) -> u8 {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_u16_to_string(x: u16) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_u16_identity(x: u16) -> u16 {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_u16_identity_async(x: u16) -> u16 {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_i32_to_string(x: i32) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_i32_identity(x: i32) -> i32 {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_i32_identity_async(x: i32) -> i32 {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_ServiceId_to_string(x: ServiceId) -> String {
+        x.service_id_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_ServiceId_identity(x: ServiceId) -> ServiceId {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_ServiceId_identity_async(x: ServiceId) -> ServiceId {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Data_to_string(x: &[u8]) -> String {
+        use base64::prelude::*;
+        BASE64_STANDARD.encode(x)
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Data_identity(x: &[u8]) -> Vec<u8> {
+        x.to_vec()
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_Data_identity_async(x: &[u8]) -> Vec<u8> {
+        x.to_vec()
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Data_VecU8_to_string(x: Vec<u8>) -> String {
+        use base64::prelude::*;
+        BASE64_STANDARD.encode(&x)
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Data_VecU8_identity(x: Vec<u8>) -> Vec<u8> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_Data_VecU8_identity_async(x: Vec<u8>) -> Vec<u8> {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_BridgeVecString_to_string(x: BridgeVec<String>) -> String {
+        serde_json::to_string(&x.0).expect("json")
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_BridgeVecString_identity(x: BridgeVec<String>) -> BridgeVec<String> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_BridgeVecString_identity_async(
+        x: BridgeVec<String>,
+    ) -> BridgeVec<String> {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Data32_to_string(x: [u8; 32]) -> String {
+        use base64::prelude::*;
+        BASE64_STANDARD.encode(x)
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Data32_identity(x: [u8; 32]) -> [u8; 32] {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_Data32_identity_async(x: [u8; 32]) -> [u8; 32] {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_BridgeVecData32_to_string(x: BridgeVec<[u8; 32]>) -> String {
+        use base64::prelude::*;
+        use itertools::Itertools as _;
+        x.0.into_iter()
+            .map(|x| BASE64_STANDARD.encode(x))
+            .join("\n")
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_BridgeVecData32_identity(x: BridgeVec<[u8; 32]>) -> BridgeVec<[u8; 32]> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_BridgeVecData32_identity_async(
+        x: BridgeVec<[u8; 32]>,
+    ) -> BridgeVec<[u8; 32]> {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Uuid_to_string(x: Uuid) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Uuid_identity(x: Uuid) -> Uuid {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_Uuid_identity_async(x: Uuid) -> Uuid {
+        x
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_DeviceId_to_string(x: DeviceId) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_DeviceId_identity(x: DeviceId) -> DeviceId {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_DeviceId_identity_async(x: DeviceId) -> DeviceId {
+        x
+    }
+
+    // Timestamps are just bridged as numbers for Node.
+    #[bridge_fn(nice = true, node = false)]
+    fn TESTING_conversion_Timestamp_to_string(x: Timestamp) -> String {
+        use chrono::prelude::*;
+        format!(
+            "{}ms {}",
+            x.epoch_millis(),
+            DateTime::<Utc>::from_timestamp_millis(
+                x.epoch_millis().try_into().expect("not too large")
+            )
+            .expect("valid timestamp")
+            .to_rfc3339_opts(SecondsFormat::Millis, true)
+        )
+    }
+    #[bridge_fn(nice = true, node = false)]
+    fn TESTING_conversion_Timestamp_identity(x: Timestamp) -> Timestamp {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_OptionalFloat_to_string(x: Option<f32>) -> String {
+        x.map(|x| x.to_string()).unwrap_or_default()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_OptionalFloat_identity(x: Option<f32>) -> Option<f32> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_OptionalFloat_identity_async(x: Option<f32>) -> Option<f32> {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Float_to_string(x: f32) -> String {
+        x.to_string()
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_Float_identity(x: f32) -> f32 {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_Float_identity_async(x: f32) -> f32 {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_OptionalString_to_string(x: Option<String>) -> String {
+        serde_json::to_string(&x).expect("can convert to json")
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_OptionalString_identity(x: Option<String>) -> Option<String> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_OptionalString_identity_async(x: Option<String>) -> Option<String> {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_OptionalBytes_to_string(x: Option<Vec<u8>>) -> String {
+        if let Some(x) = x {
+            use base64::prelude::*;
+            BASE64_STANDARD.encode(&x)
+        } else {
+            "%".to_string()
+        }
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_OptionalBytes_identity(x: Option<Vec<u8>>) -> Option<Vec<u8>> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_OptionalBytes_identity_async(
+        x: Option<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_PairStringString_to_string(x: (String, String)) -> String {
+        format!("{},{}", x.0, x.1)
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_PairStringString_identity(x: (String, String)) -> (String, String) {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_PairStringString_identity_async(
+        x: (String, String),
+    ) -> (String, String) {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_PairStringMySimpleTestEnum_to_string(
+        x: (String, MySimpleTestEnum),
+    ) -> String {
+        format!(
+            "{},{}",
+            x.0,
+            match x.1 {
+                MySimpleTestEnum::A => "a",
+                MySimpleTestEnum::B => "b",
+            }
+        )
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_PairStringMySimpleTestEnum_identity(
+        x: (String, MySimpleTestEnum),
+    ) -> (String, MySimpleTestEnum) {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_PairStringMySimpleTestEnum_identity_async(
+        x: (String, MySimpleTestEnum),
+    ) -> (String, MySimpleTestEnum) {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_MapStringString_to_string(x: HashMap<String, String>) -> String {
+        let mut x = x.into_iter().collect_vec();
+        x.sort();
+        x.into_iter().map(|(a, b)| format!("{a},{b}")).join("\n")
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_MapStringString_identity(
+        x: HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_MapStringString_identity_async(
+        x: HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        x
+    }
+
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_MapStringMySimpleTestEnum_to_string(
+        x: HashMap<String, MySimpleTestEnum>,
+    ) -> String {
+        let mut x = x.into_iter().collect_vec();
+        x.sort();
+        x.into_iter()
+            .map(|x| {
+                format!(
+                    "{},{}",
+                    x.0,
+                    match x.1 {
+                        MySimpleTestEnum::A => "a",
+                        MySimpleTestEnum::B => "b",
+                    }
+                )
+            })
+            .join("\n")
+    }
+    #[bridge_fn(nice = true)]
+    fn TESTING_conversion_MapStringMySimpleTestEnum_identity(
+        x: HashMap<String, MySimpleTestEnum>,
+    ) -> HashMap<String, MySimpleTestEnum> {
+        x
+    }
+    #[bridge_io(TokioAsyncContext, nice = true, ffi = false, jni = false)]
+    async fn TESTING_conversion_MapStringMySimpleTestEnum_identity_async(
+        x: HashMap<String, MySimpleTestEnum>,
+    ) -> HashMap<String, MySimpleTestEnum> {
+        x
+    }
 }

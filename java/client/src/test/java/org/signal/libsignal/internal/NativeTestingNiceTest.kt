@@ -1,0 +1,558 @@
+//
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+package org.signal.libsignal.internal
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import org.junit.Test
+import org.signal.libsignal.protocol.ServiceId
+import java.time.Instant
+import java.time.format.DateTimeFormatterBuilder
+import java.util.Arrays
+import java.util.UUID
+import kotlin.io.encoding.Base64
+import kotlin.random.Random
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+
+sealed class MyNiceTypeEnum {
+  public data object Unit : MyNiceTypeEnum()
+
+  public data class Single(
+    public val _0: Int,
+  ) : MyNiceTypeEnum()
+}
+
+sealed class MyNiceTypeSimpleEnum {
+  public data object A : MyNiceTypeSimpleEnum()
+
+  public data object B : MyNiceTypeSimpleEnum()
+}
+
+data class MyNiceTypeStruct(
+  public val x: Int,
+  public val y: Int,
+)
+
+class NativeTestingNiceTest {
+  private fun <T> testConversion(
+    items: Sequence<T>,
+    nativeToString: (T) -> String,
+    nativeIdentity: (T) -> T,
+    toString: (T) -> String = { it.toString() },
+    equality: (T, T) -> Boolean = { a, b -> a == b },
+  ) {
+    for (item in items) {
+      assertEquals(toString(item), nativeToString(item))
+      val roundTripped = nativeIdentity(item)
+      assertTrue(equality(roundTripped, item), "${toString(item)} != ${toString(roundTripped)}")
+    }
+  }
+
+  @Test
+  fun string() =
+    testConversion(
+      listOf("", "abc", "îüéè").asSequence(),
+      nativeToString = NativeTestingNice::TESTING_conversion_string_identity,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_string_identity,
+    )
+
+  @Test
+  fun bool() =
+    testConversion(
+      listOf(true, false).asSequence(),
+      nativeToString = NativeTestingNice::TESTING_conversion_bool_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_bool_identity,
+    )
+
+  @Test
+  fun u8() =
+    testConversion(
+      UByte.MIN_VALUE
+        .toInt()
+        .rangeTo(UByte.MAX_VALUE.toInt())
+        .asSequence(),
+      nativeToString = NativeTestingNice::TESTING_conversion_u8_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_u8_identity,
+    )
+
+  @Test
+  fun u16() =
+    testConversion(
+      UShort.MIN_VALUE
+        .toInt()
+        .rangeTo(UShort.MAX_VALUE.toInt())
+        .asSequence(),
+      nativeToString = NativeTestingNice::TESTING_conversion_u16_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_u16_identity,
+    )
+
+  @Test
+  fun i32() =
+    testConversion(
+      (-1024 until 1024).asSequence(),
+      nativeToString = NativeTestingNice::TESTING_conversion_i32_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_i32_identity,
+    )
+
+  @Test
+  fun serviceId() =
+    testConversion(
+      (0 until 10).asSequence().flatMap {
+        val uuid = UUID.nameUUIDFromBytes(it.toString().toByteArray())
+        listOf(
+          ServiceId.Aci(uuid),
+          ServiceId.Pni(uuid),
+        ).asSequence()
+      },
+      toString = ServiceId::toServiceIdString,
+      nativeToString = NativeTestingNice::TESTING_conversion_ServiceId_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_ServiceId_identity,
+    )
+
+  @Test
+  fun data() =
+    testConversion(
+      (0 until 10).asSequence().map({ Random.nextBytes(1 shl it) }),
+      toString = Base64::encode,
+      nativeToString = NativeTestingNice::TESTING_conversion_Data_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_Data_identity,
+      equality = java.util.Arrays::equals,
+    )
+
+  @Test
+  fun data32() =
+    testConversion(
+      sequenceOf(Random.nextBytes(32)),
+      toString = Base64::encode,
+      nativeToString = NativeTestingNice::TESTING_conversion_Data32_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_Data32_identity,
+      equality = java.util.Arrays::equals,
+    )
+
+  @Test
+  fun data32BridgeVec() =
+    testConversion(
+      (0 until 8).asSequence().map { count -> (0 until count).map { Random.nextBytes(32) } },
+      toString = { it.joinToString("\n", transform = Base64::encode) },
+      nativeToString = NativeTestingNice::TESTING_conversion_BridgeVecData32_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_BridgeVecData32_identity,
+      equality = { a, b -> a.zip(b).all { (a, b) -> a.contentEquals(b) } },
+    )
+
+  @Test
+  fun dataU8() =
+    testConversion(
+      (0 until 10).asSequence().map({ Random.nextBytes(1 shl it) }),
+      toString = Base64::encode,
+      nativeToString = NativeTestingNice::TESTING_conversion_Data_VecU8_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_Data_VecU8_identity,
+      equality = java.util.Arrays::equals,
+    )
+
+  @Test
+  fun bridgeVecString() =
+    testConversion(
+      listOf(listOf(), listOf("one"), listOf("one", "two"), listOf("one", "two", "three")).asSequence(),
+      toString = { arr -> buildJsonArray { arr.forEach { add(it) } }.toString() },
+      nativeToString = NativeTestingNice::TESTING_conversion_BridgeVecString_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_BridgeVecString_identity,
+    )
+
+  @Test
+  fun bridgeVecMySimpleTestEnum() =
+    testConversion(
+      listOf(
+        listOf(),
+        listOf(MySimpleTestEnum.A),
+        listOf(MySimpleTestEnum.B),
+        listOf(
+          MySimpleTestEnum.A,
+          MySimpleTestEnum.B,
+        ),
+        listOf(MySimpleTestEnum.A, MySimpleTestEnum.A, MySimpleTestEnum.B),
+        listOf(
+          MySimpleTestEnum.B,
+          MySimpleTestEnum.B,
+        ),
+      ).asSequence(),
+      toString = { arr -> buildJsonArray { arr.forEach { add(it.toString()) } }.toString() },
+      nativeToString = NativeTestingNice::TESTING_MySimpleTestEnum_BridgeVec_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MySimpleTestEnum_BridgeVec_identity,
+    )
+
+  @Test
+  fun mapOfStrings() =
+    testConversion(
+      sequenceOf(
+        mapOf(),
+        mapOf("a" to "1"),
+        mapOf("a" to "1", "b" to "2"),
+        mapOf("a" to "1", "b" to "2", "c" to "3"),
+      ),
+      toString = {
+        it
+          .asSequence()
+          .map { "${it.key},${it.value}" }
+          .sorted()
+          .joinToString("\n")
+      },
+      nativeToString = NativeTestingNice::TESTING_conversion_MapStringString_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_MapStringString_identity,
+    )
+
+  @Test
+  fun mapOfStringToMySimpleTestEnum() =
+    testConversion(
+      sequenceOf(
+        mapOf(),
+        mapOf("a" to MySimpleTestEnum.A),
+        mapOf("a" to MySimpleTestEnum.A, "b" to MySimpleTestEnum.B),
+        mapOf("a" to MySimpleTestEnum.A, "b" to MySimpleTestEnum.B, "c" to MySimpleTestEnum.A),
+      ),
+      toString = {
+        it
+          .asSequence()
+          .map {
+            val value =
+              when (it.value) {
+                MySimpleTestEnum.A -> "a"
+                MySimpleTestEnum.B -> "b"
+              }
+            "${it.key},$value"
+          }.sorted()
+          .joinToString("\n")
+      },
+      nativeToString = NativeTestingNice::TESTING_conversion_MapStringMySimpleTestEnum_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_MapStringMySimpleTestEnum_identity,
+    )
+
+  @Test
+  fun pairOfStrings() =
+    testConversion(
+      listOf(
+        Pair("", ""),
+        Pair("a", "b"),
+        Pair("12", "34"),
+      ).asSequence(),
+      toString = { "${it.first},${it.second}" },
+      nativeToString = NativeTestingNice::TESTING_conversion_PairStringString_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_PairStringString_identity,
+    )
+
+  @Test
+  fun pairOfStringMySimpleTestEnum() =
+    testConversion(
+      listOf(Pair("foo", MySimpleTestEnum.A), Pair("baz", MySimpleTestEnum.B)).asSequence(),
+      toString = {
+        "${it.first}," +
+          when (it.second) {
+            MySimpleTestEnum.A -> "a"
+            MySimpleTestEnum.B -> "b"
+          }
+      },
+      nativeToString = NativeTestingNice::TESTING_conversion_PairStringMySimpleTestEnum_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_PairStringMySimpleTestEnum_identity,
+    )
+
+  @Test
+  fun mySimpleTestEnum() =
+    testConversion(
+      listOf(MySimpleTestEnum.A, MySimpleTestEnum.B).asSequence(),
+      toString = {
+        when (it) {
+          is MySimpleTestEnum.A -> "A"
+          is MySimpleTestEnum.B -> "B"
+        }
+      },
+      nativeToString = NativeTestingNice::TESTING_MySimpleTestEnum_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MySimpleTestEnum_identity,
+    )
+
+  @Test
+  fun myTestPoint() =
+    testConversion(
+      listOf(MyTestPoint(1, 2)).asSequence(),
+      toString = { p ->
+        buildJsonArray {
+          add(p._0)
+          add(p._1)
+        }.toString()
+      },
+      nativeToString = NativeTestingNice::TESTING_MyTestPoint_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MyTestPoint_identity,
+    )
+
+  @Test
+  fun myTestStruct() =
+    testConversion(
+      listOf(MyTestStruct(myStringField = "string", myNumericField = 12)).asSequence(),
+      toString = { s ->
+        buildJsonObject {
+          put("myNumericField", s.myNumericField)
+          put("myStringField", s.myStringField)
+        }.toString()
+      },
+      nativeToString = NativeTestingNice::TESTING_MyTestStruct_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MyTestStruct_identity,
+    )
+
+  @Test
+  fun myTestEnum() =
+    testConversion(
+      listOf(
+        MyTestEnum.Unit,
+        MyTestEnum.Single(1),
+        MyTestEnum.Double(2, 3),
+        MyTestEnum.SingleNamed(4),
+        MyTestEnum.Record(
+          personName = "Nobody",
+          personAge = 1001,
+          position = MyTestPoint(5, 6),
+          funStruct = MyTestStruct(7, "eight"),
+        ),
+      ).asSequence(),
+      toString = { e ->
+        when (e) {
+          is MyTestEnum.Unit -> "\"unit\""
+          is MyTestEnum.Single ->
+            buildJsonObject {
+              put("single", e._0)
+            }
+          is MyTestEnum.Double ->
+            buildJsonObject {
+              putJsonArray("double") {
+                add(e._0)
+                add(e._1)
+              }
+            }
+          is MyTestEnum.SingleNamed ->
+            buildJsonObject {
+              putJsonObject("singleNamed") {
+                put("x", e.x)
+              }
+            }
+          is MyTestEnum.Record ->
+            buildJsonObject {
+              putJsonObject("record") {
+                put("personName", e.personName)
+                put("personAge", e.personAge)
+                putJsonArray("position") {
+                  add(e.position._0)
+                  add(e.position._1)
+                }
+                putJsonObject("funStruct") {
+                  put("myNumericField", e.funStruct.myNumericField)
+                  put("myStringField", e.funStruct.myStringField)
+                }
+              }
+            }
+        }.toString()
+      },
+      nativeToString = NativeTestingNice::TESTING_MyTestEnum_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MyTestEnum_identity,
+    )
+
+  @Test
+  fun myNiceTypeSimpleEnum() =
+    testConversion(
+      items =
+        sequenceOf(
+          MyNiceTypeSimpleEnum.A,
+          MyNiceTypeSimpleEnum.B,
+        ),
+      nativeToString = NativeTestingNice::TESTING_MyNiceTypeSimpleEnum_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MyNiceTypeSimpleEnum_identity,
+      toString = {
+        when (it) {
+          MyNiceTypeSimpleEnum.A -> "\"A\""
+          MyNiceTypeSimpleEnum.B -> "\"B\""
+        }
+      },
+    )
+
+  @Test
+  fun myNiceTypeStruct() =
+    testConversion(
+      items =
+        sequenceOf(
+          MyNiceTypeStruct(1, 2),
+        ),
+      nativeToString = NativeTestingNice::TESTING_MyNiceTypeStruct_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MyNiceTypeStruct_identity,
+      toString = {
+        buildJsonObject {
+          put("x", it.x)
+          put("y", it.y)
+        }.toString()
+      },
+    )
+
+  @Test
+  fun myNiceTypeEnum() =
+    testConversion(
+      items =
+        sequenceOf(
+          MyNiceTypeEnum.Unit,
+          MyNiceTypeEnum.Single(17),
+        ),
+      nativeToString = NativeTestingNice::TESTING_MyNiceTypeEnum_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_MyNiceTypeEnum_identity,
+      toString = {
+        when (it) {
+          MyNiceTypeEnum.Unit -> "\"Unit\""
+          is MyNiceTypeEnum.Single ->
+            buildJsonObject {
+              put("Single", it._0)
+            }.toString()
+        }
+      },
+    )
+
+  @Test
+  fun testAsync() {
+    val tokio = TokioAsyncContext()
+    for (count in listOf(0, 1, 2, 4, 8, 16, 32, 64, 128, 256)) {
+      val data = NativeTestingNice.TESTING_TokioAsyncContext_FutureSuccessBytes(tokio, count).get()
+      assertEquals(count, data.size)
+    }
+  }
+
+  @Test
+  fun testUuid() {
+    testConversion(
+      sequenceOf(UUID.randomUUID()),
+      toString = Any::toString,
+      nativeToString = NativeTestingNice::TESTING_conversion_Uuid_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_Uuid_identity,
+    )
+  }
+
+  val floatsToTest: Sequence<Float> =
+    sequenceOf(
+      0.0f,
+      1.2f,
+      -1.2f,
+      Float.NaN,
+      Float.POSITIVE_INFINITY,
+      Float.NEGATIVE_INFINITY,
+    )
+
+  fun float2string(x: Float): String =
+    if (x == 0f) {
+      "0"
+    } else {
+      x.toString().replace("Infinity", "inf")
+    }
+
+  @Test
+  fun testFloat() {
+    testConversion(
+      floatsToTest,
+      toString = this::float2string,
+      nativeToString = NativeTestingNice::TESTING_conversion_Float_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_Float_identity,
+    )
+  }
+
+  @Test
+  fun testOptionalFloat() {
+    testConversion(
+      sequenceOf(floatsToTest, sequenceOf(null)).flatten(),
+      toString = {
+        if (it == null) {
+          ""
+        } else {
+          float2string(it)
+        }
+      },
+      nativeToString = NativeTestingNice::TESTING_conversion_OptionalFloat_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_OptionalFloat_identity,
+    )
+  }
+
+  @Test
+  fun testOptionalString() =
+    testConversion(
+      sequenceOf(null, "", "a", "abc"),
+      toString = Json::encodeToString,
+      nativeToString = NativeTestingNice::TESTING_conversion_OptionalString_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_OptionalString_identity,
+    )
+
+  @Test
+  fun testOptionalBytes() =
+    testConversion(
+      sequenceOf(null, byteArrayOf(), byteArrayOf(0), byteArrayOf(0, 1)),
+      toString = {
+        if (it == null) {
+          "%"
+        } else {
+          Base64.encode(it)
+        }
+      },
+      nativeToString = NativeTestingNice::TESTING_conversion_OptionalBytes_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_OptionalBytes_identity,
+      equality = java.util.Arrays::equals,
+    )
+
+  @Test
+  fun testReturnedError() {
+    val error = NativeTestingNice.TESTING_ReturnIoError()
+    assertIs<java.io.IOException>(error)
+    assertEquals(error.message, "testing")
+
+    val error2 = NativeTestingNice.TESTING_ReturnSomeIoError(present = true)
+    assertIs<java.io.IOException>(error2)
+    assertEquals(error.message, "testing")
+
+    val error3 = NativeTestingNice.TESTING_ReturnSomeIoError(present = false)
+    assertEquals(error3, null)
+  }
+
+  @Test
+  fun testDeviceId() {
+    testConversion(
+      IntRange(1, 127).asSequence(),
+      toString = Any::toString,
+      nativeToString = NativeTestingNice::TESTING_conversion_DeviceId_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_DeviceId_identity,
+    )
+  }
+
+  @Test
+  fun testTimestamp() {
+    val fmt = DateTimeFormatterBuilder().appendInstant(3).toFormatter()
+
+    fun instant2string(x: Instant): String = "${x.toEpochMilli()}ms ${fmt.format(x)}"
+    testConversion(
+      sequenceOf(
+        Instant.ofEpochMilli(0),
+        Instant.ofEpochMilli(1782938926226),
+      ),
+      toString = { instant2string(it) },
+      nativeToString = NativeTestingNice::TESTING_conversion_Timestamp_to_string,
+      nativeIdentity = NativeTestingNice::TESTING_conversion_Timestamp_identity,
+    )
+    // Our timestamps only store milliseconds, and don't preserve nanoseconds, so we _can't_
+    // roundtrip via identity. Instead, we just validate the string format
+    for (instant in listOf(
+      Instant.ofEpochSecond(
+        1782938926,
+        226 * 100_000,
+      ),
+      Instant.ofEpochSecond(1782938, 738),
+    )) {
+      assertEquals(instant2string(instant), NativeTestingNice.TESTING_conversion_Timestamp_to_string(instant))
+    }
+  }
+}

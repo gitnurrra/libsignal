@@ -14,13 +14,15 @@ import org.signal.libsignal.internal.CalledFromNative;
  */
 @CalledFromNative
 public interface BridgeChatListener {
-  void onIncomingMessage(byte[] envelope, long serverDeliveryTimestamp, long sendAckHandle);
+  void receivedIncomingMessage(byte[] envelope, long serverDeliveryTimestamp, long sendAckHandle);
 
-  void onQueueEmpty();
+  void receivedQueueEmpty();
 
-  void onReceivedAlerts(String[] alerts);
+  void receivedAlerts(String[] alerts);
+
+  void receivedServerTimestamp(long timestamp);
 
   // disconnectReason should always be a ChatServiceError, but it is converted to a Throwable
   //   just to be easily passed across the bridge.
-  void onConnectionInterrupted(Throwable disconnectReason);
+  void connectionInterrupted(Throwable disconnectReason);
 }

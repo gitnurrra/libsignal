@@ -37,11 +37,16 @@ import SignalFfi
 ///
 /// ## Secret handling
 ///
-/// When calling ``store(backupKey:previousSecretData:)``, the `previousSecretData` parameter
-/// must be from the last call to `store` or `restore` that succeeded. The returned secret from a successful
-/// store or restore should be persisted until it is overwritten by the value from a subsequent
-/// successful call. The caller should use ``createNewBackupChain(backupKey:)`` only for the very first
-/// backup with a particular backup key.
+/// When calling ``store(backupKey:previousSecretData:)``, the `previousSecretData` parameter must
+/// be from the last call to  `store` or `restore` that succeeded. This "chaining" is used to
+/// construct each backup file so that it can be decrypted with either the *previous* token stored
+/// in SVR-B, or the *next* one, which is important in case the overall backup upload is ever
+/// interrupted.
+///
+/// The returned secret from a successful store or restore should be persisted until it is
+/// overwritten by the value from a subsequent successful call. The caller should use
+/// ``createNewBackupChain(backupKey:)`` only for the very first backup with a particular backup
+/// key.
 ///
 /// ## Restore Flow
 ///
@@ -94,20 +99,32 @@ public class SvrB {
 
     /// Prepares a backup for storage with forward secrecy guarantees.
     ///
-    /// This makes a network call to the SVR-B server to store the forward secrecy token
-    /// and returns a ``StoreBackupResponse``. See its fields' documentation and ``SvrB``
-    /// for how to continue persisting the backup on success.
+    /// This makes a network call to the SVR-B server to store the forward secrecy token and returns
+    /// a ``StoreBackupResponse``. See its fields' documentation and ``SvrB`` for how to continue
+    /// persisting the backup on success.
     ///
     /// - Parameters:
     ///   - backupKey: The backup key derived from the Account Entropy Pool (AEP).
     ///   - previousSecretData: Secret data from the most recent previous backup operation.
     ///     **Critical**: This MUST be the secret data from the most recent of the following:
-    ///     - the last **successful** ``store(backupKey:previousSecretKey:)`` call whose returned `metadata` was
-    ///       successfully uploaded, and whose `nextBackupSecretData` was persisted.
+    ///     - the last **successful** ``store(backupKey:previousSecretData:)`` call whose returned
+    ///       `metadata` was successfully uploaded, and whose `nextBackupSecretData` was persisted.
     ///     - the last successful ``restore(backupKey:metadata:)``
-    ///     - the already-persisted result from ``createNewBackupChain(backupKey:)``, only if neither of the other two are available
-    /// - Returns: A ``StoreBackupResponse`` containing the forward secrecy token, metadata, and secret data.
-    /// - Throws: ``SignalError`` if the previous secret data is malformed or processing or upload fail.
+    ///     - the already-persisted result from ``createNewBackupChain(backupKey:)``, only if
+    ///       neither of the other two are available
+    /// - Returns: A ``StoreBackupResponse`` containing the forward secrecy token, metadata, and
+    ///   secret data.
+    /// - Throws:
+    ///   - ``SignalError/invalidArgument(_:)`` if `previousSecretData` is malformed. There's no
+    ///     choice here but to **start a new chain**.
+    ///   - ``SignalError/rateLimitedError(retryAfter:message:)`` if the server is rate limiting
+    ///     this client. This is **retryable** after waiting the designated delay.
+    ///   - ``SignalError/connectionFailed(_:)``, ``SignalError/ioError(_:)``, or
+    ///     ``SignalError/webSocketError(_:)`` for networking failures before and during
+    ///     communication with the server. These can be **automatically retried** (backoff
+    ///     recommended).
+    ///   - Other ``SignalError``s for networking and attestation issues. These can be manually
+    ///     retried, but some may indicate a possible bug in libsignal or in the enclave.
     public func store(
         backupKey: BackupKey,
         previousSecretData: Data
@@ -148,10 +165,25 @@ public class SvrB {
     ///
     /// - Parameters:
     ///   - backupKey: The backup key derived from the Account Entropy Pool (AEP).
-    ///   - metadata: The metadata that was stored in a header in the backup file during backup creation.
+    ///   - metadata: The metadata that was stored in a header in the backup file during backup
+    ///     creation.
     /// - Returns: The forward secrecy token needed to derive keys for decrypting the backup.
-    /// - Throws: ``SignalError`` if the metadata is invalid, the network operation fails, or the
-    ///   backup cannot be found.
+    /// - Throws:
+    ///   - ``SignalError/invalidArgument(_:)`` if the backup metadata is malformed. In this case
+    ///     the user's data is **not recoverable**.
+    ///   - ``SignalError/svrRestoreFailed(triesRemaining:message:)`` if restoration fails. This
+    ///     should never happen but if it does the user's data is **not recoverable**.
+    ///   - ``SignalError/svrDataMissing(_:)`` if the backup data is not found on the server,
+    ///     indicating an **incorrect backup key** (which may in turn imply the user's data is not
+    ///     recoverable).
+    ///   - ``SignalError/rateLimitedError(retryAfter:message:)`` if the server is rate limiting
+    ///     this client. This is **retryable** after waiting the designated delay.
+    ///   - ``SignalError/connectionFailed(_:)``, ``SignalError/ioError(_:)``, or
+    ///     ``SignalError/webSocketError(_:)`` for networking failures before and during
+    ///     communication with the server. These can be **automatically retried** (backoff
+    ///     recommended).
+    ///   - Other ``SignalError``s for networking and attestation issues. These can be manually
+    ///     retried, but some may indicate a possible bug in libsignal or in the enclave.
     public func restore(
         backupKey: BackupKey,
         metadata: Data
@@ -177,6 +209,41 @@ public class SvrB {
         }
 
         return RestoreBackupResponse(owned: NonNull(rawResult)!)
+    }
+
+    /// Attempts to remove the info stored with SVR-B for this particular username/password pair.
+    ///
+    /// This is a best-effort operation; a successful return means the data has been removed from
+    /// (or never was present in) the current SVR-B enclaves, but may still be present in previous
+    /// ones that have yet to be decommissioned. Conversely, a thrown error may still have removed
+    /// information from previous enclaves.
+    ///
+    /// This should not typically be needed; rather than explicitly removing an entry, the client
+    /// should generally overwrite with a new ``store(backupKey:previousSecretData:)`` instead.
+    ///
+    /// - Throws:
+    ///   - ``SignalError/rateLimitedError(retryAfter:message:)`` if the server is rate limiting
+    ///     this client. This is **retryable** after waiting the designated delay.
+    ///   - ``SignalError/connectionFailed(_:)``, ``SignalError/ioError(_:)``, or
+    ///     ``SignalError/webSocketError(_:)`` for networking failures before and during
+    ///     communication with the server. These can be **automatically retried** (backoff
+    ///     recommended).
+    ///   - Other ``SignalError``s for networking and attestation issues. These can be manually
+    ///     retried, but some may indicate a possible bug in libsignal or in the enclave.
+    public func remove() async throws {
+        let _: Bool = try await self.net.asyncContext.invokeAsyncFunction {
+            promise,
+            runtime in
+            net.connectionManager.withNativeHandle { connectionManager in
+                signal_secure_value_recovery_for_backups_remove_backup(
+                    promise,
+                    runtime.const(),
+                    connectionManager.const(),
+                    self.auth.username,
+                    self.auth.password
+                )
+            }
+        }
     }
 }
 

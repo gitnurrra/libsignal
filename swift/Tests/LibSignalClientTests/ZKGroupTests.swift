@@ -7,8 +7,6 @@ import Foundation
 import LibSignalClient
 import Testing
 
-private let SECONDS_PER_DAY: UInt64 = 24 * 60 * 60
-
 class ZKGroupTests {
     let TEST_ARRAY_16: UUID = .init(
         uuid: (0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F)
@@ -177,6 +175,70 @@ class ZKGroupTests {
         let uuidCiphertextRecv = try presentation.getUuidCiphertext()
         #expect(aciCiphertext.serialize() == uuidCiphertextRecv.serialize())
         #expect(try presentation.getPniCiphertext().serialize() == pniCiphertext.serialize())
+        #expect(try presentation.getRedemptionTime() == Date(timeIntervalSince1970: TimeInterval(redemptionTime)))
+        try serverZkAuth.verifyAuthCredentialPresentation(
+            groupPublicParams: groupPublicParams,
+            authCredentialPresentation: presentation,
+            now: Date(timeIntervalSince1970: TimeInterval(redemptionTime))
+        )
+    }
+
+    @Test
+    func authZkcWithoutPniIntegration() throws {
+        // Both ACI and salt will be assigned to an account at registration.
+        let aci = Aci(fromUUID: TEST_ARRAY_16)
+        let salt = Data([1, 2, 3, 4, 5])
+        let redemptionTime: UInt64 = 123_456 * SECONDS_PER_DAY
+
+        // Generate keys (client's are per-group, server's are not)
+        // ---
+
+        // SERVER
+        let serverSecretParams = try ServerSecretParams.generate(randomness: self.TEST_ARRAY_32)
+        let serverPublicParams = try serverSecretParams.getPublicParams()
+        let serverZkAuth = ServerZkAuthOperations(serverSecretParams: serverSecretParams)
+
+        // CLIENT
+        let masterKey = try GroupMasterKey(contents: TEST_ARRAY_32_1)
+        let groupSecretParams = try GroupSecretParams.deriveFromMasterKey(groupMasterKey: masterKey)
+        let groupPublicParams = try groupSecretParams.getPublicParams()
+
+        // SERVER
+        // Issue credential
+        let authCredentialResponse = try serverZkAuth.issueAuthCredentialZkcWithoutPni(
+            randomness: self.TEST_ARRAY_32_2,
+            aci: aci,
+            salt: salt,
+            redemptionTime: redemptionTime
+        )
+
+        // CLIENT
+        // Receive credential
+        let clientZkAuthCipher = ClientZkAuthOperations(serverPublicParams: serverPublicParams)
+        let clientZkGroupCipher = ClientZkGroupCipher(groupSecretParams: groupSecretParams)
+        let authCredential = try clientZkAuthCipher.receiveAuthCredentialWithoutPni(
+            aci: aci,
+            salt: salt,
+            redemptionTime: redemptionTime,
+            authCredentialResponse: authCredentialResponse
+        )
+
+        // Create and decrypt user entry
+        let aciCiphertext = try clientZkGroupCipher.encrypt(aci)
+        let aciPlaintext = try clientZkGroupCipher.decrypt(aciCiphertext)
+        #expect(aci == aciPlaintext)
+
+        // Create presentation
+        let presentation = try clientZkAuthCipher.createAuthCredentialPresentation(
+            randomness: self.TEST_ARRAY_32_5,
+            groupSecretParams: groupSecretParams,
+            authCredential: authCredential
+        )
+
+        // Verify presentation
+        let uuidCiphertextRecv = try presentation.getUuidCiphertext()
+        #expect(aciCiphertext.serialize() == uuidCiphertextRecv.serialize())
+        #expect(try presentation.getPniCiphertext().serialize() != aciCiphertext.serialize())
         #expect(try presentation.getRedemptionTime() == Date(timeIntervalSince1970: TimeInterval(redemptionTime)))
         try serverZkAuth.verifyAuthCredentialPresentation(
             groupPublicParams: groupPublicParams,

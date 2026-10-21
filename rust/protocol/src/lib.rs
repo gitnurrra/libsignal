@@ -24,26 +24,34 @@
 
 mod consts;
 mod crypto;
+mod double_ratchet;
 pub mod error;
 mod fingerprint;
 mod group_cipher;
+mod handshake;
 mod identity_key;
 pub mod incremental_mac;
 pub mod kem;
+pub mod pqxdh;
 mod proto;
 mod protocol;
 mod ratchet;
 mod sealed_sender;
 mod sender_keys;
 mod session;
-mod session_cipher;
+#[cfg(test)]
+mod session_cipher_legacy;
+mod session_management;
 mod state;
 mod storage;
 mod timestamp;
+mod triple_ratchet;
 
 use error::Result;
-pub use error::SignalProtocolError;
-pub use fingerprint::{DisplayableFingerprint, Fingerprint, ScannableFingerprint};
+pub use error::{SessionNotFound, SignalProtocolError};
+pub use fingerprint::{
+    DisplayableFingerprint, Error as FingerprintError, Fingerprint, ScannableFingerprint,
+};
 pub use group_cipher::{
     create_sender_key_distribution_message, group_decrypt, group_encrypt,
     process_sender_key_distribution_message,
@@ -54,23 +62,23 @@ pub use libsignal_core::{
     Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind,
 };
 pub use protocol::{
-    extract_decryption_error_message_from_serialized_content, CiphertextMessage,
-    CiphertextMessageType, DecryptionErrorMessage, KyberPayload, PlaintextContent,
-    PreKeySignalMessage, SenderKeyDistributionMessage, SenderKeyMessage, SignalMessage,
+    CiphertextMessage, CiphertextMessageType, DecryptionErrorMessage, KyberPayload,
+    PlaintextContent, PreKeySignalMessage, SenderKeyDistributionMessage, SenderKeyMessage,
+    SignalMessage, extract_decryption_error_message_from_serialized_content,
 };
 pub use ratchet::{
-    initialize_alice_session_record, initialize_bob_session_record, AliceSignalProtocolParameters,
-    BobSignalProtocolParameters, UsePQRatchet,
+    AliceSignalProtocolParameters, BobSignalProtocolParameters, initialize_alice_session_record,
+    initialize_bob_session_record,
 };
 pub use sealed_sender::{
-    sealed_sender_decrypt, sealed_sender_decrypt_to_usmc, sealed_sender_encrypt,
-    sealed_sender_encrypt_from_usmc, sealed_sender_multi_recipient_encrypt, ContentHint,
-    SealedSenderDecryptionResult, SealedSenderV2SentMessage, SealedSenderV2SentMessageRecipient,
-    SenderCertificate, ServerCertificate, UnidentifiedSenderMessageContent,
+    ContentHint, SealedSenderDecryptionResult, SealedSenderV2SentMessage,
+    SealedSenderV2SentMessageRecipient, SenderCertificate, ServerCertificate,
+    UnidentifiedSenderMessageContent, sealed_sender_decrypt, sealed_sender_decrypt_to_usmc,
+    sealed_sender_encrypt, sealed_sender_encrypt_from_usmc, sealed_sender_multi_recipient_encrypt,
 };
 pub use sender_keys::SenderKeyRecord;
 pub use session::{process_prekey, process_prekey_bundle};
-pub use session_cipher::{
+pub use session_management::{
     message_decrypt, message_decrypt_prekey, message_decrypt_signal, message_encrypt,
 };
 pub use state::{

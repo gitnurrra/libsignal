@@ -3,15 +3,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use std::net::IpAddr;
+#![warn(clippy::unwrap_used)]
+
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use http::{HeaderName, HeaderValue};
+use libsignal_core::LogSafeDisplay;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::certs::RootCertificates;
-use crate::errors::{LogSafeDisplay, RetryLater};
+use crate::errors::RetryLater;
 use crate::host::Host;
 use crate::timeouts::{WS_KEEP_ALIVE_INTERVAL, WS_MAX_IDLE_INTERVAL};
 
@@ -20,17 +23,14 @@ pub mod dns;
 pub mod errors;
 pub mod host;
 pub mod http_client;
-pub mod noise;
-mod proto;
 pub mod route;
-mod stream;
+pub mod stream;
 pub mod tcp_ssl;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testutil;
 pub mod timeouts;
 pub mod utils;
 pub mod ws;
-pub mod ws2;
 
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -79,6 +79,16 @@ pub enum EnableDomainFronting {
 pub enum EnforceMinimumTls {
     Yes,
     No,
+}
+
+/// Whether to override the platform default for the Nagle algorithm via TCP_NODELAY.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum OverrideNagleAlgorithm {
+    /// Explicitly disable the Nagle algorithm (enable TCP_NODELAY).
+    OverrideToOff,
+    /// Leave the operating system's default behavior unchanged.
+    #[default]
+    UseSystemDefault,
 }
 
 /// The fully general version of [`AsStaticHttpHeader`], where the name of the header may depend on the
@@ -162,11 +172,17 @@ pub struct ServiceConnectionInfo {
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct TransportInfo {
-    /// The IP address version over which the connection is established.
-    pub ip_version: IpType,
+    pub local_addr: SocketAddr,
+    pub remote_addr: SocketAddr,
+}
 
-    /// The local port number for the connection.
-    pub local_port: u16,
+impl TransportInfo {
+    pub fn ip_version(&self) -> IpType {
+        match self.local_addr.ip() {
+            IpAddr::V4(_) => IpType::V4,
+            IpAddr::V6(_) => IpType::V6,
+        }
+    }
 }
 
 /// An established connection.
@@ -181,8 +197,6 @@ pub trait Connection {
 pub enum DnsSource {
     /// The result was returned from the cache
     Cache,
-    /// The result came from performing a plaintext DNS query over UDP.
-    UdpLookup,
     /// The result came from performing a DNS-over-HTTPS query.
     DnsOverHttpsLookup,
     /// The result came from performing a DNS query using a system resolver.
@@ -234,25 +248,46 @@ pub trait AsyncDuplexStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncDuplexStream for S {}
 
 /// A single ALPN list entry.
-///
-/// Implements `AsRef<[u8]>` as the length-delimited wire form.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Alpn {
     Http1_1,
     Http2,
 }
 
-impl AsRef<[u8]> for Alpn {
-    fn as_ref(&self) -> &[u8] {
+impl Alpn {
+    pub const fn encoded(&self) -> &'static [u8] {
+        self.length_prefixed()
+            .split_first()
+            .expect("always has a prefix to strip")
+            .1
+    }
+
+    pub const fn length_prefixed(&self) -> &'static [u8] {
         match self {
-            Alpn::Http1_1 => b"\x08http/1.1",
-            Alpn::Http2 => b"\x02h2",
+            Self::Http1_1 => b"\x08http/1.1",
+            Self::Http2 => b"\x02h2",
         }
     }
 }
 
-pub const RECOMMENDED_WS2_CONFIG: ws2::Config = {
-    ws2::Config {
+pub struct UnrecognizedAlpn;
+
+impl TryFrom<&'_ [u8]> for Alpn {
+    type Error = UnrecognizedAlpn;
+
+    fn try_from(value: &'_ [u8]) -> Result<Self, Self::Error> {
+        if value == Self::Http2.encoded() {
+            return Ok(Self::Http2);
+        }
+        if value == Self::Http1_1.encoded() {
+            return Ok(Self::Http1_1);
+        }
+        Err(UnrecognizedAlpn)
+    }
+}
+
+pub const RECOMMENDED_WS_CONFIG: ws::Config = {
+    ws::Config {
         local_idle_timeout: WS_KEEP_ALIVE_INTERVAL,
         remote_idle_ping_timeout: WS_KEEP_ALIVE_INTERVAL,
         remote_idle_disconnect_timeout: WS_MAX_IDLE_INTERVAL,

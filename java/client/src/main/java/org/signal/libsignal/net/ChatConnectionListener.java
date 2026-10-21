@@ -8,7 +8,6 @@ package org.signal.libsignal.net;
 import org.signal.libsignal.internal.FilterExceptions;
 import org.signal.libsignal.internal.Native;
 import org.signal.libsignal.internal.NativeHandleGuard;
-import org.signal.libsignal.internal.TokioAsyncContext;
 
 public interface ChatConnectionListener {
   /**
@@ -42,6 +41,16 @@ public interface ChatConnectionListener {
   default void onReceivedAlerts(ChatConnection chat, String[] alerts) {}
 
   /**
+   * Called with the server's current clock time.
+   *
+   * <p>Like {@link #onIncomingMessage(ChatConnection, byte[], long, ServerMessageAck)}, this
+   * timestamp is in milliseconds since the Unix epoch.
+   *
+   * <p>The default implementation of this method does nothing.
+   */
+  default void onServerTimestamp(ChatConnection chat, long timestamp) {}
+
+  /**
    * Called when the client gets disconnected from the server.
    *
    * <p>This includes both deliberate disconnects as well as unexpected socket closures. In the case
@@ -53,11 +62,8 @@ public interface ChatConnectionListener {
       ChatConnection chat, ChatServiceException disconnectReason) {}
 
   public static class ServerMessageAck extends NativeHandleGuard.SimpleOwner {
-    private final TokioAsyncContext asyncContext;
-
-    ServerMessageAck(TokioAsyncContext context, long nativeHandle) {
+    ServerMessageAck(long nativeHandle) {
       super(nativeHandle);
-      asyncContext = context;
     }
 
     protected void release(long nativeHandle) {

@@ -6,12 +6,12 @@
 package org.signal.libsignal.net;
 
 import java.util.Locale;
+import kotlin.Pair;
 import org.signal.libsignal.internal.CompletableFuture;
 import org.signal.libsignal.internal.Native;
 import org.signal.libsignal.internal.NativeTesting;
 import org.signal.libsignal.internal.TokioAsyncContext;
 import org.signal.libsignal.net.internal.BridgeChatListener;
-import org.signal.libsignal.protocol.util.Pair;
 
 /**
  * Represents an unauthenticated (i.e. hopefully anonymous) communication channel with the Chat
@@ -33,7 +33,7 @@ public class UnauthenticatedChatConnection extends ChatConnection {
     this.keyTransparencyClient = new KeyTransparencyClient(this, tokioAsyncContext, ktEnvironment);
   }
 
-  private KeyTransparencyClient keyTransparencyClient;
+  private final KeyTransparencyClient keyTransparencyClient;
 
   static CompletableFuture<UnauthenticatedChatConnection> connect(
       final TokioAsyncContext tokioAsyncContext,
@@ -77,13 +77,26 @@ public class UnauthenticatedChatConnection extends ChatConnection {
       final TokioAsyncContext tokioAsyncContext,
       ChatConnectionListener listener,
       Network.Environment ktEnvironment) {
+    return fakeConnect(tokioAsyncContext, listener, new String[0], ktEnvironment);
+  }
+
+  /**
+   * Test-only method to create a {@code UnauthenticatedChatConnection} connected to a fake remote.
+   *
+   * <p>The returned {@link FakeChatRemote} can be used to send messages to the connection.
+   */
+  public static Pair<UnauthenticatedChatConnection, FakeChatRemote> fakeConnect(
+      final TokioAsyncContext tokioAsyncContext,
+      ChatConnectionListener listener,
+      String[] grpcOverrides,
+      Network.Environment ktEnvironment) {
 
     return tokioAsyncContext.guardedMap(
         asyncContextHandle -> {
           SetChatLaterListenerBridge bridgeListener = new SetChatLaterListenerBridge();
           long fakeChatConnection =
               NativeTesting.TESTING_FakeChatConnection_Create(
-                  asyncContextHandle, bridgeListener, "");
+                  asyncContextHandle, bridgeListener, String.join("\n", grpcOverrides), "");
           UnauthenticatedChatConnection chat =
               new UnauthenticatedChatConnection(
                   tokioAsyncContext,
@@ -124,6 +137,11 @@ public class UnauthenticatedChatConnection extends ChatConnection {
       int timeoutMillis) {
     return Native.UnauthenticatedChatConnection_send(
         nativeAsyncContextHandle, nativeChatConnectionHandle, nativeRequestHandle, timeoutMillis);
+  }
+
+  @Override
+  protected long infoWrapper(long nativeChatConnectionHandle) {
+    return Native.UnauthenticatedChatConnection_info(nativeChatConnectionHandle);
   }
 
   @Override

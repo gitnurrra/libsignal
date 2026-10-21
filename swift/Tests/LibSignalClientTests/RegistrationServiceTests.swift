@@ -60,6 +60,18 @@ class RegistrationServiceConversionTests {
         )
         #expect(response.entitlements.1 == BackupEntitlement(expiration: 888_888, level: 123))
         #expect(response.reregistration == true)
+        #expect(response.authCredentialSalt == nil)
+    }
+
+    @Test
+    func registerAccountResponseConversionWithoutPhoneNumber() throws {
+        let response: RegisterAccountResponse = try invokeFnReturningNativeHandle {
+            signal_testing_register_account_response_create_test_value_without_phone_number($0)
+        }
+        #expect(response.number == nil)
+        #expect(response.pni == nil)
+        #expect(try Aci.parseFrom(serviceIdString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") == response.aci)
+        #expect(response.authCredentialSalt == Data("auth-credential-salt".utf8))
     }
 
     // swift-format-ignore
@@ -67,12 +79,13 @@ class RegistrationServiceConversionTests {
     // They'd get shorter if Swift added a `matches!` equivalent.
     @Test
     func errorConversion() {
-        let retryLaterCase = ("RetryAfter42Seconds", { (e: Error) in if case SignalError.rateLimitedError(retryAfter: 42, message: "retry after 42s") = e { true } else { false }})
+        let retryLaterCase = ("RetryAfter42Seconds", { (e: Error) in if case SignalError.rateLimitedError(retryAfter: 42, message: "Rate limited; try again after 42s") = e { true } else { false }})
         let unknownCase = ("Unknown", { (e: Error) in if case RegistrationError.unknown("some message") = e { true } else { false }})
         let timeoutCase = ("Timeout", { (e: Error) in if case SignalError.requestTimeoutError("the request timed out") = e { true } else { false }})
         let requestNotValidCase = ("RequestWasNotValid", { (e: Error) in if case RegistrationError.unknown("the request did not pass server validation") = e { true } else { false }})
         let serverErrorCase = ("ServerSideError", { (e: Error) in if case RegistrationError.unknown("server-side error, retryable with backoff") = e { true } else { false }})
-        let pushChallengeCase = ("PushChallenge", { (e: Error) in if case SignalError.rateLimitChallengeError(token: "token", options: [.pushChallenge], message: "retry after completing a rate limit challenge [PushChallenge]") = e { true } else { false }})
+        let pushChallengeCase = ("PushChallenge", { (e: Error) in if case SignalError.rateLimitChallengeError(token: "token", options: [.pushChallenge], retryAfter: nil, message: "retry after completing a rate limit challenge [PushChallenge]") = e { true } else { false }})
+        let pushChallengeRetryCase = ("PushChallengeRetryAfter42Seconds", { (e: Error) in if case SignalError.rateLimitChallengeError(token: "token42", options: [.pushChallenge], retryAfter: 42, message: "retry after completing a rate limit challenge [PushChallenge] (or retry after 42s)") = e { true } else { false }})
 
         let cases = [
             ErrorTest("CreateSession", signal_testing_registration_service_create_session_error_convert, [
@@ -83,6 +96,7 @@ class RegistrationServiceConversionTests {
                 requestNotValidCase,
                 serverErrorCase,
                 pushChallengeCase,
+                pushChallengeRetryCase,
             ]),
             ErrorTest("ResumeSession", signal_testing_registration_service_resume_session_error_convert, [
                 ("InvalidSessionId", { if case RegistrationError.invalidSessionId("invalid session ID value") = $0 { true } else { false }}),
@@ -92,6 +106,7 @@ class RegistrationServiceConversionTests {
                 requestNotValidCase,
                 serverErrorCase,
                 pushChallengeCase,
+                pushChallengeRetryCase,
             ]),
             ErrorTest(
                 "UpdateSession",
@@ -153,6 +168,11 @@ class RegistrationServiceConversionTests {
                     ("DeviceTransferIsPossibleButNotSkipped", { if case RegistrationError.deviceTransferPossible("a device transfer is possible and was not explicitly skipped.") = $0 { true } else { false }}),
                     ("RegistrationRecoveryVerificationFailed", { if case RegistrationError.recoveryVerificationFailed("registration recovery password verification failed") = $0 { true } else { false }}),
                     ("RegistrationLockFor50Seconds", { if case RegistrationError.registrationLock(timeRemaining: 50, svr2Username: "user", svr2Password: "pass") = $0 { true } else { false }}),
+                    ("RequestRejected", { if case RegistrationError.registerAccountRequestRejected("the server rejected the request") = $0 { true } else { false }}),
+                    ("InvalidSession", { if case RegistrationError.invalidSession("the verification session is unverified or no longer exists") = $0 { true } else { false }}),
+                    ("InvalidReceipt", { if case RegistrationError.invalidReceipt("the receipt credential presentation was not accepted") = $0 { true } else { false }}),
+                    ("RecoveryPasswordRequired", { if case RegistrationError.recoveryPasswordRequired("a recovery password is required") = $0 { true } else { false }}),
+                    ("OneTimePasswordRequired", { if case RegistrationError.oneTimePasswordRequired("a valid one-time password is required") = $0 { true } else { false }}),
                     retryLaterCase,
                     unknownCase,
                     timeoutCase,
@@ -169,7 +189,7 @@ class RegistrationServiceConversionTests {
                     }
                     Issue.record("exception expected")
                 } catch let e {
-                    #expect(checkErrorExpected(e), Comment(rawValue: String(describing: e)))
+                    #expect(checkErrorExpected(e))
                 }
             }
         }
@@ -298,6 +318,171 @@ class RegistrationServiceFakeChatTests {
 
         let () = try await requestVerification
         #expect(session.sessionState.requestedInformation == [.captcha])
+    }
+
+    @Test
+    func fakeRemoteSessionStateRefreshedFromErrors() async throws {
+        let tokio = TokioAsyncContext()
+        let server = FakeChatServer(asyncContext: tokio)
+        async let startCreateSessionRequest =
+            RegistrationService.fakeCreateSession(
+                fakeChatServer: server,
+                e164: "+18005550123",
+                pushToken: "myPushToken"
+            )
+
+        let fakeRemote = try await server.getNextRemote()
+        let (_, createRequestId) = try await fakeRemote.getNextIncomingRequest()
+        try fakeRemote.sendResponse(
+            requestId: createRequestId,
+            ChatResponse(
+                status: 200,
+                message: "OK",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                        "allowedToRequestCode": true,
+                        "verified": false,
+                        "requestedInformation": ["pushChallenge"],
+                        "id": "fake-session-A"
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let session = try await startCreateSessionRequest
+
+        // A failed requestVerificationCode whose body carries updated session
+        // state refreshes the cached session state across the bridge, even
+        // though the request fails.
+        async let requestVerification: () = session.requestVerificationCode(
+            transport: .voice,
+            client: "libsignal test",
+            languages: ["fr-CA"]
+        )
+        let (_, sendCodeRequestId) = try await fakeRemote.getNextIncomingRequest()
+        try fakeRemote.sendResponse(
+            requestId: sendCodeRequestId,
+            ChatResponse(
+                status: 418,
+                message: "Send failed",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                        "allowedToRequestCode": false,
+                        "verified": false,
+                        "nextSms": 42,
+                        "requestedInformation": ["captcha"]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        do {
+            try await requestVerification
+            Issue.record("requestVerificationCode should have failed")
+        } catch RegistrationError.sendVerificationFailed {
+            // This is good.
+        } catch {
+            Issue.record("unexpected error from requestVerificationCode: \(error)")
+        }
+
+        let afterSendFailed = session.sessionState
+        #expect(!afterSendFailed.allowedToRequestCode)
+        #expect(!afterSendFailed.verified)
+        #expect(afterSendFailed.nextSms == TimeInterval(42))
+        // Fields absent from the error body must be unset, not carried over.
+        #expect(afterSendFailed.nextCall == nil)
+        #expect(afterSendFailed.nextVerificationAttempt == nil)
+        #expect(afterSendFailed.requestedInformation == [.captcha])
+
+        // Same for a failed submitVerificationCode (NotReadyForVerification).
+        async let submitVerification: () = session.submitVerificationCode(code: "123456")
+        let (_, submitCodeRequestId) = try await fakeRemote.getNextIncomingRequest()
+        try fakeRemote.sendResponse(
+            requestId: submitCodeRequestId,
+            ChatResponse(
+                status: 409,
+                message: "Not ready",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                        "allowedToRequestCode": true,
+                        "verified": false,
+                        "nextVerificationAttempt": 37,
+                        "requestedInformation": []
+                    }
+                    """.utf8
+                )
+            )
+        )
+        do {
+            try await submitVerification
+            Issue.record("submitVerificationCode should have failed")
+        } catch RegistrationError.notReadyForVerification {
+            // This is good.
+        } catch {
+            Issue.record("unexpected error from submitVerificationCode: \(error)")
+        }
+
+        let afterNotReady = session.sessionState
+        #expect(afterNotReady.allowedToRequestCode)
+        #expect(!afterNotReady.verified)
+        #expect(afterNotReady.nextVerificationAttempt == TimeInterval(37))
+        // Fields absent from the error body must be unset, not carried over from
+        // the previous (send-failed) state, which had nextSms set.
+        #expect(afterNotReady.nextSms == nil)
+        #expect(afterNotReady.nextCall == nil)
+        #expect(afterNotReady.requestedInformation == [])
+
+        // A 429 (rate limited) response also carries session state in its body,
+        // but comes back as a rateLimitedError rather than a typed error. The
+        // cached session state is still refreshed.
+        async let rateLimited: () = session.requestVerificationCode(
+            transport: .voice,
+            client: "libsignal test",
+            languages: ["fr-CA"]
+        )
+        let (_, rateLimitedRequestId) = try await fakeRemote.getNextIncomingRequest()
+        try fakeRemote.sendResponse(
+            requestId: rateLimitedRequestId,
+            ChatResponse(
+                status: 429,
+                message: "Too many requests",
+                headers: ["content-type": "application/json", "retry-after": "60"],
+                body: Data(
+                    """
+                    {
+                        "allowedToRequestCode": true,
+                        "verified": false,
+                        "nextCall": 99,
+                        "requestedInformation": []
+                    }
+                    """.utf8
+                )
+            )
+        )
+        do {
+            try await rateLimited
+            Issue.record("requestVerificationCode should have failed")
+        } catch SignalError.rateLimitedError(retryAfter: _, message: _) {
+            // This is good.
+        } catch {
+            Issue.record("unexpected error from requestVerificationCode: \(error)")
+        }
+
+        let afterRateLimited = session.sessionState
+        #expect(afterRateLimited.allowedToRequestCode)
+        #expect(!afterRateLimited.verified)
+        #expect(afterRateLimited.nextCall == TimeInterval(99))
+        // Fields absent from the error body must be unset, not carried over from
+        // the previous (not-ready) state, which had nextVerificationAttempt set.
+        #expect(afterRateLimited.nextSms == nil)
+        #expect(afterRateLimited.nextVerificationAttempt == nil)
+        #expect(afterRateLimited.requestedInformation == [])
     }
 
     @Test
@@ -472,7 +657,7 @@ class RegistrationServiceFakeChatTests {
         // We only perform a cursory check here because there is a already a dedicated test for bridging
         // the response.
         #expect(response.aci.serviceIdString == "aabbaabb-5555-6666-8888-111111111111")
-        #expect(response.pni.serviceIdString == "PNI:ddeeddee-5555-6666-8888-111111111111")
+        #expect(response.pni?.serviceIdString == "PNI:ddeeddee-5555-6666-8888-111111111111")
         #expect(response.number == "+18005550123")
     }
 

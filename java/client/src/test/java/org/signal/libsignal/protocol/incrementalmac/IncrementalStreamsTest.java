@@ -184,11 +184,14 @@ public class IncrementalStreamsTest {
   @Test
   public void testValidationEmptyInput() throws IOException {
     byte[] digest = fullIncrementalDigest(new ByteArrayOutputStream(), TEST_INPUT_PARTS);
-    try (IncrementalMacInputStream incrementalIn =
-        makeIncrementalInputStream(new byte[0], digest)) {
-      byte[] read = ResourceReader.readAll(incrementalIn);
-      assertEquals(0, read.length);
-    }
+    assertThrows(
+        InvalidMacException.class,
+        () -> {
+          try (IncrementalMacInputStream incrementalIn =
+              makeIncrementalInputStream(new byte[0], digest)) {
+            ResourceReader.readAll(incrementalIn);
+          }
+        });
   }
 
   @Test
@@ -274,15 +277,22 @@ public class IncrementalStreamsTest {
 
   @Test
   public void testInvalidChunkSize() {
-    try {
-      new IncrementalMacOutputStream(
-          new ByteArrayOutputStream(),
-          TEST_HMAC_KEY,
-          ChunkSizeChoice.everyNthByte(0),
-          new ByteArrayOutputStream());
-    } catch (AssertionError ex) {
-      assertTrue(ex.getMessage().contains("chunk size must be positive"));
-    }
+    var ex =
+        assertThrows(
+            AssertionError.class,
+            () ->
+                new IncrementalMacOutputStream(
+                    new ByteArrayOutputStream(),
+                    TEST_HMAC_KEY,
+                    ChunkSizeChoice.everyNthByte(0),
+                    new ByteArrayOutputStream()));
+    assertTrue(ex.getMessage().contains("chunk size must be positive"));
+  }
+
+  @Test
+  public void testInvalidDigestList() {
+    assertThrows(
+        InvalidMacException.class, () -> makeIncrementalInputStream(new byte[0], new byte[1]));
   }
 
   @Test
@@ -330,17 +340,18 @@ public class IncrementalStreamsTest {
   }
 
   private IncrementalMacInputStream makeIncrementalInputStream(
-      ReadableByteChannel channel, byte[] digest) {
+      ReadableByteChannel channel, byte[] digest) throws InvalidMacException {
     return new IncrementalMacInputStream(
         channel, TEST_HMAC_KEY, SIZE_CHOICE, digest, this.useDirectBuffer);
   }
 
   private IncrementalMacInputStream makeIncrementalInputStream(
-      ByteArrayInputStream in, byte[] digest) {
+      ByteArrayInputStream in, byte[] digest) throws InvalidMacException {
     return makeIncrementalInputStream(Channels.newChannel(in), digest);
   }
 
-  private IncrementalMacInputStream makeIncrementalInputStream(byte[] input, byte[] digest) {
+  private IncrementalMacInputStream makeIncrementalInputStream(byte[] input, byte[] digest)
+      throws InvalidMacException {
     return makeIncrementalInputStream(new ByteArrayInputStream(input), digest);
   }
 }

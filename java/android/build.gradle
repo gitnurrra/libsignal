@@ -2,12 +2,13 @@ import groovy.json.JsonSlurper
 
 plugins {
     id 'com.android.library'
-    id 'kotlin-android'
     id 'maven-publish'
     id 'signing'
 }
 
-archivesBaseName = "libsignal-android"
+base {
+    archivesName = "libsignal-android"
+}
 
 repositories {
     google()
@@ -16,15 +17,15 @@ repositories {
 }
 
 android {
-    namespace 'org.signal.libsignal'
+    namespace = 'org.signal.libsignal'
 
     compileSdk 34
-    ndkVersion '28.0.13004108'
+    ndkVersion = '28.0.13004108'
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 23
         targetSdkVersion 33
-        multiDexEnabled true
+        multiDexEnabled = true
         testInstrumentationRunner "org.signal.libsignal.util.AndroidJUnitRunner"
         // Automatically propagate matching environment variables into Java properties.
         // See the custom AndroidJUnitRunner and TestEnvironment classes for more details.
@@ -32,9 +33,9 @@ android {
     }
 
     compileOptions {
-        coreLibraryDesugaringEnabled true
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled = true
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
 
     sourceSets {
@@ -69,14 +70,14 @@ kotlin {
 }
 
 task dokkaHtmlJar(type: Jar) {
-    dependsOn(dokkaHtml)
-    from(dokkaHtml)
+    dependsOn(dokkaGeneratePublicationHtml)
+    from(dokkaGeneratePublicationHtml)
     archiveClassifier.set("dokka")
 }
 
 task dokkaJavadocJar(type: Jar) {
-    dependsOn(dokkaJavadoc)
-    from(dokkaJavadoc)
+    dependsOn(dokkaGeneratePublicationJavadoc)
+    from(dokkaGeneratePublicationJavadoc)
     archiveClassifier.set("javadoc")
 }
 
@@ -100,43 +101,28 @@ String collectTestEnvironment() {
     result.join(",")
 }
 
-// From https://github.com/rustls/rustls-platform-verifier
-File findRustlsPlatformVerifierClasses() {
+// We include the classes and data for rustls-platform-verifier ourselves,
+// but we want to make sure it's in sync with the Rust side.
+// So we check that there hasn't been a new release of the Android package since we made our fork.
+void checkRustlsPlatformVerifierVersion() {
     def dependencyText = providers.exec {
         it.workingDir = project.rootDir.parentFile
         commandLine("bash", "java/find_cargo.sh", "metadata", "--format-version", "1")
     }.standardOutput.asText.get()
 
     def dependencyJson = new JsonSlurper().parseText(dependencyText)
-    def manifestPath = file(dependencyJson.packages.find { it.name == "rustls-platform-verifier-android" }.manifest_path)
-
-    // Modifications here:
-    // Rather than use the Maven repository in the crates.io source, reference the AAR directly by path.
-    // Then, extract the classes from it so that we have a self-contained library.
-    def aar = fileTree(manifestPath.parentFile).matching {
-        include "maven/rustls/rustls-platform-verifier/*/rustls-platform-verifier-*.aar"
-    }.getSingleFile()
-    def classesJar = zipTree(aar).matching {
-        // Make sure there's nothing in the AAR that we haven't accounted for.
-        // This isn't perfect: there could be something important in AndroidManifest.xml.
-        // But it's likely good enough.
-        exclude "AndroidManifest.xml"
-        exclude "META-INF/com/android/build/gradle/aar-metadata.properties"
-        exclude "R.txt"
-    }.getSingleFile()
-    assert classesJar.name == "classes.jar"
-    return classesJar
+    def dependencyVersion = dependencyJson.packages.find { it.name == "rustls-platform-verifier-android" }.version
+    assert dependencyVersion == "0.2.0"
 }
 
 dependencies {
-    implementation files(findRustlsPlatformVerifierClasses())
-
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
     androidTestImplementation "androidx.test:runner:1.4.0"
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'com.googlecode.json-simple:json-simple:1.1'
     androidTestImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
-    androidTestImplementation 'org.jetbrains.kotlin:kotlin-test:2.1.0'
+    androidTestImplementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
+    androidTestImplementation 'org.jetbrains.kotlin:kotlin-test-junit:2.1.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.6'
     api project(':client')
 }
@@ -151,17 +137,18 @@ String[] archsFromProperty(String prop) {
 }
 
 task makeJniLibraries(type:Exec) {
-    group 'Rust'
-    description 'Build the JNI libraries for Android'
+    group = 'Rust'
+    description = 'Build the JNI libraries for Android'
 
     def archs = archsFromProperty('androidArchs') ?: ['android']
     def debugLevelLogsFlag = project.hasProperty('debugLevelLogs') ? ['--debug-level-logs'] : []
     def jniTypeTaggingFlag = project.hasProperty('jniTypeTagging') ? ['--jni-type-tagging'] : []
     def jniCheckAnnotationsFlag = project.hasProperty('jniCheckAnnotations') ? ['--jni-check-annotations'] : []
     def debugFlag = project.hasProperty('debugRust') ? ['--debug'] : []
+    def libsignalDebugFlag = project.hasProperty('libsignalDebug') ? ['--libsignal-debug'] : []
     // Explicitly specify 'bash' for Windows compatibility.
-    commandLine 'bash', '../build_jni.sh', *debugLevelLogsFlag, *jniTypeTaggingFlag, *jniCheckAnnotationsFlag, *debugFlag, *archs
-    environment 'ANDROID_NDK_HOME', android.ndkDirectory
+    commandLine 'bash', '../build_jni.sh', *libsignalDebugFlag, *debugLevelLogsFlag, *jniTypeTaggingFlag, *jniCheckAnnotationsFlag, *debugFlag, *archs
+    environment 'ANDROID_NDK_HOME', androidComponents.sdkComponents.ndkDirectory.get().asFile.absolutePath
 }
 
 task collectAssets(type:Copy) {
@@ -174,16 +161,18 @@ task collectAssets(type:Copy) {
 
 // MARK: Publication
 afterEvaluate {
+    checkRustlsPlatformVerifierVersion()
+
     publishing {
         publications {
             mavenJava(MavenPublication) {
-                artifactId = archivesBaseName
+                artifactId = base.archivesName.get()
                 from components.release
                 artifact dokkaHtmlJar
                 artifact dokkaJavadocJar
 
                 pom {
-                    name = archivesBaseName
+                    name = base.archivesName.get()
                     packaging = 'aar'
                     description = 'Signal Protocol cryptography library for Android'
                     url = 'https://github.com/signalapp/libsignal'
@@ -211,9 +200,9 @@ afterEvaluate {
         }
     }
 
-    setUpSigningKey(signing)
+    rootProject.ext.setUpSigningKey(signing)
     signing {
-        required { isReleaseBuild() && gradle.taskGraph.hasTask(":android:publish") }
+        required = { rootProject.ext.isReleaseBuild() && gradle.taskGraph.hasTask(":android:publish") }
         sign publishing.publications.mavenJava
     }
 }

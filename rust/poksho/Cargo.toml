@@ -8,15 +8,15 @@ name = "poksho"
 version = "0.7.0"
 authors.workspace = true
 license.workspace = true
-edition = "2021"
-rust-version = "1.81"
+edition = "2024"
+rust-version = "1.88"
 
 [lints]
 workspace = true
 
 [dependencies]
 curve25519-dalek = { workspace = true }
-hmac = { workspace = true, features = ["reset"] }
+hmac = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]

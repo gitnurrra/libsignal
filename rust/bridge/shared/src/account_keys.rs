@@ -14,44 +14,49 @@ use libsignal_protocol::PrivateKey;
 use crate::support::*;
 use crate::*;
 
-bridge_handle_fns!(PinHash, node = false);
+bridge_handle_fns!(PinHash);
 
-#[bridge_fn(node = false)]
+#[bridge_fn]
 pub fn PinHash_EncryptionKey(ph: &PinHash) -> [u8; 32] {
     ph.encryption_key
 }
 
-#[bridge_fn(node = false)]
+#[bridge_fn]
 pub fn PinHash_AccessKey(ph: &PinHash) -> [u8; 32] {
     ph.access_key
 }
 
-#[bridge_fn(node = false)]
+#[bridge_fn]
 pub fn PinHash_FromSalt(pin: &[u8], salt: &[u8; 32]) -> Result<PinHash> {
     PinHash::create(pin, salt)
 }
 
-#[bridge_fn(node = false)]
+/// Hashes a pin for SVR2, salted with the username and the group id of the
+/// enclave identified by `mrenclave`.
+pub(crate) fn svr2_pin_hash(
+    normalized_pin: &[u8],
+    username: &str,
+    mrenclave: &[u8],
+) -> Result<PinHash> {
+    let group_id = lookup_groupid(mrenclave).ok_or(Error::MrenclaveLookupError)?;
+    PinHash::create(normalized_pin, &PinHash::make_salt(username, group_id))
+}
+
+#[bridge_fn]
 pub fn PinHash_FromUsernameMrenclave(
     pin: &[u8],
     username: String,
     mrenclave: &[u8],
 ) -> Result<PinHash> {
-    PinHash::create(
-        pin,
-        &PinHash::make_salt(
-            &username,
-            lookup_groupid(mrenclave).ok_or(Error::MrenclaveLookupError)?,
-        ),
-    )
+    svr2_pin_hash(pin, &username, mrenclave)
 }
 
-#[bridge_fn(node = false)]
+#[bridge_fn]
 pub fn Pin_LocalHash(pin: &[u8]) -> Result<String> {
     local_pin_hash(pin)
 }
 
-#[bridge_fn(node = false)]
+#[bridge_fn]
 pub fn Pin_VerifyLocalHash(encoded_hash: String, pin: &[u8]) -> Result<bool> {
     verify_local_pin_hash(&encoded_hash, pin)
 }
@@ -69,6 +74,26 @@ pub fn AccountEntropyPool_IsValid(account_entropy: String) -> bool {
 #[bridge_fn]
 pub fn AccountEntropyPool_DeriveSvrKey(account_entropy: AccountEntropyPool) -> [u8; SVR_KEY_LEN] {
     account_entropy.derive_svr_key()
+}
+
+#[bridge_fn(nice = true)]
+pub fn SvrKey_DeriveRegistrationLock(svr_key: [u8; SVR_KEY_LEN]) -> [u8; 32] {
+    SvrKey::new(svr_key).derive_registration_lock()
+}
+
+#[bridge_fn(nice = true)]
+pub fn SvrKey_DeriveRegistrationRecoveryPassword(svr_key: [u8; SVR_KEY_LEN]) -> [u8; 32] {
+    SvrKey::new(svr_key).derive_registration_recovery_password()
+}
+
+#[bridge_fn(nice = true)]
+pub fn SvrKey_DeriveStorageServiceKey(svr_key: [u8; SVR_KEY_LEN]) -> [u8; 32] {
+    SvrKey::new(svr_key).derive_storage_service_key()
+}
+
+#[bridge_fn(nice = true)]
+pub fn SvrKey_DeriveLoggingKey(svr_key: [u8; SVR_KEY_LEN]) -> [u8; 32] {
+    SvrKey::new(svr_key).derive_logging_key()
 }
 
 #[bridge_fn]

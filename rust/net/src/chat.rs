@@ -4,6 +4,7 @@
 //
 
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,18 +13,23 @@ use ::http::uri::PathAndQuery;
 use ::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use bytes::Bytes;
 use either::Either;
+use libsignal_net_infra::http_client::Http2Client;
 use libsignal_net_infra::route::{
-    Connector, HttpsTlsRoute, RouteProvider, RouteProviderExt, ThrottlingConnector, TransportRoute,
-    UnresolvedHttpsServiceRoute, UnresolvedWebsocketServiceRoute, UsePreconnect, WebSocketRoute,
-    WebSocketRouteFragment,
+    DefaultGetCurrentInterface, HttpsTlsRoute, RouteProvider, RouteProviderExt,
+    ThrottlingConnector, TransportRoute, UnresolvedHttpsServiceRoute,
+    UnresolvedWebsocketServiceRoute, UsePreconnect, WebSocketRoute, WebSocketRouteFragment,
 };
-use libsignal_net_infra::ws::StreamWithResponseHeaders;
-use libsignal_net_infra::{AsHttpHeader, AsStaticHttpHeader, Connection, IpType, TransportInfo};
+use libsignal_net_infra::utils::NetworkChangeEvent;
+use libsignal_net_infra::ws::{StreamWithResponseHeaders, WebSocketTransportStream};
+use libsignal_net_infra::{
+    AsHttpHeader, AsStaticHttpHeader, Connection, IpType, RECOMMENDED_WS_CONFIG, TransportInfo,
+};
 use tokio_tungstenite::WebSocketStream;
+use tungstenite::protocol::WebSocketConfig;
 
 use crate::auth::Auth;
 use crate::connect_state::{
-    ConnectionResources, DefaultTransportConnector, RouteInfo, WebSocketTransportConnectorFactory,
+    ConnectionResources, RouteInfo, ServiceName, WebSocketTransportConnectorFactory,
 };
 use crate::env::UserAgent;
 use crate::proto;
@@ -32,7 +38,6 @@ mod error;
 pub use error::{ConnectError, SendError};
 
 pub mod fake;
-pub mod noise;
 pub mod server_requests;
 pub mod ws;
 
@@ -42,6 +47,13 @@ pub type ResponseProto = proto::chat_websocket::WebSocketResponseMessage;
 pub type ChatMessageType = proto::chat_websocket::web_socket_message::Type;
 
 const RECEIVE_STORIES_HEADER_NAME: &str = "x-signal-receive-stories";
+
+pub const RECOMMENDED_CHAT_WS_CONFIG: ws::Config = ws::Config {
+    local_idle_timeout: RECOMMENDED_WS_CONFIG.local_idle_timeout,
+    post_request_interface_check_timeout: Duration::from_secs(5),
+    remote_idle_timeout: RECOMMENDED_WS_CONFIG.remote_idle_disconnect_timeout,
+    initial_request_id: 0,
+};
 
 #[derive(Debug)]
 pub struct DebugInfo {
@@ -158,34 +170,59 @@ pub struct ConnectionInfo {
 pub struct ChatConnection {
     inner: self::ws::Chat,
     connection_info: ConnectionInfo,
+    grpc_overrides: HashMap<&'static str, GrpcOverride>,
+    self_aci: Option<libsignal_core::Aci>,
 }
 
-type ChatTransportConnection =
-    <DefaultTransportConnector as Connector<TransportRoute, ()>>::Connection;
+pub type GrpcBody = tonic::body::Body;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GrpcOverride {
+    UseGrpc,
+    UseWs,
+}
 
 /// A connection to the chat service that isn't yet active.
-///
-/// Parameterized over the type of the transport-level connection for testing.
 #[derive(Debug)]
-pub struct PendingChatConnection<T = ChatTransportConnection> {
-    connection: WebSocketStream<T>,
+pub struct PendingChatConnection {
+    connection: WebSocketStream<Box<dyn WebSocketTransportStream>>,
+    shared_h2_connection: Option<Http2Client<GrpcBody>>,
     connect_response_headers: http::HeaderMap,
     ws_config: ws::Config,
     route_info: RouteInfo,
+    self_aci: Option<libsignal_core::Aci>,
+    network_change_event: NetworkChangeEvent,
     log_tag: Arc<str>,
 }
 
+/// Headers to include on connections and requests when communicating with chat-server
+/// authenticated.
+///
+/// Specifically: the headers will be included on the initial websocket connect request as well as
+/// separate H2 requests, with the exception of `receive_stories` (which is not relevant to every
+/// request). If you add a header here, consider whether it needs to be attached to every request or
+/// only the initial connection, and modify `start_connect_with_transport` appropriately.
 #[cfg_attr(test, derive(Clone))]
 pub struct AuthenticatedChatHeaders {
-    pub auth: Auth,
+    pub aci: libsignal_core::Aci,
+    pub device_id: libsignal_core::DeviceId,
+    pub password: String,
     pub receive_stories: ReceiveStories,
     pub languages: LanguageList,
 }
 
+/// Headers to include on connections and requests when communicating with chat-server
+/// unauthenticated.
+///
+/// Specifically: the headers will be included on the initial websocket connect request as well as
+/// separate H2 requests. If you add a header here, consider whether it needs to be attached to
+/// every request or only the initial connection, and modify `start_connect_with_transport`
+/// appropriately.
 pub struct UnauthenticatedChatHeaders {
     pub languages: LanguageList,
 }
 
+/// Headers to include on connections and requests when communicating with chat-server.
 #[derive(derive_more::From)]
 pub enum ChatHeaders {
     Auth(AuthenticatedChatHeaders),
@@ -193,16 +230,32 @@ pub enum ChatHeaders {
 }
 
 impl ChatHeaders {
+    fn self_aci(&self) -> Option<libsignal_core::Aci> {
+        match self {
+            ChatHeaders::Auth(AuthenticatedChatHeaders { aci, .. }) => Some(*aci),
+            ChatHeaders::Unauth(_) => None,
+        }
+    }
+
     fn iter_headers(self) -> impl Iterator<Item = (HeaderName, HeaderValue)> {
         match self {
             ChatHeaders::Auth(AuthenticatedChatHeaders {
-                auth,
+                aci,
+                device_id,
+                password,
                 receive_stories,
                 languages,
             }) => Either::Left(
-                [auth.as_header(), receive_stories.as_header()]
-                    .into_iter()
-                    .chain(languages.into_header()),
+                [
+                    Auth {
+                        username: format!("{}.{device_id}", aci.service_id_string()),
+                        password,
+                    }
+                    .as_header(),
+                    receive_stories.as_header(),
+                ]
+                .into_iter()
+                .chain(languages.into_header()),
             ),
             ChatHeaders::Unauth(UnauthenticatedChatHeaders { languages }) => {
                 Either::Right(languages.into_header().into_iter())
@@ -216,21 +269,22 @@ pub type ChatServiceRoute = UnresolvedWebsocketServiceRoute;
 impl ChatConnection {
     pub async fn start_connect_with<TC>(
         connection_resources: ConnectionResources<'_, TC>,
+        service: ServiceName,
         http_route_provider: impl RouteProvider<Route = UnresolvedHttpsServiceRoute>,
+        endpoint_path: &'static str,
         user_agent: &UserAgent,
         ws_config: self::ws::Config,
         headers: Option<ChatHeaders>,
         log_tag: &str,
     ) -> Result<PendingChatConnection, ConnectError>
     where
-        TC: WebSocketTransportConnectorFactory<
-            UsePreconnect<TransportRoute>,
-            Connection = ChatTransportConnection,
-        >,
+        TC: WebSocketTransportConnectorFactory<UsePreconnect<TransportRoute>>,
     {
         Self::start_connect_with_transport(
             connection_resources,
+            service,
             http_route_provider,
+            endpoint_path,
             user_agent,
             ws_config,
             headers,
@@ -242,24 +296,31 @@ impl ChatConnection {
     #[cfg_attr(feature = "test-util", visibility::make(pub))]
     async fn start_connect_with_transport<TC>(
         connection_resources: ConnectionResources<'_, TC>,
+        service: ServiceName,
         http_route_provider: impl RouteProvider<Route = UnresolvedHttpsServiceRoute>,
+        endpoint_path: &'static str,
         user_agent: &UserAgent,
         ws_config: self::ws::Config,
         headers: Option<ChatHeaders>,
         log_tag: &str,
-    ) -> Result<PendingChatConnection<TC::Connection>, ConnectError>
+    ) -> Result<PendingChatConnection, ConnectError>
     where
         TC: WebSocketTransportConnectorFactory<UsePreconnect<TransportRoute>>,
     {
+        let network_change_event_for_established_connection =
+            connection_resources.network_change_event.clone();
         let should_preconnect = matches!(headers, Some(ChatHeaders::Auth(_)));
-        let headers = headers
-            .into_iter()
-            .flat_map(ChatHeaders::iter_headers)
-            .chain([user_agent.as_header()]);
+        let self_aci = headers.as_ref().and_then(ChatHeaders::self_aci);
+        let headers = HeaderMap::from_iter(
+            headers
+                .into_iter()
+                .flat_map(ChatHeaders::iter_headers)
+                .chain([user_agent.as_header()]),
+        );
         let ws_fragment = WebSocketRouteFragment {
-            ws_config: Default::default(),
-            endpoint: PathAndQuery::from_static(crate::env::constants::WEB_SOCKET_PATH),
-            headers: HeaderMap::from_iter(headers),
+            ws_config: WebSocketConfig::default(),
+            endpoint: PathAndQuery::from_static(endpoint_path),
+            headers: headers.clone(),
         };
 
         let ws_routes = http_route_provider.map_routes(move |http| WebSocketRoute {
@@ -276,6 +337,7 @@ impl ChatConnection {
         let log_tag: Arc<str> = log_tag.into();
         let (connection, route_info) = connection_resources
             .connect_ws(
+                service,
                 ws_routes,
                 // If we create multiple authenticated chat websocket connections at
                 // the same time, the server will terminate earlier ones as later
@@ -283,7 +345,7 @@ impl ChatConnection {
                 // lets us get connection parallelism at the transport level (which
                 // is useful) while limiting us to one fully established connection
                 // at a time.
-                ThrottlingConnector::new(crate::infra::ws::Stateless, 1),
+                ThrottlingConnector::new(crate::infra::ws::Stateless::default(), 1),
                 &log_tag,
             )
             .await?;
@@ -293,13 +355,26 @@ impl ChatConnection {
         let StreamWithResponseHeaders {
             stream,
             response_headers,
+            connection: mut shared_h2_connection,
         } = connection.into_inner();
+
+        if let Some(connection) = shared_h2_connection.as_mut() {
+            // The headers for H2 requests are *nearly* the same as the headers for the websocket
+            // connection, but we omit the ReceiveStories header because that can be
+            // request-specific.
+            let mut headers_for_h2_requests = headers;
+            headers_for_h2_requests.remove(ReceiveStories::HEADER_NAME);
+            connection.set_default_per_request_headers(headers_for_h2_requests);
+        }
 
         Ok(PendingChatConnection {
             connection: stream,
+            shared_h2_connection,
             connect_response_headers: response_headers,
             route_info,
+            self_aci,
             ws_config,
+            network_change_event: network_change_event_for_established_connection,
             log_tag,
         })
     }
@@ -307,28 +382,43 @@ impl ChatConnection {
     pub fn finish_connect(
         tokio_runtime: tokio::runtime::Handle,
         pending: PendingChatConnection,
+        grpc_overrides: HashMap<&'static str, GrpcOverride>,
         listener: ws::EventListener,
     ) -> Self {
         let PendingChatConnection {
             connection,
+            shared_h2_connection,
             connect_response_headers,
             ws_config,
             route_info,
+            self_aci,
+            network_change_event,
             log_tag,
         } = pending;
+        let transport_info = connection.transport_info();
         Self {
             connection_info: ConnectionInfo {
                 route_info,
-                transport_info: connection.transport_info(),
+                transport_info: transport_info.clone(),
             },
             inner: ws::Chat::new(
                 tokio_runtime,
                 connection,
                 connect_response_headers,
                 ws_config,
-                log_tag,
+                ws::ConnectionConfig {
+                    log_tag,
+                    post_request_interface_check_timeout: ws_config
+                        .post_request_interface_check_timeout,
+                    transport_info,
+                    get_current_interface: DefaultGetCurrentInterface,
+                },
+                shared_h2_connection,
+                network_change_event,
                 listener,
             ),
+            grpc_overrides,
+            self_aci,
         }
     }
 
@@ -346,6 +436,18 @@ impl ChatConnection {
     pub fn connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
     }
+
+    pub fn shared_h2_connection(&self) -> Option<Http2Client<GrpcBody>> {
+        self.inner.shared_h2_connection()
+    }
+
+    pub fn grpc_overrides(&self) -> &HashMap<&'static str, GrpcOverride> {
+        &self.grpc_overrides
+    }
+
+    pub fn self_aci(&self) -> Option<libsignal_core::Aci> {
+        self.self_aci
+    }
 }
 
 impl PendingChatConnection {
@@ -357,10 +459,15 @@ impl PendingChatConnection {
     }
 
     pub async fn disconnect(&mut self) {
+        if let Some(h2) = self.shared_h2_connection.take() {
+            // There shouldn't have been any requests yet while the connection is still Pending, but
+            // just in case.
+            h2.disconnect_all();
+        }
         if let Err(error) = self.connection.close(None).await {
             log::warn!(
                 "[{}] pending chat connection disconnect failed with {error}",
-                &self.log_tag
+                self.log_tag
             );
         }
     }
@@ -371,12 +478,12 @@ impl Display for ConnectionInfo {
         let Self {
             transport_info:
                 TransportInfo {
-                    local_port,
-                    ip_version,
+                    local_addr,
+                    remote_addr: _,
                 },
             route_info,
         } = self;
-        write!(f, "from {ip_version}:{local_port} via {route_info}")
+        write!(f, "from {local_addr} via {route_info}")
     }
 }
 
@@ -385,36 +492,41 @@ pub mod test_support {
 
     use std::time::Duration;
 
-    use libsignal_net_infra::dns::DnsResolver;
-    use libsignal_net_infra::route::ConnectionProxyConfig;
-    use libsignal_net_infra::testutil::no_network_change_events;
     use libsignal_net_infra::EnableDomainFronting;
+    use libsignal_net_infra::dns::DnsResolver;
+    use libsignal_net_infra::route::DirectOrProxyMode;
+    use libsignal_net_infra::utils::no_network_change_events;
 
     use super::*;
-    use crate::chat::{ws, ChatConnection};
+    use crate::chat::{ChatConnection, ws};
     use crate::connect_state::{
         ConnectState, DefaultConnectorFactory, PreconnectingFactory, SUGGESTED_CONNECT_CONFIG,
     };
-    use crate::env::{Env, UserAgent};
+    use crate::env::constants::CHAT_WEBSOCKET_PATH;
+    use crate::env::{Env, StaticIpOrder, UserAgent};
+    use crate::infra::OverrideNagleAlgorithm;
     use crate::infra::route::DirectOrProxyProvider;
 
     pub async fn simple_chat_connection(
         env: &Env<'static>,
         enable_domain_fronting: EnableDomainFronting,
-        proxy: Option<ConnectionProxyConfig>,
+        proxy_mode: DirectOrProxyMode,
         filter_routes: impl Fn(&UnresolvedHttpsServiceRoute) -> bool,
+        // Like elsewhere, missing value means "use gRPC"
+        grpc_overrides: impl IntoIterator<Item = (&'static str, GrpcOverride)>,
     ) -> Result<ChatConnection, ConnectError> {
         let dns_resolver = DnsResolver::new_with_static_fallback(
-            env.static_fallback(),
+            env.static_fallback(StaticIpOrder::HARDCODED),
             &no_network_change_events(),
         );
 
-        let route_provider = DirectOrProxyProvider::maybe_proxied(
-            env.chat_domain_config
-                .connect
-                .route_provider(enable_domain_fronting),
-            proxy,
-        )
+        let route_provider = DirectOrProxyProvider {
+            inner: env.chat_domain_config.connect.route_provider(
+                enable_domain_fronting,
+                OverrideNagleAlgorithm::UseSystemDefault,
+            ),
+            mode: proxy_mode,
+        }
         .filter_routes(filter_routes);
 
         let connect = ConnectState::new_with_transport_connector(
@@ -426,6 +538,7 @@ pub mod test_support {
         let ws_config = ws::Config {
             initial_request_id: 0,
             local_idle_timeout: Duration::from_secs(60),
+            post_request_interface_check_timeout: Duration::MAX,
             remote_idle_timeout: Duration::from_secs(60),
         };
 
@@ -442,7 +555,9 @@ pub mod test_support {
 
         let pending = ChatConnection::start_connect_with(
             connection_resources,
+            env.chat_domain_config.connect.service,
             route_provider,
+            CHAT_WEBSOCKET_PATH,
             &user_agent,
             ws_config,
             None,
@@ -454,7 +569,12 @@ pub mod test_support {
         let listener: ws::EventListener = Box::new(|_event| {});
 
         let tokio_runtime = tokio::runtime::Handle::try_current().expect("can get tokio runtime");
-        let chat_connection = ChatConnection::finish_connect(tokio_runtime, pending, listener);
+        let chat_connection = ChatConnection::finish_connect(
+            tokio_runtime,
+            pending,
+            HashMap::from_iter(grpc_overrides),
+            listener,
+        );
 
         Ok(chat_connection)
     }
@@ -468,24 +588,26 @@ pub(crate) mod test {
     use assert_matches::assert_matches;
     use http::{HeaderName, HeaderValue};
     use itertools::Itertools;
+    use libsignal_net_infra::Alpn;
     use libsignal_net_infra::certs::RootCertificates;
-    use libsignal_net_infra::dns::lookup_result::LookupResult;
     use libsignal_net_infra::dns::DnsResolver;
+    use libsignal_net_infra::dns::lookup_result::LookupResult;
     use libsignal_net_infra::errors::{RetryLater, TransportConnectError};
     use libsignal_net_infra::host::Host;
     use libsignal_net_infra::route::testutils::ConnectFn;
     use libsignal_net_infra::route::{
-        DirectOrProxyRoute, HttpRouteFragment, HttpsTlsRoute, PreconnectingFactory, TcpRoute,
-        TlsRoute, TlsRouteFragment, UnresolvedHost, DEFAULT_HTTPS_PORT,
+        DEFAULT_HTTPS_PORT, DirectOrProxyRoute, HttpRouteFragment, HttpVersion, HttpsTlsRoute,
+        PreconnectingFactory, TcpRoute, TlsRoute, TlsRouteFragment, UnresolvedHost,
     };
-    use libsignal_net_infra::testutil::no_network_change_events;
+    use libsignal_net_infra::utils::no_network_change_events;
     use libsignal_net_infra::ws::WebSocketConnectError;
-    use libsignal_net_infra::Alpn;
     use test_case::test_case;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
     use crate::connect_state::{ConnectState, SUGGESTED_CONNECT_CONFIG};
+    use crate::env::constants::CHAT_WEBSOCKET_PATH;
+    use crate::infra::OverrideNagleAlgorithm;
 
     #[test]
     fn proto_into_response_works_with_valid_data() {
@@ -688,10 +810,12 @@ pub(crate) mod test {
 
         let err = ChatConnection::start_connect_with_transport(
             connection_resources,
+            ServiceName("chat"),
             vec![HttpsTlsRoute {
                 fragment: HttpRouteFragment {
                     host_header: CHAT_DOMAIN.into(),
                     path_prefix: "".into(),
+                    http_version: Some(HttpVersion::Http1_1),
                     front_name: None,
                 },
                 inner: TlsRoute {
@@ -704,13 +828,16 @@ pub(crate) mod test {
                     inner: DirectOrProxyRoute::Direct(TcpRoute {
                         address: UnresolvedHost(CHAT_DOMAIN.into()),
                         port: DEFAULT_HTTPS_PORT,
+                        override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
                     }),
                 },
             }],
+            CHAT_WEBSOCKET_PATH,
             &UserAgent::with_libsignal_version("test"),
             ws::Config {
                 // We shouldn't get to timing out anyway.
                 local_idle_timeout: Duration::ZERO,
+                post_request_interface_check_timeout: Duration::ZERO,
                 remote_idle_timeout: Duration::ZERO,
                 initial_request_id: 0,
             },
@@ -754,6 +881,7 @@ pub(crate) mod test {
             fragment: HttpRouteFragment {
                 host_header: CHAT_DOMAIN.into(),
                 path_prefix: "".into(),
+                http_version: Some(HttpVersion::Http1_1),
                 front_name: None,
             },
             inner: TlsRoute {
@@ -766,6 +894,7 @@ pub(crate) mod test {
                 inner: DirectOrProxyRoute::Direct(TcpRoute {
                     address: UnresolvedHost(CHAT_DOMAIN.into()),
                     port: DEFAULT_HTTPS_PORT,
+                    override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
                 }),
             },
         }];
@@ -780,6 +909,7 @@ pub(crate) mod test {
 
         make_connection_resources()
             .preconnect_and_save(
+                ServiceName("test"),
                 routes
                     .iter()
                     .cloned()
@@ -794,21 +924,23 @@ pub(crate) mod test {
 
         // ChatConnection only uses the preconnect for auth connections
         let auth_headers = AuthenticatedChatHeaders {
-            auth: Auth {
-                username: "user".into(),
-                password: "****".into(),
-            },
+            aci: libsignal_core::Aci::from_uuid_bytes([0; 16]),
+            device_id: libsignal_core::DeviceId::new(1).expect("valid"),
+            password: "****".into(),
             receive_stories: ReceiveStories(true),
             languages: LanguageList::default(),
         };
 
         let err = ChatConnection::start_connect_with_transport(
             make_connection_resources(),
+            ServiceName("chat"),
             routes.clone(),
+            CHAT_WEBSOCKET_PATH,
             &UserAgent::with_libsignal_version("test"),
             ws::Config {
                 // We shouldn't get to timing out anyway.
                 local_idle_timeout: Duration::ZERO,
+                post_request_interface_check_timeout: Duration::ZERO,
                 remote_idle_timeout: Duration::ZERO,
                 initial_request_id: 0,
             },
@@ -824,11 +956,14 @@ pub(crate) mod test {
 
         let err = ChatConnection::start_connect_with_transport(
             make_connection_resources(),
+            ServiceName("test"),
             routes.clone(),
+            CHAT_WEBSOCKET_PATH,
             &UserAgent::with_libsignal_version("test"),
             ws::Config {
                 // We shouldn't get to timing out anyway.
                 local_idle_timeout: Duration::ZERO,
+                post_request_interface_check_timeout: Duration::ZERO,
                 remote_idle_timeout: Duration::ZERO,
                 initial_request_id: 0,
             },

@@ -4,7 +4,7 @@
 //
 
 use std::cell::RefCell;
-use std::collections::{hash_map, HashMap};
+use std::collections::{HashMap, hash_map};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -12,6 +12,8 @@ use derive_where::derive_where;
 use intmap::IntMap;
 use libsignal_account_keys::BACKUP_KEY_LEN;
 use libsignal_core::{Aci, Pni};
+#[cfg(feature = "json")]
+use prost::Message as _;
 use serde_with::serde_as;
 
 pub(crate) use crate::backup::account_data::{AccountData, AccountDataError};
@@ -19,6 +21,7 @@ use crate::backup::call::{AdHocCall, CallError};
 use crate::backup::chat::chat_style::{CustomChatColor, CustomColorId};
 use crate::backup::chat::{ChatData, ChatError, ChatItemData, ChatItemError, PinOrder};
 use crate::backup::chat_folder::{ChatFolder, ChatFolderError};
+use crate::backup::favorite_sticker::{FavoriteStickerList, FavoriteStickerListError};
 use crate::backup::frame::{ChatId, RecipientId};
 use crate::backup::hashutil::{AssumedRandomInputHasher, HashBytesAllAtOnce};
 use crate::backup::method::{Lookup, LookupPair, Method};
@@ -32,11 +35,14 @@ use crate::backup::time::{
 };
 use crate::proto::backup as proto;
 use crate::proto::backup::frame::Item as FrameItem;
+#[cfg(feature = "json")]
+use crate::proto::prost as prost_proto;
 
 mod account_data;
 mod call;
 mod chat;
 mod chat_folder;
+mod favorite_sticker;
 mod file;
 mod frame;
 mod hashutil;
@@ -78,7 +84,7 @@ pub trait ReferencedTypes {
     ) -> &'a Self::RecipientReference;
 
     fn is_same_reference(left: &Self::RecipientReference, right: &Self::RecipientReference)
-        -> bool;
+    -> bool;
 }
 
 pub struct PartialBackup<M: Method + ReferencedTypes> {
@@ -88,6 +94,8 @@ pub struct PartialBackup<M: Method + ReferencedTypes> {
     chats: ChatsData<M>,
     ad_hoc_calls: M::List<AdHocCall<M::RecipientReference>>,
     sticker_packs: HashMap<StickerPackId, StickerPack<M>>,
+    hidden_sticker_packs: HashMap<StickerPackId, StickerPack<M>>,
+    favorite_stickers: Option<M::Value<FavoriteStickerList>>,
     notification_profiles: UnorderedList<NotificationProfile<M::RecipientReference>>,
     chat_folders: Vec<ChatFolder<M::RecipientReference>>,
     /// Stored here so PartialBackup can be the only context necessary for processing backup frames.
@@ -102,6 +110,8 @@ pub struct CompletedBackup<M: Method + ReferencedTypes> {
     chats: ChatsData<M>,
     ad_hoc_calls: M::List<AdHocCall<M::RecipientReference>>,
     sticker_packs: HashMap<StickerPackId, StickerPack<M>>,
+    hidden_sticker_packs: HashMap<StickerPackId, StickerPack<M>>,
+    favorite_stickers: Option<M::Value<FavoriteStickerList>>,
     notification_profiles: UnorderedList<NotificationProfile<M::RecipientReference>>,
     chat_folders: Vec<ChatFolder<M::RecipientReference>>,
 }
@@ -168,6 +178,13 @@ pub enum Purpose {
         serialize = "backup"
     )]
     RemoteBackup = 1,
+    /// For human-readable-ish exports that should exclude disappearing content.
+    #[strum(
+        serialize = "takeout_export",
+        serialize = "takeout-export",
+        serialize = "takeout"
+    )]
+    TakeoutExport = 2,
 }
 
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
@@ -183,6 +200,8 @@ pub enum CompletionError {
     MissingSelfRecipient,
     /// {0:?} and {1:?} have the same phone number
     DuplicateContactE164(RecipientId, RecipientId),
+    /// {0:?} and {1:?} have the same username
+    DuplicateContactUsername(RecipientId, RecipientId),
     /// {0:?} and {1:?} have the same ACI
     DuplicateContactAci(RecipientId, RecipientId),
     /// {0:?} and {1:?} have the same PNI
@@ -210,6 +229,8 @@ impl<M: Method + ReferencedTypes> TryFrom<PartialBackup<M>> for CompletedBackup<
             chats,
             ad_hoc_calls,
             sticker_packs,
+            hidden_sticker_packs,
+            favorite_stickers,
             notification_profiles,
             chat_folders,
             unusual_timestamp_tracker: _,
@@ -238,6 +259,8 @@ impl<M: Method + ReferencedTypes> TryFrom<PartialBackup<M>> for CompletedBackup<
             chats,
             ad_hoc_calls,
             sticker_packs,
+            hidden_sticker_packs,
+            favorite_stickers,
             notification_profiles,
             chat_folders,
         })
@@ -314,16 +337,21 @@ impl<M: Method + ReferencedTypes> CompletedBackup<M> {
                     * std::mem::size_of::<(Aci, RecipientId)>()
                 + HIGH_BUT_REASONABLE_NUMBER_OF_CONTACTS
                     * std::mem::size_of::<(Pni, RecipientId)>()
+                + HIGH_BUT_REASONABLE_NUMBER_OF_CONTACTS
+                    * std::mem::size_of::<(&str, RecipientId)>()
                 + HIGH_BUT_REASONABLE_NUMBER_OF_GROUPS
                     * std::mem::size_of::<(zkgroup::GroupMasterKeyBytes, RecipientId)>()
                 + HIGH_BUT_REASONABLE_NUMBER_OF_DISTRIBUTION_LISTS
                     * std::mem::size_of::<(uuid::Uuid, RecipientId)>()
                 + HIGH_BUT_REASONABLE_NUMBER_OF_CALL_LINKS
-                    * std::mem::size_of::<(call::CallLinkRootKey, RecipientId)>()
-                < 250_000,
+                    * std::mem::size_of::<(&[u8], RecipientId)>()
+                < 350_000,
         );
 
         let mut e164s = IntMap::<u64, RecipientId>::with_capacity(
+            recipients.len().min(HIGH_BUT_REASONABLE_NUMBER_OF_CONTACTS),
+        );
+        let mut usernames = HashMap::<&str, RecipientId>::with_capacity(
             recipients.len().min(HIGH_BUT_REASONABLE_NUMBER_OF_CONTACTS),
         );
         let mut acis = AssumedRandomInputHasher::map_with_capacity::<Aci, RecipientId>(
@@ -347,18 +375,28 @@ impl<M: Method + ReferencedTypes> CompletedBackup<M> {
         );
         let mut self_recipient = None;
         let mut release_notes_recipient = None;
-        let mut call_link_root_keys = AssumedRandomInputHasher::map_with_capacity::<
-            HashBytesAllAtOnce<call::CallLinkRootKey>,
-            RecipientId,
-        >(
-            recipients
-                .len()
-                .min(HIGH_BUT_REASONABLE_NUMBER_OF_CALL_LINKS),
-        );
+        let mut call_link_root_keys =
+            AssumedRandomInputHasher::map_with_capacity::<HashBytesAllAtOnce<&[u8]>, RecipientId>(
+                recipients
+                    .len()
+                    .min(HIGH_BUT_REASONABLE_NUMBER_OF_CALL_LINKS),
+            );
 
         for (id, recipient) in recipients.iter() {
             match recipient.as_ref() {
-                MinimalRecipientData::Contact { e164, aci, pni } => {
+                MinimalRecipientData::Contact {
+                    e164,
+                    aci,
+                    pni,
+                    username,
+                } => {
+                    insert_or_error(
+                        &mut usernames,
+                        username.as_deref(),
+                        id,
+                        CompletionError::DuplicateContactUsername,
+                    )?;
+
                     // We can't use insert_or_throw_error for `e164s` because it's an IntMap.
                     // Here's an inlined copy:
                     if let Some(e164) = *e164 {
@@ -408,7 +446,7 @@ impl<M: Method + ReferencedTypes> CompletedBackup<M> {
                 MinimalRecipientData::CallLink { root_key } => {
                     insert_or_error(
                         &mut call_link_root_keys,
-                        Some(*root_key),
+                        Some(root_key.as_slice()),
                         id,
                         CompletionError::DuplicateCallLinkRootKey,
                     )?;
@@ -424,10 +462,28 @@ impl<M: Method + ReferencedTypes> CompletedBackup<M> {
     }
 }
 
+#[derive(Debug, displaydoc::Display, PartialEq, Eq, Clone, Copy)]
+pub enum HasUnknownFields {
+    /// no unknown fields
+    No,
+    /// unknown fields
+    Yes,
+}
+
+impl HasUnknownFields {
+    pub fn check(special_fields: &protobuf::SpecialFields) -> Self {
+        if special_fields.unknown_fields().iter().next().is_some() {
+            Self::Yes
+        } else {
+            Self::No
+        }
+    }
+}
+
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
 pub enum ValidationError {
-    /// Frame.item is a oneof but has no value
-    EmptyFrame,
+    /// Frame.item is a oneof but has no value with {0}
+    EmptyFrame(HasUnknownFields),
     /// BackupInfo error: {0}
     BackupInfoError(#[from] MetadataError),
     /// multiple AccountData frames found
@@ -442,6 +498,10 @@ pub enum ValidationError {
     CallError(#[from] CallFrameError),
     /// {0}
     StickerError(#[from] StickerError),
+    /// multiple FavoriteStickerList frames found
+    MultipleFavoriteStickerLists,
+    /// {0}
+    FavoriteStickerList(#[from] FavoriteStickerListError),
     /// {0}
     NotificationProfileError(#[from] NotificationProfileError),
     /// {0}
@@ -479,8 +539,17 @@ pub enum StickerError {
     InvalidId,
     /// multiple sticker packs for ID {0:?}
     DuplicateId(StickerPackId),
+    /// pack {0:?} is both installed and hidden
+    InstalledAndHidden(StickerPackId),
     /// for pack {0:?}: {1}
     PackError(StickerPackId, StickerPackError),
+}
+
+/// Which [`proto::Frame`] item a sticker pack came from.
+#[derive(Copy, Clone, Debug)]
+enum StickerPackKind {
+    Installed,
+    Hidden,
 }
 
 trait WithId {
@@ -585,6 +654,7 @@ impl<M: Method + ReferencedTypes> PartialBackup<M> {
             mediaRootBackupKey,
             currentAppVersion,
             firstAppVersion,
+            debugInfo: _,
             special_fields: _,
         } = value;
 
@@ -618,6 +688,8 @@ impl<M: Method + ReferencedTypes> PartialBackup<M> {
             chats: Default::default(),
             ad_hoc_calls: Default::default(),
             sticker_packs: Default::default(),
+            hidden_sticker_packs: Default::default(),
+            favorite_stickers: None,
             notification_profiles: Default::default(),
             chat_folders: Default::default(),
             unusual_timestamp_tracker,
@@ -625,7 +697,9 @@ impl<M: Method + ReferencedTypes> PartialBackup<M> {
     }
 
     pub fn add_frame(&mut self, frame: proto::Frame) -> Result<(), ValidationError> {
-        self.add_frame_item(frame.item.ok_or(ValidationError::EmptyFrame)?)
+        self.add_frame_item(frame.item.ok_or_else(|| {
+            ValidationError::EmptyFrame(HasUnknownFields::check(&frame.special_fields))
+        })?)
     }
 
     fn add_frame_item(&mut self, item: FrameItem) -> Result<(), ValidationError> {
@@ -634,9 +708,13 @@ impl<M: Method + ReferencedTypes> PartialBackup<M> {
             FrameItem::Recipient(recipient) => self.add_recipient(recipient).map_err(Into::into),
             FrameItem::Chat(chat) => self.add_chat(chat).map_err(Into::into),
             FrameItem::ChatItem(chat_item) => self.add_chat_item(chat_item),
-            FrameItem::StickerPack(sticker_pack) => {
-                self.add_sticker_pack(sticker_pack).map_err(Into::into)
-            }
+            FrameItem::InstalledStickerPack(sticker_pack) => self
+                .add_sticker_pack(sticker_pack, StickerPackKind::Installed)
+                .map_err(Into::into),
+            FrameItem::HiddenStickerPack(sticker_pack) => self
+                .add_sticker_pack(sticker_pack, StickerPackKind::Hidden)
+                .map_err(Into::into),
+            FrameItem::FavoriteStickerList(list) => self.add_favorite_sticker_list(list),
             FrameItem::AdHocCall(call) => self.add_ad_hoc_call(call).map_err(Into::into),
             FrameItem::NotificationProfile(notification_profile) => {
                 self.add_notification_profile(notification_profile)
@@ -718,22 +796,47 @@ impl<M: Method + ReferencedTypes> PartialBackup<M> {
         Ok(self.chats.add_chat_item(chat_id, chat_item_data)?)
     }
 
-    fn add_sticker_pack(&mut self, sticker_pack: proto::StickerPack) -> Result<(), StickerError> {
+    fn add_sticker_pack(
+        &mut self,
+        sticker_pack: proto::StickerPack,
+        kind: StickerPackKind,
+    ) -> Result<(), StickerError> {
         let id = sticker_pack
             .packId
             .as_slice()
             .try_into()
             .map_err(|_| StickerError::InvalidId)?;
+
+        let (packs, other_packs) = match kind {
+            StickerPackKind::Installed => (&mut self.sticker_packs, &self.hidden_sticker_packs),
+            StickerPackKind::Hidden => (&mut self.hidden_sticker_packs, &self.sticker_packs),
+        };
+        if other_packs.contains_key(&id) {
+            return Err(StickerError::InstalledAndHidden(id));
+        }
+
         let pack =
             StickerPack::try_from(sticker_pack).map_err(|e| StickerError::PackError(id, e))?;
 
-        match self.sticker_packs.entry(id) {
+        match packs.entry(id) {
             hash_map::Entry::Occupied(_) => Err(StickerError::DuplicateId(id)),
             hash_map::Entry::Vacant(v) => {
                 v.insert(pack);
                 Ok(())
             }
         }
+    }
+
+    fn add_favorite_sticker_list(
+        &mut self,
+        list: proto::FavoriteStickerList,
+    ) -> Result<(), ValidationError> {
+        if self.favorite_stickers.is_some() {
+            return Err(ValidationError::MultipleFavoriteStickerLists);
+        }
+        let list = list.try_into_with(self)?;
+        self.favorite_stickers = Some(M::value(list));
+        Ok(())
     }
 
     fn add_notification_profile(
@@ -861,36 +964,57 @@ impl<M: Method + ReferencedTypes> ReportUnusualTimestamp for PartialBackup<M> {
 
 #[cfg(feature = "json")]
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
-pub enum ConvertJsonError {
-    /// input array was empty
-    EmptyArray,
-    /// failed to parse JSON as proto: {0}
-    ProtoJsonParse(#[from] protobuf_json_mapping::ParseError),
-    /// failed to print proto as JSON: {0}
-    ProtoJsonPrint(#[from] protobuf_json_mapping::PrintError),
+pub enum ConvertToJsonError {
     /// JSON error: {0}
     Json(#[from] serde_json::Error),
-    /// failed to encode/decode binary protobuf: {0}
-    ProtoEncode(#[from] protobuf::Error),
+    /// failed to decode binary protobuf: {0}
+    ProtoDecode(#[from] prost::DecodeError),
     /// input/output error: {0}
     Io(#[from] std::io::Error),
 }
 
 #[cfg(feature = "json")]
-pub fn convert_from_json(json: Vec<serde_json::Value>) -> Result<Box<[u8]>, ConvertJsonError> {
+#[derive(Debug, thiserror::Error, displaydoc::Display)]
+pub enum ConvertFromJsonError {
+    /// input array was empty
+    EmptyArray,
+    /// failed to parse JSON as proto: {0}
+    ProtoJsonParse(#[from] serde_json::Error),
+    /// failed to encode binary protobuf: {0}
+    ProtoEncode(#[from] prost::EncodeError),
+}
+
+#[cfg(feature = "json")]
+fn binary_proto_to_json<M: prost::Message + serde::Serialize + Default>(
+    binary: &[u8],
+) -> Result<String, ConvertToJsonError> {
+    let proto = M::decode(binary)?;
+    Ok(serde_json::to_string(&proto)?)
+}
+
+#[cfg(feature = "json")]
+pub fn backup_info_to_json_string(binary: &[u8]) -> Result<String, ConvertToJsonError> {
+    binary_proto_to_json::<prost_proto::BackupInfo>(binary)
+}
+
+#[cfg(feature = "json")]
+pub fn frame_to_json_string(binary: &[u8]) -> Result<String, ConvertToJsonError> {
+    binary_proto_to_json::<prost_proto::Frame>(binary)
+}
+
+#[cfg(feature = "json")]
+pub fn convert_from_json(json: Vec<serde_json::Value>) -> Result<Box<[u8]>, ConvertFromJsonError> {
     let mut it = json.into_iter();
-
-    let backup_info = protobuf_json_mapping::parse_from_str::<proto::BackupInfo>(
-        &it.next().ok_or(ConvertJsonError::EmptyArray)?.to_string(),
-    )?;
-
     let mut serialized = Vec::new();
-    protobuf::Message::write_length_delimited_to_vec(&backup_info, &mut serialized)?;
+
+    let backup_info = serde_json::from_value::<prost_proto::BackupInfo>(
+        it.next().ok_or(ConvertFromJsonError::EmptyArray)?,
+    )?;
+    backup_info.encode_length_delimited(&mut serialized)?;
 
     for json_frame in it {
-        let frame = protobuf_json_mapping::parse_from_str::<proto::Frame>(&json_frame.to_string())?;
-
-        protobuf::Message::write_length_delimited_to_vec(&frame, &mut serialized)?;
+        let frame = serde_json::from_value::<prost_proto::Frame>(json_frame)?;
+        frame.encode_length_delimited(&mut serialized)?;
     }
 
     Ok(serialized.into_boxed_slice())
@@ -899,26 +1023,22 @@ pub fn convert_from_json(json: Vec<serde_json::Value>) -> Result<Box<[u8]>, Conv
 #[cfg(feature = "json")]
 pub async fn convert_to_json(
     length_delimited_binproto: impl futures::AsyncRead + Unpin,
-) -> Result<Vec<serde_json::Value>, ConvertJsonError> {
-    fn binary_proto_to_json<M: protobuf::MessageFull>(
-        binary: &[u8],
-    ) -> Result<serde_json::Value, ConvertJsonError> {
-        let proto = M::parse_from_bytes(binary)?;
-        let json_proto = protobuf_json_mapping::print_to_string(&proto)?;
-        Ok(serde_json::from_str(&json_proto)?)
-    }
-
+) -> Result<Vec<String>, ConvertToJsonError> {
     let mut reader = crate::VarintDelimitedReader::new(length_delimited_binproto);
 
     let mut array = Vec::new();
-    let backup_info = reader
-        .read_next()
-        .await?
-        .ok_or(ConvertJsonError::EmptyArray)?;
-    array.push(binary_proto_to_json::<proto::BackupInfo>(&backup_info)?);
+    let backup_info = reader.read_next().await?.ok_or_else(|| {
+        ConvertToJsonError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "empty array",
+        ))
+    })?;
+    array.push(binary_proto_to_json::<prost_proto::BackupInfo>(
+        &backup_info,
+    )?);
 
     while let Some(frame) = reader.read_next().await? {
-        array.push(binary_proto_to_json::<proto::Frame>(&frame)?);
+        array.push(binary_proto_to_json::<prost_proto::Frame>(&frame)?);
     }
     Ok(array)
 }
@@ -1140,6 +1260,111 @@ mod test {
         );
     }
 
+    fn sticker_pack_frame(kind: StickerPackKind, pack: proto::StickerPack) -> FrameItem {
+        match kind {
+            StickerPackKind::Installed => FrameItem::InstalledStickerPack(pack),
+            StickerPackKind::Hidden => FrameItem::HiddenStickerPack(pack),
+        }
+    }
+
+    #[test_case(StickerPackKind::Installed, StickerPackKind::Installed
+        => matches Err(StickerError::DuplicateId(_));
+        "installed twice")]
+    #[test_case(StickerPackKind::Hidden, StickerPackKind::Hidden
+        => matches Err(StickerError::DuplicateId(_));
+        "hidden twice")]
+    #[test_case(StickerPackKind::Installed, StickerPackKind::Hidden
+        => matches Err(StickerError::InstalledAndHidden(_));
+        "installed then hidden")]
+    #[test_case(StickerPackKind::Hidden, StickerPackKind::Installed
+        => matches Err(StickerError::InstalledAndHidden(_));
+        "hidden then installed")]
+    fn sticker_pack_same_id(
+        first: StickerPackKind,
+        second: StickerPackKind,
+    ) -> Result<(), StickerError> {
+        let mut partial = ValidateOnly::empty();
+        partial
+            .add_frame_item(sticker_pack_frame(first, proto::StickerPack::test_data()))
+            .expect("accepts first");
+        match partial.add_frame_item(sticker_pack_frame(second, proto::StickerPack::test_data())) {
+            Ok(()) => Ok(()),
+            Err(ValidationError::StickerError(e)) => Err(e),
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    #[test_case(StickerPackKind::Installed, StickerPackKind::Hidden; "installed then hidden")]
+    #[test_case(StickerPackKind::Hidden, StickerPackKind::Installed; "hidden then installed")]
+    fn sticker_pack_installed_and_hidden_checked_before_key(
+        first: StickerPackKind,
+        second: StickerPackKind,
+    ) {
+        let mut partial = ValidateOnly::empty();
+        partial
+            .add_frame_item(sticker_pack_frame(first, proto::StickerPack::test_data()))
+            .expect("accepts first");
+        assert_matches!(
+            partial.add_frame_item(sticker_pack_frame(
+                second,
+                proto::StickerPack {
+                    packKey: vec![],
+                    ..proto::StickerPack::test_data()
+                },
+            )),
+            Err(ValidationError::StickerError(StickerError::InstalledAndHidden(id)))
+                if id == proto::StickerPack::TEST_ID
+        );
+    }
+
+    #[test]
+    fn accepts_distinct_installed_and_hidden_sticker_packs() {
+        const HIDDEN_ID_BYTES: [u8; 16] = [0x33; 16];
+        let mut partial = ValidateOnly::empty();
+        let installed_id = proto::StickerPack::TEST_ID;
+        let hidden_id = StickerPackId::try_from(HIDDEN_ID_BYTES.as_slice()).expect("valid");
+
+        partial
+            .add_frame_item(FrameItem::InstalledStickerPack(
+                proto::StickerPack::test_data(),
+            ))
+            .expect("accepts installed pack");
+        partial
+            .add_frame_item(FrameItem::HiddenStickerPack(proto::StickerPack {
+                packId: HIDDEN_ID_BYTES.into(),
+                ..proto::StickerPack::test_data()
+            }))
+            .expect("accepts hidden pack with a different ID");
+
+        assert_eq!(
+            partial.sticker_packs.keys().collect::<Vec<_>>(),
+            [&installed_id]
+        );
+        assert_eq!(
+            partial.hidden_sticker_packs.keys().collect::<Vec<_>>(),
+            [&hidden_id]
+        );
+    }
+
+    #[test_case(ValidateOnly::empty())]
+    #[test_case(Store::empty())]
+    fn rejects_multiple_favorite_sticker_lists<M: Method + ReferencedTypes>(
+        mut partial: PartialBackup<M>,
+    ) {
+        partial
+            .add_frame_item(FrameItem::FavoriteStickerList(
+                proto::FavoriteStickerList::test_data(),
+            ))
+            .expect("accepts first list");
+
+        assert_matches!(
+            partial.add_frame_item(FrameItem::FavoriteStickerList(
+                proto::FavoriteStickerList::default()
+            )),
+            Err(ValidationError::MultipleFavoriteStickerLists)
+        );
+    }
+
     #[test]
     fn chat_item_order() {
         let mut partial = Store::empty();
@@ -1231,6 +1456,9 @@ mod test {
             }),
             (CompletionError::DuplicateContactE164, |x| {
                 x.e164 = Some(proto::Contact::TEST_E164.into());
+            }),
+            (CompletionError::DuplicateContactUsername, |x| {
+                x.username = Some("duplicate.1234".to_owned());
             }),
         ]
     )]

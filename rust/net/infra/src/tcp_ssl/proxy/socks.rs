@@ -4,6 +4,7 @@
 //
 
 use std::borrow::Cow;
+use std::fmt::{Debug, Display, Formatter};
 use std::future::Future;
 use std::net::IpAddr;
 use std::num::NonZeroU16;
@@ -11,16 +12,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use auto_enums::enum_derive;
+use libsignal_core::LogSafeDisplay;
+use strum::IntoDiscriminant as _;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use tokio_socks::TargetAddr;
+use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
+use crate::Connection;
 use crate::dns::DnsResolver;
 use crate::errors::TransportConnectError;
 use crate::host::Host;
 use crate::route::{Connector, ConnectorExt as _, SocksRoute, TcpRoute};
 use crate::tcp_ssl::TcpStream;
-use crate::Connection;
 
 pub(crate) const LONG_FULL_CONNECT_THRESHOLD: Duration = super::LONG_TCP_HANDSHAKE_THRESHOLD
     .saturating_add(super::LONG_TLS_HANDSHAKE_THRESHOLD)
@@ -37,7 +40,7 @@ pub struct SocksConnector {
     pub dns_resolver: DnsResolver,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, strum::EnumDiscriminants)]
+#[derive(Clone, PartialEq, Eq, Hash, strum::EnumDiscriminants)]
 #[strum_discriminants(name(ProtocolKind))]
 pub enum Protocol {
     Socks4 {
@@ -47,6 +50,20 @@ pub enum Protocol {
         username_password: Option<(String, String)>,
     },
 }
+
+impl Display for Protocol {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.discriminant())
+    }
+}
+
+impl Debug for Protocol {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl LogSafeDisplay for Protocol {}
 
 #[derive(Debug, derive_more::From)]
 #[enum_derive(tokio1::AsyncRead, tokio1::AsyncWrite)]
@@ -77,12 +94,15 @@ impl Connector<SocksRoute<IpAddr>, ()> for super::StatelessProxied {
             log::info!("[{log_tag}] establishing connection to host over SOCKS proxy");
             log::debug!("[{log_tag}] establishing connection to {target_addr:?} over SOCKS proxy");
 
-            log::info!("[{log_tag}] connecting to {protocol:?} proxy over TCP");
+            log::info!("[{log_tag}] connecting to {protocol} proxy over TCP");
             let TcpRoute {
                 address: proxy_host,
                 port: proxy_port,
+                ..
             } = &proxy;
-            log::debug!("[{log_tag}] connecting to {protocol:?} proxy at {proxy_host}:{proxy_port} over TCP");
+            log::debug!(
+                "[{log_tag}] connecting to {protocol} proxy at {proxy_host}:{proxy_port} over TCP"
+            );
 
             let target = match &target_addr {
                 crate::route::ProxyTarget::ResolvedLocally(ip) => {
@@ -159,15 +179,16 @@ mod test {
 
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use futures_util::{select, FutureExt as _};
+    use futures_util::{FutureExt as _, select};
     use test_case::test_matrix;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::join;
 
     use super::*;
+    use crate::OverrideNagleAlgorithm;
     use crate::route::ProxyTarget;
-    use crate::tcp_ssl::proxy::testutil::{TcpServer, TlsServer};
     use crate::tcp_ssl::proxy::StatelessProxied;
+    use crate::tcp_ssl::proxy::testutil::{TcpServer, TlsServer};
     use crate::tcp_ssl::testutil::{SERVER_CERTIFICATE, SERVER_HOSTNAME};
 
     /// Authentication method.
@@ -309,6 +330,7 @@ mod test {
             TcpRoute {
                 address: local_addr.ip(),
                 port: local_addr.port().try_into().unwrap(),
+                override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
             }
         };
 
@@ -416,6 +438,7 @@ mod test {
             TcpRoute {
                 address: local_addr.ip(),
                 port: local_addr.port().try_into().unwrap(),
+                override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
             }
         };
 
@@ -457,5 +480,14 @@ mod test {
 
         // The client should see the rejection as well.
         assert_matches!(client_result, Err(TransportConnectError::ProxyProtocol));
+    }
+
+    #[test_matrix([
+        Protocol::Socks5 { username_password: Some(("test".to_owned(), "test".to_owned())) },
+        Protocol::Socks4 { user_id: Some("test".to_owned()) }
+    ])]
+    fn protocol_display_and_debug_are_log_safe(protocol: Protocol) {
+        assert!(!format!("{protocol:?}").contains("test"));
+        assert!(!format!("{protocol}").contains("test"));
     }
 }

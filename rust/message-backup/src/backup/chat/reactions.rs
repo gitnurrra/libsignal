@@ -6,12 +6,12 @@
 use derive_where::derive_where;
 use intmap::IntMap;
 
+use crate::backup::TryIntoWith;
 use crate::backup::frame::RecipientId;
 use crate::backup::method::LookupPair;
 use crate::backup::recipient::{DestinationKind, MinimalRecipientData};
 use crate::backup::serialize::{SerializeOrder, UnorderedList};
 use crate::backup::time::{ReportUnusualTimestamp, Timestamp, TimestampError};
-use crate::backup::TryIntoWith;
 use crate::proto::backup as proto;
 
 /// Validated version of [`proto::Reaction`].
@@ -81,11 +81,13 @@ impl<R: Clone, C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusu
                 e164: None,
                 aci: None,
                 pni: _,
+                username: _,
             } => Err(ReactionError::AuthorHasNoAciOrE164(author_id)),
             MinimalRecipientData::Contact {
                 e164: _,
                 aci: _,
                 pni: _,
+                username: _,
             }
             | MinimalRecipientData::Self_ => Ok(author.clone()),
             MinimalRecipientData::Group { .. }
@@ -183,8 +185,8 @@ mod test {
     use crate::backup::chat::StandardMessage;
     use crate::backup::recipient::FullRecipientData;
     use crate::backup::testutil::TestContext;
-    use crate::backup::time::testutil::MillisecondsSinceEpoch;
     use crate::backup::time::Duration;
+    use crate::backup::time::testutil::MillisecondsSinceEpoch;
 
     impl proto::Reaction {
         pub(crate) fn test_data() -> Self {

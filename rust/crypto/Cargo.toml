@@ -8,22 +8,24 @@ name = "signal-crypto"
 version = "0.1.0"
 authors.workspace = true
 license.workspace = true
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 
 [lints]
 workspace = true
 
 [dependencies]
 libsignal-core = { workspace = true }
+libsignal-debug = { workspace = true }
 
 aes = { workspace = true, features = ["zeroize"] }
-cbc = { workspace = true, features = ["std", "zeroize"] }
+cbc = { workspace = true, features = ["alloc", "zeroize"] }
 ctr = { workspace = true, features = ["zeroize"] }
 derive_more = { workspace = true }
 displaydoc = { workspace = true }
 ghash = { workspace = true, features = ["zeroize"] }
 hkdf = { workspace = true }
-hmac = { workspace = true, features = ["reset"] }
+hmac = { workspace = true }
 hpke-rs = { workspace = true }
 hpke-rs-crypto = { workspace = true }
 rand_chacha = { workspace = true }
@@ -32,6 +34,7 @@ sha1 = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

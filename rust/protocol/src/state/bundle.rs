@@ -6,7 +6,7 @@
 use std::clone::Clone;
 
 use crate::state::{PreKeyId, SignedPreKeyId};
-use crate::{kem, DeviceId, IdentityKey, KyberPreKeyId, PublicKey, Result, SignalProtocolError};
+use crate::{DeviceId, IdentityKey, KyberPreKeyId, PublicKey, Result, SignalProtocolError, kem};
 
 #[derive(Clone)]
 struct SignedPreKey {
@@ -89,9 +89,7 @@ impl TryFrom<PreKeyBundleContent> for PreKeyBundle {
             content.device_id.ok_or_else(|| {
                 SignalProtocolError::InvalidArgument("device_id is required".to_string())
             })?,
-            content
-                .pre_key_id
-                .and_then(|id| content.pre_key_public.map(|public| (id, public))),
+            content.pre_key_id.zip(content.pre_key_public),
             content.signed_pre_key_id.ok_or_else(|| {
                 SignalProtocolError::InvalidArgument("signed_pre_key_id is required".to_string())
             })?,

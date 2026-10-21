@@ -9,8 +9,8 @@ use std::future::Future;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt as _;
+use futures_util::future::BoxFuture;
 
 use crate::support::*;
 use crate::*;
@@ -23,14 +23,32 @@ pub struct TokioAsyncContext {
 impl TokioAsyncContext {
     // This is an expensive operation, so we don't want to just use Default.
     #[expect(clippy::new_without_default)]
+    #[inline]
     pub fn new() -> Self {
+        Self::from_runtime(&mut Self::default_runtime_builder())
+    }
+
+    #[inline]
+    pub fn new_single_threaded() -> Self {
+        Self::from_runtime(
+            Self::default_runtime_builder()
+                .worker_threads(1)
+                .max_blocking_threads(1),
+        )
+    }
+
+    fn default_runtime_builder() -> tokio::runtime::Builder {
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder
+            .enable_io()
+            .enable_time()
+            .thread_name("libsignal-tokio-worker");
+        builder
+    }
+
+    fn from_runtime(rt: &mut tokio::runtime::Builder) -> Self {
         Self {
-            rt: tokio::runtime::Builder::new_multi_thread()
-                .enable_io()
-                .enable_time()
-                .thread_name("libsignal-tokio-worker")
-                .build()
-                .expect("failed to create runtime"),
+            rt: rt.build().expect("failed to create runtime"),
             tasks: Default::default(),
             next_raw_cancellation_id: AtomicU64::new(1),
         }
@@ -88,7 +106,9 @@ impl AsyncRuntimeBase for TokioAsyncContext {
         if maybe_cancel_tx.is_some() {
             log::trace!("cancelling task for {cancellation_token:?}");
         } else {
-            log::trace!("ignoring cancellation for task {cancellation_token:?} (probably completed already)");
+            log::trace!(
+                "ignoring cancellation for task {cancellation_token:?} (probably completed already)"
+            );
         }
         drop(maybe_cancel_tx);
     }
@@ -104,19 +124,23 @@ where
         &self,
         make_future: impl FnOnce(TokioContextCancellation) -> F,
         completer: <F::Output as ResultReporter>::Receiver,
+        label: &'static str,
     ) -> CancellationId {
         // Delegate to a non-templated function with dynamic dispatch to save on
         // compiled code size.
-        self.run_future_boxed(Box::new(move |cancellation| {
-            let future = make_future(cancellation);
-            async {
-                let reporter = future.await;
-                let report_cb: Box<dyn FnOnce() + Send> =
-                    Box::new(move || reporter.report_to(completer));
-                report_cb
-            }
-            .boxed()
-        }))
+        self.run_future_boxed(
+            label,
+            Box::new(move |cancellation| {
+                let future = make_future(cancellation);
+                async {
+                    let reporter = future.await;
+                    let report_cb: Box<dyn FnOnce() + Send> =
+                        Box::new(move || reporter.report_to(completer));
+                    report_cb
+                }
+                .boxed()
+            }),
+        )
     }
 }
 
@@ -132,6 +156,7 @@ impl TokioAsyncContext {
     /// appropriate type.
     fn run_future_boxed<'s>(
         &'s self,
+        label: &'static str,
         make_future: Box<
             dyn 's + FnOnce(TokioContextCancellation) -> BoxFuture<'static, ReportResultBoxed>,
         >,
@@ -158,13 +183,30 @@ impl TokioAsyncContext {
         let handle = self.rt.handle().clone();
         let task_map_weak = Arc::downgrade(&self.tasks);
 
-        #[expect(
-            clippy::let_underscore_future,
-            reason = "the tasks are never .join()ed"
-        )]
-        let _: tokio::task::JoinHandle<()> = self.rt.spawn(async move {
-            let report_fn = future.await;
-            let _: tokio::task::JoinHandle<()> = handle.spawn_blocking(report_fn);
+        const STALLED_FUTURE_LOG_TIMEOUT: tokio::time::Duration =
+            tokio::time::Duration::from_secs(90);
+
+        drop::<tokio::task::JoinHandle<()>>(self.rt.spawn(async move {
+            let start_time = tokio::time::Instant::now();
+            let deadline = start_time + STALLED_FUTURE_LOG_TIMEOUT;
+            tokio::pin!(future);
+
+            let report_fn = tokio::select! {
+                report_fn = &mut future => report_fn,
+                _ = tokio::time::sleep_until(deadline) => {
+                    log::warn!(
+                        "Future for {} with cancellation_id {:?} seems stalled (elapsed: {:?})",
+                        label,
+                        cancellation_id,
+                        start_time.elapsed()
+                    );
+                    future.await
+                }
+            };
+
+            Self::check_metrics(&handle, label);
+
+            drop::<tokio::task::JoinHandle<()>>(handle.spawn_blocking(report_fn));
             // What happens if we don't get here? We leak an entry in the task map. Also, we
             // probably have bigger problems, because in practice all the `bridge_io` futures are
             // supposed to be catching panics.
@@ -174,11 +216,33 @@ impl TokioAsyncContext {
                     .expect("task map isn't poisoned")
                     .remove(&cancellation_id);
             }
-            log::trace!("completed task with {cancellation_id:?}");
-        });
+            log::trace!("completed task for {label} with {cancellation_id:?}");
+        }));
 
-        log::trace!("started task with {cancellation_id:?}");
+        log::trace!("started task for {label} with {cancellation_id:?}");
         cancellation_id
+    }
+
+    fn check_metrics(handle: &tokio::runtime::Handle, current_task_label: &'static str) {
+        let metrics = handle.metrics();
+        #[cfg(tokio_unstable)]
+        {
+            let active_blocking_threads =
+                metrics.num_blocking_threads() - metrics.num_idle_blocking_threads();
+            // By default there are as many *regular* worker threads as CPUs, so we're treating
+            // "twice the CPU count" as "an abnormal number of blocking threads".
+            if active_blocking_threads > 2 * metrics.num_workers() {
+                log::info!(
+                    "observed {active_blocking_threads} active blocking worker threads while completing {current_task_label}"
+                );
+            } else {
+                log::trace!(
+                    "observed {active_blocking_threads} active blocking worker threads while completing {current_task_label}"
+                );
+            }
+        }
+        _ = metrics;
+        _ = current_task_label;
     }
 }
 
@@ -249,6 +313,7 @@ mod test {
         // Create a runtime with one worker thread running in the background.
         let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
         runtime_builder.worker_threads(1);
+        runtime_builder.enable_time();
         let runtime = runtime_builder.build().expect("valid runtime");
 
         // Create a task that will sum anything it is sent.
@@ -276,6 +341,7 @@ mod test {
                     }
                 },
                 (),
+                "test",
             );
             (sender, output, when_reporting)
         };
@@ -317,6 +383,7 @@ mod test {
         // Create a runtime with one worker thread running in the background.
         let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
         runtime_builder.worker_threads(1);
+        runtime_builder.enable_time();
         let runtime = runtime_builder.build().expect("valid runtime");
 
         let async_context = TokioAsyncContext {
@@ -335,6 +402,7 @@ mod test {
                 }
             },
             (),
+            "test",
         );
 
         let (on_start_reporting2, mut when_reporting2) = oneshot::channel();
@@ -347,6 +415,7 @@ mod test {
                 }
             },
             (),
+            "test",
         );
 
         assert_matches!(

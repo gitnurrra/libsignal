@@ -3,9 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use aes::cipher::Unsigned;
-use hmac::digest::generic_array::{ArrayLength, GenericArray};
 use hmac::Mac;
+use sha2::digest::typenum::Unsigned;
 use sha2::digest::{FixedOutput, MacError, Output};
 
 #[derive(Clone)]
@@ -29,7 +28,6 @@ const TARGET_TOTAL_DIGEST_SIZE: usize = 8 * 1024;
 pub const fn calculate_chunk_size<D>(data_size: usize) -> usize
 where
     D: FixedOutput,
-    D::OutputSize: ArrayLength<u8>,
 {
     assert!(
         0 == TARGET_TOTAL_DIGEST_SIZE % D::OutputSize::USIZE,
@@ -55,15 +53,16 @@ impl<M: Mac + Clone> Incremental<M> {
         }
     }
 
-    pub fn validating<A, I>(self, macs: I) -> Validating<M>
+    pub fn validating<'a, A, I>(self, macs: I) -> Validating<M>
     where
-        A: AsRef<[u8]>,
-        I: IntoIterator<Item = A>,
-        <I as IntoIterator>::IntoIter: DoubleEndedIterator,
+        // This is a clunky way to spell an iterator over `&'a [u8; M::OutputSize]`, which requires
+        // feature(generic_const_exprs).
+        A: Into<&'a sha2::digest::array::Array<u8, M::OutputSize>>,
+        I: IntoIterator<Item = A, IntoIter: DoubleEndedIterator>,
     {
         let expected = macs
             .into_iter()
-            .map(|mac| GenericArray::<u8, M::OutputSize>::from_slice(mac.as_ref()).to_owned())
+            .map(|mac| mac.into().to_owned())
             .rev()
             .collect();
         Validating {
@@ -137,12 +136,12 @@ impl<M: Mac + Clone> Validating<M> {
 #[cfg(test)]
 mod test {
     use const_str::hex;
-    use hmac::Hmac;
+    use hmac::{Hmac, KeyInit as _};
     use proptest::prelude::*;
     use rand::distr::uniform::{UniformSampler as _, UniformUsize};
     use rand::prelude::{Rng, ThreadRng};
-    use sha2::digest::OutputSizeUser;
     use sha2::Sha256;
+    use sha2::digest::OutputSizeUser;
 
     use super::*;
     use crate::crypto::hmac_sha256;
@@ -239,8 +238,7 @@ mod test {
             expected_macs.into_iter().map(|mac| mac.into()).collect();
 
         {
-            let mut validating =
-                new_incremental(key, TEST_CHUNK_SIZE).validating(expected_bytes.clone());
+            let mut validating = new_incremental(key, TEST_CHUNK_SIZE).validating(&expected_bytes);
             validating
                 .update(bytes)
                 .expect("update: validation should succeed");
@@ -255,7 +253,7 @@ mod test {
                 .first_mut()
                 .expect("there must be at least one mac")[0] ^= 0xff;
             let mut validating =
-                new_incremental(key, TEST_CHUNK_SIZE).validating(failing_first_update);
+                new_incremental(key, TEST_CHUNK_SIZE).validating(&failing_first_update);
             validating.update(bytes).expect_err("MacError");
         }
 
@@ -264,7 +262,8 @@ mod test {
             failing_finalize
                 .last_mut()
                 .expect("there must be at least one mac")[0] ^= 0xff;
-            let mut validating = new_incremental(key, TEST_CHUNK_SIZE).validating(failing_finalize);
+            let mut validating =
+                new_incremental(key, TEST_CHUNK_SIZE).validating(&failing_finalize);
             validating.update(bytes).expect("update should succeed");
             validating.finalize().expect_err("MacError");
         }
@@ -279,7 +278,7 @@ mod test {
         {
             let missing_first_mac: Vec<_> = expected_bytes.clone().into_iter().skip(1).collect();
             let mut validating =
-                new_incremental(key, TEST_CHUNK_SIZE).validating(missing_first_mac);
+                new_incremental(key, TEST_CHUNK_SIZE).validating(&missing_first_mac);
             validating.update(bytes).expect_err("MacError");
         }
         // To make clippy happy and allow extending the test in the future
@@ -299,7 +298,7 @@ mod test {
         let expected_bytes: Vec<[u8; 32]> =
             expected_macs.into_iter().map(|mac| mac.into()).collect();
 
-        let mut validating = new_incremental(key, TEST_CHUNK_SIZE).validating(expected_bytes);
+        let mut validating = new_incremental(key, TEST_CHUNK_SIZE).validating(&expected_bytes);
 
         // Splitting input into chunks of 16 will give us one full incremental chunk + 3 bytes
         // authenticated by call to finalize.
@@ -338,7 +337,7 @@ mod test {
                 .collect();
             produced.push(incremental.finalize().into());
 
-            let mut validating = new_incremental(key, TEST_CHUNK_SIZE).validating(produced);
+            let mut validating = new_incremental(key, TEST_CHUNK_SIZE).validating(&produced);
             for chunk in input_chunks.clone() {
                 validating.update(chunk).expect("update: validation should succeed");
             }
@@ -433,11 +432,11 @@ mod test {
     }
 
     trait RandomChunksIterator<T> {
-        fn random_chunks(&self, max_size: usize) -> RandomChunks<T, ThreadRng>;
+        fn random_chunks(&self, max_size: usize) -> RandomChunks<'_, T, ThreadRng>;
     }
 
     impl<T> RandomChunksIterator<T> for [T] {
-        fn random_chunks(&self, max_size: usize) -> RandomChunks<T, ThreadRng> {
+        fn random_chunks(&self, max_size: usize) -> RandomChunks<'_, T, ThreadRng> {
             assert!(max_size > 0, "Maximal chunk size should be positive");
             RandomChunks {
                 base: self,

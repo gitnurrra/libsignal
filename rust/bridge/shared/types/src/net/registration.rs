@@ -5,30 +5,24 @@
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::panic::UnwindSafe;
 
 use futures_util::TryFutureExt as _;
+use libsignal_bridge_macros::c_export;
+use libsignal_core::ServiceIdKind;
 use libsignal_net_chat::api::registration::{
-    CreateSession, CreateSessionError, ForServiceIds, NewMessageNotification,
-    ProvidedAccountAttributes, PushToken, RegisterAccountResponse, RegistrationSession,
-    ResumeSessionError, SessionId, SignedPreKeyBody, SkipDeviceTransfer, UnidentifiedAccessKey,
+    AccountKeys, CreateSession, CreateSessionError, ForServiceIds, NewMessageNotification,
+    PniAccountMaterial, ProvidedAccountAttributes, PushToken, RegisterAccountResponse,
+    RegistrationSession, ResumeSessionError, SessionId, SignedPreKeyBody, SkipDeviceTransfer,
+    UnidentifiedAccessKey,
 };
 use libsignal_net_chat::registration::{self as net_registration, ConnectUnauthChat, RequestError};
 use libsignal_protocol::PublicKey;
 
+use crate::support::AsyncMutex;
 use crate::*;
 
-pub struct RegistrationService(
-    pub tokio::sync::Mutex<net_registration::RegistrationService<'static>>,
-);
-
-// The implementation of this type does contain interior mutability, but the
-// interior type is itself UnwindSafe so there's no danger of observing a
-// logically inconsistent state.
-impl RefUnwindSafe for RegistrationService where
-    net_registration::RegistrationService<'static>: UnwindSafe
-{
-}
+pub struct RegistrationService(pub AsyncMutex<net_registration::RegistrationService<'static>>);
 
 /// Subset of arguments needed to call
 /// [`net_registration::RegistrationService::register_account`].
@@ -36,10 +30,48 @@ impl RefUnwindSafe for RegistrationService where
 pub struct RegisterAccountInner {
     pub message_notification: NewMessageNotification<String>,
     pub device_transfer: Option<SkipDeviceTransfer>,
+    pub one_time_password: Option<u32>,
     pub account_password: Box<str>,
     pub identity_keys: ForServiceIds<Option<PublicKey>>,
     pub signed_pre_keys: ForServiceIds<Option<SignedPreKeyBody<Box<[u8]>>>>,
     pub pq_last_resort_pre_keys: ForServiceIds<Option<SignedPreKeyBody<Box<[u8]>>>>,
+}
+
+impl RegisterAccountInner {
+    pub fn aci_keys(&self) -> AccountKeys<'_> {
+        self.keys(ServiceIdKind::Aci)
+            .expect("ACI keys were provided")
+    }
+
+    pub fn pni_material(&self, registration_id: u16) -> Option<PniAccountMaterial<'_>> {
+        self.keys(ServiceIdKind::Pni)
+            .map(|keys| PniAccountMaterial {
+                registration_id,
+                keys,
+            })
+    }
+
+    pub fn has_pni_keys(&self) -> bool {
+        self.keys(ServiceIdKind::Pni).is_some()
+    }
+
+    fn keys(&self, kind: ServiceIdKind) -> Option<AccountKeys<'_>> {
+        match (
+            self.identity_keys.get(kind).as_ref(),
+            self.signed_pre_keys.get(kind).as_ref(),
+            self.pq_last_resort_pre_keys.get(kind).as_ref(),
+        ) {
+            (Some(identity_key), Some(signed_pre_key), Some(pq_last_resort_pre_key)) => {
+                Some(AccountKeys {
+                    identity_key,
+                    signed_pre_key: signed_pre_key.as_deref(),
+                    pq_last_resort_pre_key: pq_last_resort_pre_key.as_deref(),
+                })
+            }
+            (None, None, None) => None,
+            _ => panic!("{kind} keys must all be provided or all omitted"),
+        }
+    }
 }
 
 pub struct RegisterAccountRequest(pub std::sync::Mutex<Option<RegisterAccountInner>>);
@@ -60,6 +92,7 @@ pub struct AccountAttributes {
 // jni::jni_arg and friends) aren't ambiguous.
 pub type RegistrationCreateSessionRequest = CreateSession;
 pub type RegistrationPushToken = PushToken;
+#[c_export]
 pub type RegistrationAccountAttributes = AccountAttributes;
 
 // Alias the type exposed across the bridge since the macros don't support
@@ -72,11 +105,11 @@ bridge_as_handle!(RegisterAccountRequest);
 bridge_as_handle!(RegisterAccountResponse);
 bridge_as_handle!(RegistrationAccountAttributes);
 
-/// Precursor to a [`Box<dyn ConnectChat>`](ConnectChat).
+/// Precursor to a [`Box<dyn ConnectUnauthChat>`](ConnectUnauthChat).
 ///
-/// Functionally a `FnOnce(Handle) -> Box<dyn ConnectChat>` but named for clarity.
+/// Functionally a `FnOnce(Handle) -> Box<dyn ConnectUnauthChat>` but named for clarity.
 pub trait ConnectChatBridge: Send + UnwindSafe {
-    /// Converts `self` into a `ConnectChat` impl.
+    /// Converts `self` into a `ConnectUnauthChat` impl.
     ///
     /// The provided runtime handle can be used to spawn tasks needed by the
     /// implementation.
@@ -119,7 +152,8 @@ impl<'a> From<&'a AccountAttributes> for ProvidedAccountAttributes<'a> {
         let AccountAttributes {
             recovery_password,
             aci_registration_id,
-            pni_registration_id,
+            // Not forwarded here; sent with the PNI keys on the register-account request.
+            pni_registration_id: _,
             registration_lock,
             unidentified_access_key,
             unrestricted_unidentified_access,
@@ -129,7 +163,6 @@ impl<'a> From<&'a AccountAttributes> for ProvidedAccountAttributes<'a> {
         Self {
             recovery_password,
             registration_id: *aci_registration_id,
-            pni_registration_id: *pni_registration_id,
             name: None,
             registration_lock: registration_lock.as_deref(),
             unidentified_access_key,

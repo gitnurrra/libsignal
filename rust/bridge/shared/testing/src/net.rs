@@ -5,13 +5,15 @@
 
 use std::num::NonZeroU16;
 
-use libsignal_bridge_macros::*;
+use base64::prelude::{BASE64_STANDARD, Engine as _};
 use libsignal_bridge_types::net::chat::ServerMessageAck;
-use libsignal_bridge_types::net::{ConnectionManager, TokioAsyncContext};
+use libsignal_bridge_types::net::{BuildVariant, ConnectionManager, TokioAsyncContext};
 use libsignal_core::E164;
 use libsignal_net::cdsi::{CdsiProtocolError, LookupError, LookupResponse, LookupResponseEntry};
 use libsignal_net::infra::errors::RetryLater;
-use libsignal_net::infra::ws2::attested::AttestedProtocolError;
+use libsignal_net::infra::route::HttpVersion;
+use libsignal_net::infra::ws::attested::AttestedProtocolError;
+use libsignal_net::svr2::Error as Svr2Error;
 use libsignal_protocol::{Aci, Pni};
 use nonzero_ext::nonzero;
 use uuid::Uuid;
@@ -48,6 +50,12 @@ async fn TESTING_CdsiLookupResponseConvert() -> LookupResponse {
         ],
         debug_permits_used: DEBUG_PERMITS_USED,
     }
+}
+
+/// Returns the SVR2 error produced when a restored blob cannot be decrypted.
+#[bridge_fn(jni = false, ffi = false)]
+fn TESTING_Svr2MasterKeyRestoreError() -> Result<(), Svr2Error> {
+    Err(Svr2Error::DecryptionError)
 }
 
 macro_rules! make_error_testing_enum {
@@ -88,14 +96,12 @@ make_error_testing_enum! {
         EnclaveProtocol => Protocol,
         CdsiProtocol => CdsiProtocol,
         AttestationError => AttestationDataError,
-        InvalidResponse => InvalidResponse,
         RateLimited => RetryAfter42Seconds,
         InvalidToken => InvalidToken,
         InvalidArgument => InvalidArgument,
-        ParseError => Parse,
-        ConnectTransport => ConnectDnsFailed,
+        ConnectTransport => TcpConnectFailed,
         WebSocket => WebSocketIdleTooLong,
-        ConnectionTimedOut => ConnectionTimedOut,
+        AllConnectionAttemptsFailed => AllConnectionAttemptsFailed,
         Server => ServerCrashed,
     }
 }
@@ -118,7 +124,6 @@ fn TESTING_CdsiLookupErrorConvert(
                 reason: "fake reason".into(),
             })
         }
-        TestingCdsiLookupError::InvalidResponse => LookupError::InvalidResponse,
         TestingCdsiLookupError::RetryAfter42Seconds => LookupError::RateLimited(RetryLater {
             retry_after_seconds: 42,
         }),
@@ -126,14 +131,15 @@ fn TESTING_CdsiLookupErrorConvert(
         TestingCdsiLookupError::InvalidArgument => LookupError::InvalidArgument {
             server_reason: "fake reason".into(),
         },
-        TestingCdsiLookupError::Parse => LookupError::ParseError,
-        TestingCdsiLookupError::ConnectDnsFailed => LookupError::ConnectTransport(
-            libsignal_net::infra::errors::TransportConnectError::DnsError,
+        TestingCdsiLookupError::TcpConnectFailed => LookupError::ConnectTransport(
+            libsignal_net::infra::errors::TransportConnectError::TcpConnectionFailed,
         ),
-        TestingCdsiLookupError::WebSocketIdleTooLong => LookupError::WebSocket(
-            libsignal_net::infra::ws::WebSocketServiceError::ChannelIdleTooLong,
-        ),
-        TestingCdsiLookupError::ConnectionTimedOut => LookupError::ConnectionTimedOut,
+        TestingCdsiLookupError::WebSocketIdleTooLong => {
+            LookupError::WebSocket(libsignal_net::infra::ws::WebSocketError::ChannelIdleTooLong)
+        }
+        TestingCdsiLookupError::AllConnectionAttemptsFailed => {
+            LookupError::AllConnectionAttemptsFailed
+        }
         TestingCdsiLookupError::ServerCrashed => LookupError::Server { reason: "crashed" },
     })
 }
@@ -146,11 +152,12 @@ fn TESTING_ServerMessageAck_Create() -> ServerMessageAck {
 #[bridge_fn(jni = false, ffi = false)]
 fn TESTING_ConnectionManager_newLocalOverride(
     userAgent: String,
-    chatPort: AsType<NonZeroU16, u16>,
-    cdsiPort: AsType<NonZeroU16, u16>,
-    svr2Port: AsType<NonZeroU16, u16>,
-    svrBPort: AsType<NonZeroU16, u16>,
+    chatPort: AsType<NonZeroU16, u16, { str_as_int("chatPort") }>,
+    cdsiPort: AsType<NonZeroU16, u16, { str_as_int("cdsiPort") }>,
+    svr2Port: AsType<NonZeroU16, u16, { str_as_int("svr2Port") }>,
+    svrBPort: AsType<NonZeroU16, u16, { str_as_int("svrBPort") }>,
     rootCertificateDer: &[u8],
+    http_version: u8,
 ) -> ConnectionManager {
     let ports = net_env::LocalhostEnvPortConfig {
         chat_port: chatPort.into_inner(),
@@ -158,9 +165,19 @@ fn TESTING_ConnectionManager_newLocalOverride(
         svr2_port: svr2Port.into_inner(),
         svrb_port: svrBPort.into_inner(),
     };
+    let http_version = match http_version {
+        1 => HttpVersion::Http1_1,
+        2 => HttpVersion::Http2,
+        _ => panic!("invalid HTTP version {http_version}"),
+    };
 
-    let env = net_env::localhost_test_env_with_ports(ports, rootCertificateDer);
-    ConnectionManager::new_from_static_environment(env, userAgent.as_str(), Default::default())
+    let env = net_env::localhost_test_env_with_ports(ports, rootCertificateDer, http_version);
+    ConnectionManager::new_from_static_environment(
+        env,
+        userAgent.as_str(),
+        Default::default(),
+        BuildVariant::Production,
+    )
 }
 
 #[bridge_fn]
@@ -170,4 +187,15 @@ fn TESTING_ConnectionManager_isUsingProxy(manager: &ConnectionManager) -> i32 {
         Ok(false) => 0,
         Err(_) => -1,
     }
+}
+
+#[bridge_fn]
+fn TESTING_CreateOTP(username: String, secret: &[u8]) -> String {
+    libsignal_net::auth::Auth::otp(&username, secret, std::time::SystemTime::now())
+}
+
+#[bridge_fn]
+fn TESTING_CreateOTPFromBase64(username: String, secret: String) -> String {
+    let secret = BASE64_STANDARD.decode(secret).expect("valid base64");
+    TESTING_CreateOTP(username, &secret)
 }

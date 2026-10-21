@@ -34,18 +34,23 @@ public final class IncrementalMacInputStream extends InputStream {
       byte[] key,
       ChunkSizeChoice sizeChoice,
       byte[] digest,
-      boolean useDirectBuffer) {
+      boolean useDirectBuffer)
+      throws InvalidMacException {
     this.chunkSize = sizeChoice.getSizeInBytes();
     this.currentChunk =
         useDirectBuffer ? ByteBuffer.allocateDirect(chunkSize) : ByteBuffer.allocate(chunkSize);
     this.chunkValidationBuffer =
         this.currentChunk.hasArray() ? null : new byte[VALIDATION_BUFFER_SIZE];
-    this.channel = new MaybeEmptyChannel(channel);
     this.readState = ReadState.READ_FROM_INPUT;
+    this.channel = new MaybeEmptyChannel(channel);
+
+    long handle = Native.ValidatingMac_Initialize(key, chunkSize, digest);
+    if (handle == 0) {
+      throw new InvalidMacException("invalid configuration data");
+    }
 
     this.handleOwner =
-        new NativeHandleGuard.CloseableOwner(
-            Native.ValidatingMac_Initialize(key, chunkSize, digest)) {
+        new NativeHandleGuard.CloseableOwner(handle) {
           @Override
           protected void release(long nativeHandle) {
             Native.ValidatingMac_Destroy(nativeHandle);
@@ -54,7 +59,8 @@ public final class IncrementalMacInputStream extends InputStream {
   }
 
   public IncrementalMacInputStream(
-      InputStream input, byte[] key, ChunkSizeChoice sizeChoice, byte[] digest) {
+      InputStream input, byte[] key, ChunkSizeChoice sizeChoice, byte[] digest)
+      throws InvalidMacException {
     this(Channels.newChannel(input), key, sizeChoice, digest, true);
   }
 
@@ -115,13 +121,6 @@ public final class IncrementalMacInputStream extends InputStream {
 
     if (bytesRead == -1) {
       this.eof = true;
-      if (!this.channel.hasAtLeastOneByteBeenRead) {
-        // This is special case for validating empty inputs.
-        // It does not matter what byte[] we pass in since both offset and length are 0.
-        this.handleOwner.guardedRun(
-            (handle) -> Native.ValidatingMac_Update(handle, this.singleByteBuffer, 0, 0));
-        return ReadChunkResult.EOF;
-      }
     }
 
     // We have reached the chunk boundary or end of input, and it is now safe to validate/finalize

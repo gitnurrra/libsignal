@@ -8,6 +8,7 @@ use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::{IsIdentity as _, VartimeMultiscalarMul as _};
 use sha2::{Digest as _, Sha512};
+use zerocopy::{FromBytes, Immutable, KnownLayout};
 
 const SUITE_ID: u8 = 0x03;
 const DOMAIN_SEPARATOR_ENCODE: u8 = 0x01;
@@ -37,7 +38,7 @@ fn encode_to_curve_try_and_increment(salt: &[u8], data: &[u8]) -> EdwardsPoint {
         let r = hasher.finalize_reset();
 
         if let Some(pt) =
-            CompressedEdwardsY(r[..32].try_into().expect("hash has enough bytes")).decompress()
+            CompressedEdwardsY(*r.first_chunk().expect("hash has enough bytes")).decompress()
         {
             let maybe_res = pt.mul_by_cofactor();
             if !maybe_res.is_identity() {
@@ -58,7 +59,7 @@ fn generate_challenge(pts: [&[u8; 32]; 5]) -> [u8; 16] {
     hasher.update([DOMAIN_SEPARATOR_BACK]);
     let c = hasher.finalize();
 
-    c[..16].try_into().expect("hash has enough bytes")
+    *c.first_chunk().expect("hash has enough bytes")
 }
 
 fn proof_to_hash(gamma: &EdwardsPoint) -> [u8; 32] {
@@ -68,7 +69,7 @@ fn proof_to_hash(gamma: &EdwardsPoint) -> [u8; 32] {
     hasher.update([DOMAIN_SEPARATOR_BACK]);
     let index = hasher.finalize();
 
-    index[..32].try_into().expect("hash has enough bytes")
+    *index.first_chunk().expect("hash has enough bytes")
 }
 
 /// PublicKey holds a VRF public key.
@@ -98,20 +99,33 @@ impl PublicKey {
     /// the index if so.
     pub fn proof_to_hash(&self, m: &[u8], proof: &[u8; 80]) -> Result<[u8; 32]> {
         // Decode proof into its component parts: gamma, c, and s.
-        let gamma = CompressedEdwardsY(proof[..32].try_into().expect("proof has enough bytes"))
+        #[derive(FromBytes, Immutable, KnownLayout)]
+        #[repr(C)]
+        struct ProofRepr {
+            gamma_bytes: [u8; 32],
+            c_lower_bytes: [u8; 16],
+            s_bytes: [u8; 32],
+        }
+
+        let ProofRepr {
+            gamma_bytes,
+            c_lower_bytes,
+            s_bytes,
+        } = zerocopy::transmute_ref!(proof);
+
+        let gamma = CompressedEdwardsY(*gamma_bytes)
             .decompress()
             .ok_or(Error::InvalidProof)?;
 
         let mut c_bytes = [0u8; 32];
-        c_bytes[..16].copy_from_slice(&proof[32..48]);
+        c_bytes[..16].copy_from_slice(c_lower_bytes);
         let c = -Scalar::from_canonical_bytes(c_bytes)
             .into_option()
             .ok_or(Error::InvalidProof)?;
 
-        let s =
-            Scalar::from_canonical_bytes(proof[48..80].try_into().expect("proof has enough bytes"))
-                .into_option()
-                .ok_or(Error::InvalidProof)?;
+        let s = Scalar::from_canonical_bytes(*s_bytes)
+            .into_option()
+            .ok_or(Error::InvalidProof)?;
 
         // H = encode_to_curve_try_and_increment(pk, m)
         // U = [s]B - [c]Y
@@ -125,11 +139,11 @@ impl PublicKey {
         let c_prime = generate_challenge([
             &self.compressed,
             &h.compress().0,
-            proof[..32].try_into().expect("proof has enough bytes"),
+            gamma_bytes,
             &u.compress().0,
             &v.compress().0,
         ]);
-        if proof[32..48] != c_prime {
+        if *c_lower_bytes != c_prime {
             return Err(Error::InvalidProof);
         }
 
@@ -161,21 +175,27 @@ mod tests {
             pk: hex!("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"),
             alpha: &hex!(""),
             h: hex!("91bbed02a99461df1ad4c6564a5f5d829d0b90cfc7903e7a5797bd658abf3318"),
-            pi: hex!("8657106690b5526245a92b003bb079ccd1a92130477671f6fc01ad16f26f723f26f8a57ccaed74ee1b190bed1f479d9727d2d0f9b005a6e456a35d4fb0daab1268a1b0db10836d9826a528ca76567805"),
+            pi: hex!(
+                "8657106690b5526245a92b003bb079ccd1a92130477671f6fc01ad16f26f723f26f8a57ccaed74ee1b190bed1f479d9727d2d0f9b005a6e456a35d4fb0daab1268a1b0db10836d9826a528ca76567805"
+            ),
             beta: hex!("90cf1df3b703cce59e2a35b925d411164068269d7b2d29f3301c03dd757876ff"),
         },
         TestVector {
             pk: hex!("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"),
             alpha: &hex!("72"),
             h: hex!("5b659fc3d4e9263fd9a4ed1d022d75eaacc20df5e09f9ea937502396598dc551"),
-            pi: hex!("f3141cd382dc42909d19ec5110469e4feae18300e94f304590abdced48aed5933bf0864a62558b3ed7f2fea45c92a465301b3bbf5e3e54ddf2d935be3b67926da3ef39226bbc355bdc9850112c8f4b02"),
+            pi: hex!(
+                "f3141cd382dc42909d19ec5110469e4feae18300e94f304590abdced48aed5933bf0864a62558b3ed7f2fea45c92a465301b3bbf5e3e54ddf2d935be3b67926da3ef39226bbc355bdc9850112c8f4b02"
+            ),
             beta: hex!("eb4440665d3891d668e7e0fcaf587f1b4bd7fbfe99d0eb2211ccec90496310eb"),
         },
         TestVector {
             pk: hex!("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"),
             alpha: &hex!("af82"),
             h: hex!("bf4339376f5542811de615e3313d2b36f6f53c0acfebb482159711201192576a"),
-            pi: hex!("9bc0f79119cc5604bf02d23b4caede71393cedfbb191434dd016d30177ccbf8096bb474e53895c362d8628ee9f9ea3c0e52c7a5c691b6c18c9979866568add7a2d41b00b05081ed0f58ee5e31b3a970e"),
+            pi: hex!(
+                "9bc0f79119cc5604bf02d23b4caede71393cedfbb191434dd016d30177ccbf8096bb474e53895c362d8628ee9f9ea3c0e52c7a5c691b6c18c9979866568add7a2d41b00b05081ed0f58ee5e31b3a970e"
+            ),
             beta: hex!("645427e5d00c62a23fb703732fa5d892940935942101e456ecca7bb217c61c45"),
         },
     ];

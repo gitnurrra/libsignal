@@ -9,10 +9,13 @@
  * @module MessageBackup
  */
 
-import * as Native from '../Native';
-import { BackupForwardSecrecyToken, BackupKey } from './AccountKeys';
-import { Aci } from './Address';
-import { InputStream } from './io';
+import type { Bytes } from '@signalapp/types';
+
+import * as Native from './Native.js';
+import { ErrorCode, LibSignalErrorBase } from './Errors.js';
+import { BackupForwardSecrecyToken, BackupKey } from './AccountKeys.js';
+import { Aci } from './Address.js';
+import { _bridgeInputStream, InputStream } from './io.js';
 
 export type InputStreamFactory = () => InputStream;
 
@@ -54,8 +57,8 @@ export type MessageBackupKeyInput = Readonly<
       forwardSecrecyToken?: BackupForwardSecrecyToken;
     }
   | {
-      backupKey: BackupKey | Uint8Array;
-      backupId: Uint8Array;
+      backupKey: BackupKey | Bytes;
+      backupId: Bytes;
       forwardSecrecyToken?: BackupForwardSecrecyToken;
     }
 >;
@@ -100,12 +103,12 @@ export class MessageBackupKey {
   }
 
   /** An HMAC key used to sign a backup file. */
-  public get hmacKey(): Uint8Array {
+  public get hmacKey(): Bytes {
     return Native.MessageBackupKey_GetHmacKey(this);
   }
 
   /** An AES-256-CBC key used to encrypt a backup file. */
-  public get aesKey(): Uint8Array {
+  public get aesKey(): Bytes {
     return Native.MessageBackupKey_GetAesKey(this);
   }
 }
@@ -114,6 +117,7 @@ export class MessageBackupKey {
 export enum Purpose {
   DeviceTransfer = 0,
   RemoteBackup = 1,
+  TakeoutExport = 2,
 }
 
 /**
@@ -142,8 +146,8 @@ export async function validate(
     return new ValidationOutcome(
       await Native.MessageBackupValidator_Validate(
         backupKey,
-        firstStream,
-        secondStream,
+        _bridgeInputStream(firstStream),
+        _bridgeInputStream(secondStream),
         length,
         purpose
       )
@@ -186,7 +190,7 @@ export class OnlineBackupValidator {
    *
    * @throws BackupValidationError on error
    */
-  constructor(backupInfo: Uint8Array, purpose: Purpose) {
+  constructor(backupInfo: Bytes, purpose: Purpose) {
     this._nativeHandle = Native.OnlineBackupValidator_New(backupInfo, purpose);
   }
 
@@ -197,7 +201,7 @@ export class OnlineBackupValidator {
    *
    * @throws BackupValidationError on error
    */
-  addFrame(frame: Uint8Array): void {
+  addFrame(frame: Bytes): void {
     Native.OnlineBackupValidator_AddFrame(this, frame);
   }
 
@@ -247,7 +251,7 @@ export class ComparableBackup {
     length: bigint
   ): Promise<ComparableBackup> {
     const handle = await Native.ComparableBackup_ReadUnencrypted(
-      input,
+      _bridgeInputStream(input),
       length,
       purpose
     );
@@ -276,4 +280,136 @@ export class ComparableBackup {
   public get unknownFields(): Array<string> {
     return Native.ComparableBackup_GetUnknownFields(this);
   }
+}
+
+/**
+ * The output from processing a single frame for JSON export.
+ *
+ * There are four possibilities:
+ * - `line` present, `errorMessage` absent - the common case, a frame converted (and possibly sanitized)
+ *   with no problems.
+ * - `line` present, `errorMessage` present - the frame has been converted, but would have failed
+ *   validation.
+ * - `line` absent, `errorMessage` absent - the frame has been filtered out wholesale.
+ * - `line` absent, `errorMessage` present - the frame has been filtered out wholesale, but would have
+ *   failed validation had it not been filtered out.
+ */
+export type BackupJsonFrameResult = {
+  line?: string;
+  errorMessage?: string;
+};
+
+export type BackupJsonFinishResult = { errorMessage?: string };
+
+/**
+ * Streaming exporter that produces a human-readable JSON representation of a backup.
+ *
+ * Validation feedback returned by this exporter is best-effort and intended for logging or
+ * diagnostics. Even when a frame reports a validation error, the serialized line is still
+ * produced so consumers can continue streaming the export.
+ */
+export class BackupJsonExporter {
+  private constructor(readonly _nativeHandle: Native.BackupJsonExporter) {}
+
+  /**
+   * Initializes the streaming exporter and returns the first set of output lines.
+   * @param backupInfo The serialized BackupInfo protobuf without a varint header.
+   * @param [options] Additional configuration for the exporter.
+   * @param [options.validate=true] Whether to run semantic validation on the backup.
+   * @returns An object containing the exporter and the first chunk of output, containing the backup info.
+   * @throws Error if the input is invalid.
+   */
+  public static start(
+    backupInfo: Bytes,
+    options?: { validate?: boolean }
+  ): { exporter: BackupJsonExporter; chunk: string } {
+    const shouldValidate = options?.validate ?? true;
+    const handle = Native.BackupJsonExporter_New(backupInfo, shouldValidate);
+    const exporter = new BackupJsonExporter(handle);
+    const chunk = Native.BackupJsonExporter_GetInitialChunk(exporter);
+    return { exporter, chunk };
+  }
+
+  /**
+   * Validates and exports a human-readable JSON representation of backup frames.
+   * @param frames One or more varint delimited Frame serialized protobuf messages.
+   * @returns An array containing the line and any validation error for each frame.
+   * Frames that report validation errors still include their serialized `line`, so consumers
+   * should continue processing the export and surface the errors for observability rather than
+   * aborting.
+   * @throws Error if the input data cannot be parsed.
+   */
+  public exportFrames(frames: Bytes): BackupJsonFrameResult[] {
+    return Native.BackupJsonExporter_ExportFrames(this, frames).map(
+      ([line, errorMessage]) => ({
+        ...(line !== null && { line }),
+        ...(errorMessage !== null && { errorMessage }),
+      })
+    );
+  }
+
+  /**
+   * Completes the validation and export of the previously exported frames.
+   *
+   * Per-frame validation errors are reported via `exportFrames`, so callers
+   * should inspect earlier results even if this returns with no error.
+   * @returns The outcome of the final validation stage.
+   */
+  public finish(): BackupJsonFinishResult {
+    try {
+      Native.BackupJsonExporter_Finish(this);
+      return {};
+    } catch (error: unknown) {
+      if (LibSignalErrorBase.is(error, ErrorCode.BackupValidation)) {
+        return { errorMessage: error.message };
+      }
+      throw error;
+    }
+  }
+}
+
+/**
+ * Uncompressed bytes to write before ending the current DEFLATE block.
+ *
+ * The caller owns the compressor and does the flushing itself; this provides
+ * the arithmetic.
+ *
+ * The interval grows with position, which is what lets a reasonable value be
+ * chosen without knowing the final size of the backup in advance. A caller that
+ * can estimate the total *uncompressed* length of the backup should pass it, and
+ * gets the fixed interval that suits a backup of that size. The uncompressed
+ * length of the previous backup is a good estimate. Passing a reasonable estimate
+ * will result in a smaller padded file, but the estimate does not need to be precise
+ * and the estimate has no impact on security.
+ *
+ * @param uncompressedLength Uncompressed bytes written since the chat item
+ * region began.
+ * @param estimatedTotalUncompressedLength Estimated total uncompressed length
+ * of the backup, if known.
+ */
+export function flushInterval(
+  uncompressedLength: bigint,
+  estimatedTotalUncompressedLength?: bigint
+): bigint {
+  return Native.MessageBackupSizing_FlushInterval(
+    uncompressedLength,
+    estimatedTotalUncompressedLength ?? 0n
+  );
+}
+
+/**
+ * Number of zero bytes to append to a finished backup stream.
+ *
+ * @param maxIntervalBytes The largest DEFLATE block the writer *actually
+ * produced* in the chat item region, in uncompressed bytes.
+ * @param compressedLength Length of the compressed stream, before padding.
+ */
+export function paddingSize(
+  maxIntervalBytes: bigint,
+  compressedLength: bigint
+): bigint {
+  return Native.MessageBackupSizing_PaddingSize(
+    maxIntervalBytes,
+    compressedLength
+  );
 }

@@ -11,16 +11,17 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::TryFutureExt as _;
-use http::uri::Authority;
 use http::Uri;
+use http::uri::Authority;
 use http_body_util::Empty;
 use hyper_util::rt::TokioIo;
+use libsignal_core::LogSafeDisplay;
 use pin_project::pin_project;
 use static_assertions::assert_impl_all;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::either::Either;
 
-use crate::errors::{LogSafeDisplay, TransportConnectError};
+use crate::errors::TransportConnectError;
 use crate::host::Host;
 use crate::route::{
     ComposedConnector, Connector, ConnectorExt as _, HttpProxyAuth, HttpProxyRouteFragment,
@@ -47,8 +48,7 @@ pub struct HttpProxyStream {
 assert_impl_all!(HttpProxyStream: AsyncDuplexStream);
 
 type StatelessTcpConnector = super::super::StatelessTcp;
-type StatelessTlsConnector =
-    ComposedConnector<super::super::StatelessTls, StatelessTcpConnector, TransportConnectError>;
+type StatelessTlsConnector = ComposedConnector<super::super::StatelessTls, StatelessTcpConnector>;
 
 impl Connector<HttpsProxyRoute<IpAddr>, ()> for super::StatelessProxied {
     type Connection = HttpProxyStream;
@@ -268,8 +268,8 @@ impl Connection for HttpProxyStream {
 mod test {
     use assert_matches::assert_matches;
     use either::Either;
-    use futures_util::future::BoxFuture;
     use futures_util::FutureExt;
+    use futures_util::future::BoxFuture;
     use http::method::Method;
     use http::{HeaderMap, HeaderValue, StatusCode};
     use http_body_util::Empty;

@@ -19,12 +19,20 @@ use serde_json::value::RawValue;
 use strum::EnumCount;
 
 use crate::cert_chain::CertChain;
-use crate::dcap::ecdsa::{deserialize_ecdsa_signature, EcdsaSigned};
+use crate::constants::SGX_TCB_EVALUATION_DATA_NUMBER_MIN;
+use crate::dcap::ecdsa::{EcdsaSigned, deserialize_ecdsa_signature};
 use crate::dcap::revocation_list::RevocationList;
 use crate::dcap::{Error, Expireable, Result};
 use crate::endian::UInt32LE;
 use crate::error::Context;
 use crate::util;
+
+#[cfg(any(test, feature = "test-util"))]
+#[used]
+static _TEST_UTIL_ENABLED: &str = "ATTEST TEST-UTIL IS ENABLED";
+
+#[cfg(any(test, feature = "test-util"))]
+const SGX_TCB_EVALUATION_NUMBER_USED_ONLY_IN_TESTS_THAT_WILL_NEVER_VALIDATE_SINCE_IT_IS_VERY_EXPIRED: u16 = 12;
 
 // Inline header file references are paths from the root of the repository tree.
 // https://github.com/openenclave/openenclave/tree/v0.17.7
@@ -106,9 +114,12 @@ impl TryFrom<&[u8]> for SgxEndorsements {
 
         let (offsets, data) = src.split_at(offsets_required_size);
 
+        let (offsets, offsets_remainder) = offsets.as_chunks::<{ std::mem::size_of::<u32>() }>();
+        // offsets_required_size is a multiple of std::mem::size_of::<u32>
+        assert!(offsets_remainder.is_empty());
         let offsets = offsets
-            .chunks_exact(4)
-            .map(|d| u32::from_le_bytes(d.try_into().expect("correct size")) as usize)
+            .iter()
+            .map(|d| u32::from_le_bytes(*d) as usize)
             .collect::<Vec<usize>>();
 
         validate_offsets(&offsets, data)?;
@@ -229,7 +240,7 @@ fn pem_chain_for_field(
 ) -> Result<CertChain> {
     let data = data_for_field(field, offsets, data);
 
-    CertChain::from_pem_data(data).with_context(|| format!("{:?}", &field))
+    CertChain::from_pem_data(data).with_context(|| format!("{:?}", field))
 }
 
 fn der_crl_for_field(
@@ -304,13 +315,9 @@ mod tests {
 
     #[test]
     fn make_endorsements_header() {
-        let data: [u8; std::mem::size_of::<EndorsementsHeader>()] =
-            include_bytes!("../../tests/data/dcap.endorsements")
-                [..std::mem::size_of::<EndorsementsHeader>()]
-                .try_into()
-                .unwrap();
-
-        let header = EndorsementsHeader::read_from_bytes(&data).expect("failed to parse header");
+        let data: &[u8] = include_bytes!("../../tests/data/dcap.endorsements");
+        let (header, _remaining) =
+            EndorsementsHeader::read_from_prefix(data).expect("failed to parse header");
 
         assert_eq!(1, header.version.get());
         assert_eq!(2, header.enclave_type.get()) // oe_enclave_type_t (include/openenclave/bits/types.h)
@@ -326,9 +333,11 @@ mod tests {
             TcbStatus::SWHardeningNeeded,
             tcb_info.tcb_levels[0].tcb_status
         );
-        assert!(tcb_info.tcb_levels[0]
-            .advisory_ids
-            .contains(&"INTEL-SA-00657".to_owned()));
+        assert!(
+            tcb_info.tcb_levels[0]
+                .advisory_ids
+                .contains(&"INTEL-SA-00657".to_owned())
+        );
         assert_eq!(
             [7, 9, 3, 3, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             tcb_info.tcb_levels[0].tcb.components()
@@ -435,17 +444,22 @@ pub(crate) struct TcbInfo {
     #[serde(with = "hex")]
     pub pce_id: [u8; 2],
     tcb_type: u16,
-    _tcb_evaluation_data_number: u16,
+    pub tcb_evaluation_data_number: u16,
     pub tcb_levels: Vec<TcbLevel>,
 }
 
 impl Expireable for TcbInfo {
     fn valid_at(&self, timestamp: SystemTime) -> bool {
+        let tcb_ok = SGX_TCB_EVALUATION_DATA_NUMBER_MIN <= self.tcb_evaluation_data_number;
+        #[cfg(any(test, feature = "test-util"))]
+        let tcb_ok = tcb_ok
+            || self.tcb_evaluation_data_number
+                == SGX_TCB_EVALUATION_NUMBER_USED_ONLY_IN_TESTS_THAT_WILL_NEVER_VALIDATE_SINCE_IT_IS_VERY_EXPIRED;
         // don't care about issue_date
         // 1. There's no notion of "valid before" like in X509
         // 2. These dates might be *very* recent, and we don't
         //    want to fail requests because of clock skew
-        timestamp <= self.next_update.into()
+        timestamp <= self.next_update.into() && tcb_ok
     }
 }
 
@@ -639,7 +653,7 @@ pub(crate) struct EnclaveIdentity {
     version: u16,
     _issue_date: chrono::DateTime<Utc>,
     pub next_update: chrono::DateTime<Utc>,
-    _tcb_evaluation_data_number: u16,
+    pub tcb_evaluation_data_number: u16,
     #[serde(deserialize_with = "deserialize_u32_hex")]
     pub miscselect: UInt32LE,
     #[serde(deserialize_with = "deserialize_u32_hex")]
@@ -680,11 +694,16 @@ impl EnclaveIdentity {
 
 impl Expireable for EnclaveIdentity {
     fn valid_at(&self, timestamp: SystemTime) -> bool {
+        let tcb_ok = SGX_TCB_EVALUATION_DATA_NUMBER_MIN <= self.tcb_evaluation_data_number;
+        #[cfg(any(test, feature = "test-util"))]
+        let tcb_ok = tcb_ok
+            || self.tcb_evaluation_data_number
+                == SGX_TCB_EVALUATION_NUMBER_USED_ONLY_IN_TESTS_THAT_WILL_NEVER_VALIDATE_SINCE_IT_IS_VERY_EXPIRED;
         // don't care about issue_date
         // 1. There's no notion of "valid before" like in X509
         // 2. These dates might be *very* recent, and we don't
         //    want to fail requests because of clock skew
-        timestamp <= self.next_update.into()
+        tcb_ok && timestamp <= self.next_update.into()
     }
 }
 

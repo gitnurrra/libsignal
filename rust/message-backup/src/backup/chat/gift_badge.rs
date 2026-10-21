@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use zkgroup::receipts::ReceiptCredentialPresentation;
 use zkgroup::ZkGroupDeserializationFailure;
+use zkgroup::receipts::ReceiptCredentialPresentation;
 
 use crate::proto::backup as proto;
 
@@ -132,7 +132,7 @@ mod test {
             let response = server_params.issue_receipt_credential(
                 RANDOMNESS,
                 &request,
-                zkgroup::Timestamp::from_epoch_seconds(123456789),
+                zkgroup::Timestamp::from_epoch_seconds(123456789 * zkgroup::SECONDS_PER_DAY),
                 6,
             );
             let credential = server_public_params

@@ -5,13 +5,15 @@
 
 /* eslint-disable @typescript-eslint/require-await */
 
-import * as SignalClient from '../../index';
-import * as util from '../util';
+import type { Bytes } from '@signalapp/types';
+
+import * as SignalClient from '../../index.js';
+import * as util from '../util.js';
 
 util.initLogger();
 
 export class InMemorySessionStore extends SignalClient.SessionStore {
-  private state = new Map<string, Uint8Array>();
+  private state = new Map<string, Bytes>();
   async saveSession(
     name: SignalClient.ProtocolAddress,
     record: SignalClient.SessionRecord
@@ -37,7 +39,7 @@ export class InMemorySessionStore extends SignalClient.SessionStore {
       const idx = `${address.name()}::${address.deviceId()}`;
       const serialized = this.state.get(idx);
       if (!serialized) {
-        throw `no session for ${idx}`;
+        throw new Error(`no session for ${idx}`);
       }
       return SignalClient.SessionRecord.deserialize(serialized);
     });
@@ -70,7 +72,7 @@ export class InMemoryIdentityKeyStore extends SignalClient.IdentityKeyStore {
     const idx = `${name.name()}::${name.deviceId()}`;
     const currentKey = this.idKeys.get(idx);
     if (currentKey) {
-      return currentKey.compare(key) == 0;
+      return currentKey.equals(key);
     } else {
       return true;
     }
@@ -84,7 +86,7 @@ export class InMemoryIdentityKeyStore extends SignalClient.IdentityKeyStore {
     const currentKey = this.idKeys.get(idx);
     this.idKeys.set(idx, key);
 
-    const changed = (currentKey?.compare(key) ?? 0) != 0;
+    const changed = !(currentKey?.equals(key) ?? true);
     return changed
       ? SignalClient.IdentityChange.ReplacedExisting
       : SignalClient.IdentityChange.NewOrUnchanged;
@@ -98,7 +100,7 @@ export class InMemoryIdentityKeyStore extends SignalClient.IdentityKeyStore {
 }
 
 export class InMemoryPreKeyStore extends SignalClient.PreKeyStore {
-  private state = new Map<number, Uint8Array>();
+  private state = new Map<number, Bytes>();
   async savePreKey(
     id: number,
     record: SignalClient.PreKeyRecord
@@ -118,7 +120,7 @@ export class InMemoryPreKeyStore extends SignalClient.PreKeyStore {
 }
 
 export class InMemorySignedPreKeyStore extends SignalClient.SignedPreKeyStore {
-  private state = new Map<number, Uint8Array>();
+  private state = new Map<number, Bytes>();
   async saveSignedPreKey(
     id: number,
     record: SignalClient.SignedPreKeyRecord
@@ -135,8 +137,9 @@ export class InMemorySignedPreKeyStore extends SignalClient.SignedPreKeyStore {
 }
 
 export class InMemoryKyberPreKeyStore extends SignalClient.KyberPreKeyStore {
-  private state = new Map<number, Uint8Array>();
+  private state = new Map<number, Bytes>();
   private used = new Set<number>();
+  private baseKeysSeen = new Map<bigint, SignalClient.PublicKey[]>();
   async saveKyberPreKey(
     id: number,
     record: SignalClient.KyberPreKeyRecord
@@ -150,8 +153,21 @@ export class InMemoryKyberPreKeyStore extends SignalClient.KyberPreKeyStore {
     }
     return SignalClient.KyberPreKeyRecord.deserialize(record);
   }
-  async markKyberPreKeyUsed(id: number): Promise<void> {
+  async markKyberPreKeyUsed(
+    id: number,
+    signedPreKeyId: number,
+    baseKey: SignalClient.PublicKey
+  ): Promise<void> {
     this.used.add(id);
+    const bothKeyIds = (BigInt(id) << 32n) | BigInt(signedPreKeyId);
+    const baseKeysSeen = this.baseKeysSeen.get(bothKeyIds);
+    if (!baseKeysSeen) {
+      this.baseKeysSeen.set(bothKeyIds, [baseKey]);
+    } else if (baseKeysSeen.every((key) => !key.equals(baseKey))) {
+      baseKeysSeen.push(baseKey);
+    } else {
+      throw new Error('reused base key');
+    }
   }
   async hasKyberPreKeyBeenUsed(id: number): Promise<boolean> {
     return this.used.has(id);

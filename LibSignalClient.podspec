@@ -5,7 +5,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'LibSignalClient'
-  s.version          = '0.78.0'
+  s.version          = '0.105.2'
   s.summary          = 'A Swift wrapper library for communicating with the Signal messaging service.'
 
   s.homepage         = 'https://github.com/signalapp/libsignal'
@@ -23,10 +23,13 @@ Pod::Spec.new do |s|
     'acknowledgments/acknowledgments-ios.plist',
   ]
 
-  s.pod_target_xcconfig = {
+  pod_target_xcconfig = {
       'HEADER_SEARCH_PATHS' => '$(PODS_TARGET_SRCROOT)/swift/Sources/SignalFfi',
       # Duplicate this here to make sure the search path is passed on to Swift dependencies.
       'SWIFT_INCLUDE_PATHS' => '$(HEADER_SEARCH_PATHS)',
+
+      # Setting this allows the tests to be considered part of the same package.
+      'SWIFT_PACKAGE_NAME' => 'LibSignalClient',
 
       'LIBSIGNAL_FFI_BUILD_PATH' => 'target/$(CARGO_BUILD_TARGET)/release',
       # Store libsignal_ffi.a builds in a project-wide directory
@@ -42,6 +45,7 @@ Pod::Spec.new do |s|
 
       'CARGO_BUILD_TARGET[sdk=iphonesimulator*][arch=arm64]' => 'aarch64-apple-ios-sim',
       'CARGO_BUILD_TARGET[sdk=iphonesimulator*][arch=*]' => 'x86_64-apple-ios',
+      'CARGO_BUILD_TARGET[sdk=iphoneos*][arch=arm64e]' => 'arm64e-apple-ios',
       'CARGO_BUILD_TARGET[sdk=iphoneos*]' => 'aarch64-apple-ios',
       # Presently, there's no special SDK or arch for maccatalyst,
       # so we need to hackily use the "IS_MACCATALYST" build flag
@@ -56,6 +60,20 @@ Pod::Spec.new do |s|
       'ARCHS[sdk=iphonesimulator*]' => 'x86_64 arm64',
       'ARCHS[sdk=iphoneos*]' => 'arm64',
   }
+  user_target_xcconfig = {}
+
+  if ENV['LIBSIGNAL_TESTING_ONLY_ACTIVE_ARCH']
+    pod_target_xcconfig['ONLY_ACTIVE_ARCH'] = 'YES'
+    user_target_xcconfig['ONLY_ACTIVE_ARCH'] = 'YES'
+  end
+  # This pod does not currently support explicit modules, but clients should specify that explicitly.
+  # `pod lib lint` doesn't provide that opportunity though.
+  if ENV['LIBSIGNAL_TESTING_DISABLE_EXPLICIT_MODULES']
+    user_target_xcconfig['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'
+  end
+
+  s.pod_target_xcconfig = pod_target_xcconfig
+  s.user_target_xcconfig = user_target_xcconfig
 
   s.script_phases = [
     { name: 'Download libsignal-ffi if not in cache',
@@ -97,14 +115,15 @@ Pod::Spec.new do |s|
   ]
 
   s.test_spec 'Tests' do |test_spec|
-    test_spec.source_files = 'swift/Tests/*/*.swift'
+    test_spec.source_files = 'swift/Tests/**/*.swift'
     test_spec.preserve_paths = [
       'swift/Tests/*/Resources',
     ]
-    test_spec.pod_target_xcconfig = {
+    test_pod_target_xcconfig = {
       # Don't also link into the test target.
       'LIBSIGNAL_FFI_LIB_TO_LINK' => '',
     }
+    test_spec.pod_target_xcconfig = test_pod_target_xcconfig
 
     # Ideally we'd do this at run time, not configuration time, but CocoaPods doesn't make that easy.
     # This is good enough.

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::panic::{RefUnwindSafe, UnwindSafe};
@@ -11,11 +12,16 @@ use std::time::Duration;
 
 use atomic_take::AtomicTake;
 use bytes::Bytes;
-use futures_util::FutureExt as _;
+use futures_util::future::BoxFuture;
+use futures_util::stream::BoxStream;
+use futures_util::{FutureExt as _, Stream, StreamExt as _};
 use http::status::InvalidStatusCode;
 use http::uri::{InvalidUri, PathAndQuery};
 use http::{HeaderMap, HeaderName, HeaderValue};
-use libsignal_net::auth::Auth;
+use libsignal_account_keys::{
+    InvalidMfaMetadata, MEDIA_ENCRYPTION_KEY_LEN, MEDIA_ID_LEN, MfaMetadata,
+};
+use libsignal_bridge_macros::{BridgedAsValue, StructuralFrom, bridge_callbacks};
 use libsignal_net::chat::fake::FakeChatRemote;
 use libsignal_net::chat::server_requests::DisconnectCause;
 use libsignal_net::chat::ws::ListenerEvent;
@@ -24,17 +30,32 @@ use libsignal_net::chat::{
     LanguageList, Request, Response as ChatResponse, SendError, UnauthenticatedChatHeaders,
 };
 use libsignal_net::connect_state::ConnectionResources;
+use libsignal_net::env::constants::{CHAT_PROVISIONING_PATH, CHAT_WEBSOCKET_PATH};
 use libsignal_net::infra::route::{
-    ConnectionProxyConfig, DirectOrProxyProvider, RouteProvider, RouteProviderExt,
-    UnresolvedHttpsServiceRoute,
+    DirectOrProxyMode, DirectOrProxyModeDiscriminants, DirectOrProxyProvider, RouteProvider,
+    RouteProviderExt, TcpRoute, TlsRoute, UnresolvedHttpsServiceRoute,
 };
 use libsignal_net::infra::tcp_ssl::InvalidProxyConfig;
-use libsignal_net::infra::{EnableDomainFronting, EnforceMinimumTls};
-use libsignal_net_chat::api::Unauth;
-use libsignal_protocol::Timestamp;
+use libsignal_net::infra::{EnableDomainFronting, EnforceMinimumTls, OverrideNagleAlgorithm};
+use libsignal_net_chat::api::backups::BackupAuthCredentialRejected;
+use libsignal_net_chat::api::{Auth as AuthConn, RequestError, Unauth};
+use libsignal_net_chat::grpc::accounts::{
+    ConfirmedMfaKey, MfaKeyKind, PendingTotpKey, TotpParameters, WebAuthnCreateParameters,
+};
+use libsignal_net_chat::grpc::backups::{
+    CopyBackupMediaFailure, CopyBackupMediaItem, CopyBackupMediaOutcome, DeleteBackupMediaItem,
+    MediaBackupInfo, MessageBackupInfo,
+};
+use libsignal_net_chat::grpc::keys::PreKeyCounts;
+use libsignal_net_chat::stream_util::{
+    BulkPolledStream, BulkPolledStreamChunk, BulkPolledStreamTerminationReason,
+};
+use libsignal_protocol::{IdentityKey, PreKeyBundle, Timestamp};
 use static_assertions::assert_impl_all;
 
 use crate::net::ConnectionManager;
+use crate::net::remote_config::RemoteConfigKey;
+use crate::support::{AsType, AsyncMutex, BridgeVec, BridgedError, LimitedLifetimeRef, str_as_int};
 use crate::*;
 
 pub type ChatConnectionInfo = ConnectionInfo;
@@ -48,7 +69,11 @@ pub struct UnauthenticatedChatConnection {
     /// reader/writer contention.
     inner: tokio::sync::RwLock<MaybeChatConnection>,
 }
-bridge_as_handle!(UnauthenticatedChatConnection);
+bridge_as_handle!(
+    UnauthenticatedChatConnection,
+    swift_type = "UnauthenticatedChatConnection",
+    jni_class = "org.signal.libsignal.net.UnauthenticatedChatConnection",
+);
 impl UnwindSafe for UnauthenticatedChatConnection {}
 impl RefUnwindSafe for UnauthenticatedChatConnection {}
 
@@ -62,16 +87,35 @@ pub struct AuthenticatedChatConnection {
     /// there won't be any contention.
     inner: tokio::sync::RwLock<MaybeChatConnection>,
 }
-bridge_as_handle!(AuthenticatedChatConnection);
+bridge_as_handle!(
+    AuthenticatedChatConnection,
+    swift_type = "AuthenticatedChatConnection",
+    jni_class = "org.signal.libsignal.net.AuthenticatedChatConnection",
+);
 impl UnwindSafe for AuthenticatedChatConnection {}
 impl RefUnwindSafe for AuthenticatedChatConnection {}
 
+pub struct ProvisioningChatConnection {
+    /// The possibly-still-being-constructed [`ChatConnection`].
+    ///
+    /// See [`AuthenticatedChatConnection::inner`] for rationale around lack of
+    /// reader/writer contention.
+    inner: tokio::sync::RwLock<MaybeChatConnection>,
+}
+bridge_as_handle!(ProvisioningChatConnection);
+impl UnwindSafe for ProvisioningChatConnection {}
+impl RefUnwindSafe for ProvisioningChatConnection {}
+
+// We could Box the PendingChatConnection, but in practice this type will be on the heap anyway, and
+// there won't be a ton of them allocated.
+#[expect(clippy::large_enum_variant)]
 enum MaybeChatConnection {
     Running(ChatConnection),
-    WaitingForListener(
-        tokio::runtime::Handle,
-        tokio::sync::Mutex<chat::PendingChatConnection>,
-    ),
+    WaitingForListener {
+        runtime: tokio::runtime::Handle,
+        pending: AsyncMutex<chat::PendingChatConnection>,
+        grpc_overrides: HashMap<&'static str, chat::GrpcOverride>,
+    },
     TemporarilyEvicted,
 }
 
@@ -82,35 +126,113 @@ impl UnauthenticatedChatConnection {
         connection_manager: &ConnectionManager,
         languages: LanguageList,
     ) -> Result<Self, ConnectError> {
-        let inner = establish_chat_connection(
+        let pending = establish_chat_connection(
             "unauthenticated",
             connection_manager,
+            CHAT_WEBSOCKET_PATH,
             Some(UnauthenticatedChatHeaders { languages }.into()),
         )
         .await?;
+        let grpc_overrides = connection_manager.chat_grpc_overrides();
         Ok(Self {
-            inner: MaybeChatConnection::WaitingForListener(
-                tokio::runtime::Handle::current(),
-                inner.into(),
-            )
+            inner: MaybeChatConnection::WaitingForListener {
+                runtime: tokio::runtime::Handle::current(),
+                pending: pending.into(),
+                grpc_overrides,
+            }
             .into(),
         })
+    }
+
+    /// Provides access to the inner ChatConnection using the [`Unauth`] wrapper of
+    /// libsignal-net-chat.
+    ///
+    /// This callback signature unfortunately requires boxing; there is not yet Rust syntax to say
+    /// "I return an unknown Future that might capture from its arguments" in closure position
+    /// specifically. It's also extra complicated to promise that the result doesn't have to outlive
+    /// &self; unfortunately there doesn't seem to be a simpler way to express this at this time!
+    /// (e.g. `for<'inner where 'outer: 'inner>`)
+    pub async fn as_typed<'outer, F, R>(&'outer self, callback: F) -> R
+    where
+        F: for<'inner> FnOnce(
+            LimitedLifetimeRef<'outer, 'inner, Unauth<ChatConnection>>,
+        ) -> BoxFuture<'inner, R>,
+    {
+        let guard = self.as_ref().read().await;
+        let MaybeChatConnection::Running(inner) = &*guard else {
+            panic!("listener was not set")
+        };
+        callback(LimitedLifetimeRef::from(<&Unauth<_>>::from(inner))).await
+    }
+
+    pub async fn require_grpc(&self) -> Unauth<impl libsignal_net_chat::grpc::GrpcServiceProvider> {
+        let guard = self.as_ref().read().await;
+        let MaybeChatConnection::Running(inner) = &*guard else {
+            panic!("listener was not set")
+        };
+        Unauth(
+            inner
+                .shared_h2_connection()
+                .expect("requires an H2 connection"),
+        )
+    }
+
+    pub fn blocking_require_grpc(
+        &self,
+    ) -> Unauth<impl libsignal_net_chat::grpc::GrpcServiceProvider + Clone + 'static> {
+        let guard = self.as_ref().blocking_read();
+        let MaybeChatConnection::Running(inner) = &*guard else {
+            panic!("listener was not set")
+        };
+        Unauth(
+            inner
+                .shared_h2_connection()
+                .expect("requires an H2 connection"),
+        )
     }
 }
 
 impl AuthenticatedChatConnection {
+    /// Given an HTTP Auth username of the form "{aci}" or "{aci}.{device_id}", parses and returns
+    /// it.
+    ///
+    /// An absent device ID will be treated as device ID "1", consistent with the server's
+    /// historical treatment of such usernames.
+    ///
+    /// Produces `None` on any other input (this is not a case where we need to know precisely what
+    /// went wrong).
+    pub fn parse_username(
+        username: &str,
+    ) -> Option<(libsignal_core::Aci, libsignal_core::DeviceId)> {
+        const IMPLICIT_PRIMARY_DEVICE_ID_STR: &str = "1";
+        let (aci_part, device_id_part) = username
+            .rsplit_once('.')
+            .unwrap_or((username, IMPLICIT_PRIMARY_DEVICE_ID_STR));
+        let aci = libsignal_core::Aci::parse_from_service_id_string(aci_part)?;
+        let device_id = libsignal_core::DeviceId::new_nonzero(
+            std::num::NonZero::from_str(device_id_part).ok()?,
+        )
+        .ok()?;
+        Some((aci, device_id))
+    }
+
     pub async fn connect(
         connection_manager: &ConnectionManager,
-        auth: Auth,
+        aci: libsignal_core::Aci,
+        device_id: libsignal_core::DeviceId,
+        password: String,
         receive_stories: bool,
         languages: LanguageList,
     ) -> Result<Self, ConnectError> {
-        let inner = establish_chat_connection(
+        let pending = establish_chat_connection(
             "authenticated",
             connection_manager,
+            CHAT_WEBSOCKET_PATH,
             Some(
                 chat::AuthenticatedChatHeaders {
-                    auth,
+                    aci,
+                    device_id,
+                    password,
                     receive_stories: receive_stories.into(),
                     languages,
                 }
@@ -118,11 +240,13 @@ impl AuthenticatedChatConnection {
             ),
         )
         .await?;
+        let grpc_overrides = connection_manager.chat_grpc_overrides();
         Ok(Self {
-            inner: MaybeChatConnection::WaitingForListener(
-                tokio::runtime::Handle::current(),
-                inner.into(),
-            )
+            inner: MaybeChatConnection::WaitingForListener {
+                runtime: tokio::runtime::Handle::current(),
+                pending: pending.into(),
+                grpc_overrides,
+            }
             .into(),
         })
     }
@@ -150,9 +274,78 @@ impl AuthenticatedChatConnection {
 
         log::info!("preconnecting chat");
         connection_resources
-            .preconnect_and_save(route_provider, "preconnect")
+            .preconnect_and_save(
+                connection_manager.env.chat_domain_config.connect.service,
+                route_provider,
+                "preconnect",
+            )
             .await?;
         Ok(())
+    }
+
+    /// Provides access to the inner ChatConnection using the [`Auth`](AuthConn) wrapper of
+    /// libsignal-net-chat.
+    ///
+    /// This callback signature unfortunately requires boxing; there is not yet Rust syntax to say
+    /// "I return an unknown Future that might capture from its arguments" in closure position
+    /// specifically. It's also extra complicated to promise that the result doesn't have to outlive
+    /// &self; unfortunately there doesn't seem to be a simpler way to express this at this time!
+    /// (e.g. `for<'inner where 'outer: 'inner>`)
+    pub async fn as_typed<'outer, F, R>(&'outer self, callback: F) -> R
+    where
+        F: for<'inner> FnOnce(
+            LimitedLifetimeRef<'outer, 'inner, AuthConn<ChatConnection>>,
+        ) -> BoxFuture<'inner, R>,
+    {
+        let guard = self.as_ref().read().await;
+        let MaybeChatConnection::Running(inner) = &*guard else {
+            panic!("listener was not set")
+        };
+        callback(LimitedLifetimeRef::from(<&AuthConn<_>>::from(inner))).await
+    }
+
+    pub async fn require_grpc(
+        &self,
+    ) -> AuthConn<impl libsignal_net_chat::grpc::GrpcServiceProvider> {
+        let guard = self.as_ref().read().await;
+        let MaybeChatConnection::Running(inner) = &*guard else {
+            panic!("listener was not set")
+        };
+        AuthConn(
+            inner
+                .shared_h2_connection()
+                .expect("requires an H2 connection"),
+        )
+    }
+}
+
+impl ProvisioningChatConnection {
+    pub async fn connect(connection_manager: &ConnectionManager) -> Result<Self, ConnectError> {
+        let pending = establish_chat_connection(
+            "provisioning",
+            connection_manager,
+            CHAT_PROVISIONING_PATH,
+            None,
+        )
+        .await?;
+        Ok(Self {
+            inner: MaybeChatConnection::WaitingForListener {
+                runtime: tokio::runtime::Handle::current(),
+                pending: pending.into(),
+                grpc_overrides: Default::default(),
+            }
+            .into(),
+        })
+    }
+
+    // Deliberately shadows the implementation on BridgeChatConnection, which takes the wrong kind
+    // of listener. Nothing *prevents* calling that on a ProvisioningChatConnection, but it won't be
+    // very useful, so don't do that.
+    pub fn init_listener(&self, listener: Box<dyn ProvisioningListener>) {
+        init_listener(
+            &mut self.as_ref().blocking_write(),
+            listener.into_event_listener(),
+        )
     }
 }
 
@@ -163,6 +356,12 @@ impl AsRef<tokio::sync::RwLock<MaybeChatConnection>> for AuthenticatedChatConnec
 }
 
 impl AsRef<tokio::sync::RwLock<MaybeChatConnection>> for UnauthenticatedChatConnection {
+    fn as_ref(&self) -> &tokio::sync::RwLock<MaybeChatConnection> {
+        &self.inner
+    }
+}
+
+impl AsRef<tokio::sync::RwLock<MaybeChatConnection>> for ProvisioningChatConnection {
     fn as_ref(&self) -> &tokio::sync::RwLock<MaybeChatConnection> {
         &self.inner
     }
@@ -184,7 +383,10 @@ pub trait BridgeChatConnection {
 
 impl<C: AsRef<tokio::sync::RwLock<MaybeChatConnection>> + Sync> BridgeChatConnection for C {
     fn init_listener(&self, listener: Box<dyn ChatListener>) {
-        init_listener(&mut self.as_ref().blocking_write(), listener)
+        init_listener(
+            &mut self.as_ref().blocking_write(),
+            listener.into_event_listener(),
+        )
     }
 
     async fn send(&self, message: Request, timeout: Duration) -> Result<ChatResponse, SendError> {
@@ -199,9 +401,11 @@ impl<C: AsRef<tokio::sync::RwLock<MaybeChatConnection>> + Sync> BridgeChatConnec
         let guard = self.as_ref().read().await;
         match &*guard {
             MaybeChatConnection::Running(chat_connection) => chat_connection.disconnect().await,
-            MaybeChatConnection::WaitingForListener(_handle, pending_chat_mutex) => {
-                pending_chat_mutex.lock().await.disconnect().await
-            }
+            MaybeChatConnection::WaitingForListener {
+                runtime: _,
+                pending,
+                grpc_overrides: _,
+            } => pending.lock().await.disconnect().await,
             MaybeChatConnection::TemporarilyEvicted => {
                 unreachable!("unobservable state");
             }
@@ -210,17 +414,17 @@ impl<C: AsRef<tokio::sync::RwLock<MaybeChatConnection>> + Sync> BridgeChatConnec
 
     fn info(&self) -> ConnectionInfo {
         let guard = self.as_ref().blocking_read();
-        let connection_info = match &*guard {
+        match &*guard {
             MaybeChatConnection::Running(chat_connection) => {
                 chat_connection.connection_info().clone()
             }
-            MaybeChatConnection::WaitingForListener(_, pending_chat_connection) => {
-                pending_chat_connection.blocking_lock().connection_info()
-            }
+            MaybeChatConnection::WaitingForListener {
+                runtime: _,
+                pending,
+                grpc_overrides: _,
+            } => pending.blocking_lock().connection_info(),
             MaybeChatConnection::TemporarilyEvicted => unreachable!("unobservable state"),
-        };
-
-        connection_info.clone()
+        }
     }
 }
 
@@ -229,38 +433,50 @@ pub(crate) async fn connect_registration_chat(
     connection_manager: &ConnectionManager,
     drop_on_disconnect: tokio::sync::oneshot::Sender<Infallible>,
 ) -> Result<Unauth<ChatConnection>, ConnectError> {
-    let pending = establish_chat_connection("registration", connection_manager, None).await?;
+    let pending = establish_chat_connection(
+        "registration",
+        connection_manager,
+        CHAT_WEBSOCKET_PATH,
+        None,
+    )
+    .await?;
 
     let mut on_disconnect = Some(drop_on_disconnect);
     let listener = move |event| match event {
         ListenerEvent::Finished(_) => drop(on_disconnect.take()),
-        ListenerEvent::ReceivedAlerts(_) | ListenerEvent::ReceivedMessage(_, _) => (),
+        ListenerEvent::ServerTimestamp(_)
+        | ListenerEvent::ReceivedAlerts(_)
+        | ListenerEvent::ReceivedMessage(_, _) => (),
     };
 
     Ok(Unauth(ChatConnection::finish_connect(
         tokio_runtime.clone(),
         pending,
+        Default::default(),
         Box::new(listener),
     )))
 }
 
-fn init_listener(connection: &mut MaybeChatConnection, listener: Box<dyn ChatListener>) {
-    let (tokio_runtime, pending) =
+fn init_listener(connection: &mut MaybeChatConnection, listener: chat::ws::EventListener) {
+    let (tokio_runtime, pending, grpc_overrides) =
         match std::mem::replace(connection, MaybeChatConnection::TemporarilyEvicted) {
             MaybeChatConnection::Running(chat_connection) => {
                 *connection = MaybeChatConnection::Running(chat_connection);
                 panic!("listener already set")
             }
-            MaybeChatConnection::WaitingForListener(tokio_runtime, pending_chat_connection) => {
-                (tokio_runtime, pending_chat_connection)
-            }
+            MaybeChatConnection::WaitingForListener {
+                runtime,
+                pending,
+                grpc_overrides,
+            } => (runtime, pending, grpc_overrides),
             MaybeChatConnection::TemporarilyEvicted => panic!("should be a temporary state"),
         };
 
     *connection = MaybeChatConnection::Running(ChatConnection::finish_connect(
         tokio_runtime,
         pending.into_inner(),
-        listener.into_event_listener(),
+        grpc_overrides,
+        listener,
     ))
 }
 
@@ -269,11 +485,12 @@ pub struct FakeChatConnection(ChatConnection);
 impl FakeChatConnection {
     pub fn new<'a>(
         tokio_runtime: tokio::runtime::Handle,
-        listener: Box<dyn ChatListener>,
+        listener: chat::ws::EventListener,
+        grpc_overrides: impl IntoIterator<Item = &'static str>,
         alerts: impl IntoIterator<Item = &'a str>,
     ) -> (Self, FakeChatRemote) {
         let (inner, remote) =
-            ChatConnection::new_fake(tokio_runtime, listener.into_event_listener(), alerts);
+            ChatConnection::new_fake(tokio_runtime, listener, grpc_overrides, alerts);
         (Self(inner), remote)
     }
 
@@ -290,11 +507,19 @@ impl FakeChatConnection {
             inner: MaybeChatConnection::Running(inner).into(),
         }
     }
+
+    pub fn into_provisioning(self) -> ProvisioningChatConnection {
+        let Self(inner) = self;
+        ProvisioningChatConnection {
+            inner: MaybeChatConnection::Running(inner).into(),
+        }
+    }
 }
 
 async fn establish_chat_connection(
-    auth_type: &'static str,
+    kind: &'static str,
     connection_manager: &ConnectionManager,
+    endpoint_path: &'static str,
     headers: Option<chat::ChatHeaders>,
 ) -> Result<chat::PendingChatConnection, ConnectError> {
     let ConnectionManager {
@@ -304,6 +529,7 @@ async fn establish_chat_connection(
         user_agent,
         endpoints,
         network_change_event_tx,
+        remote_config,
         ..
     } = connection_manager;
 
@@ -314,12 +540,6 @@ async fn establish_chat_connection(
             endpoints_guard.enforce_minimum_tls,
         )
     };
-
-    let libsignal_net::infra::ws2::Config {
-        local_idle_timeout,
-        remote_idle_disconnect_timeout,
-        ..
-    } = env.chat_ws_config;
 
     let chat_connect = &env.chat_domain_config.connect;
     let connection_resources = ConnectionResources {
@@ -335,24 +555,66 @@ async fn establish_chat_connection(
         enable_domain_fronting,
         enforce_minimum_tls,
     )?;
+    let proxy_mode = DirectOrProxyModeDiscriminants::from(&route_provider.mode);
 
-    log::info!("connecting {auth_type} chat");
+    log::info!("connecting {kind} chat");
+
+    let mut chat_ws_config = env.chat_ws_config;
+    let timeout_millis = {
+        let guard = remote_config.lock().expect("unpoisoned");
+        guard.get(RemoteConfigKey::ChatRequestConnectionCheckTimeoutMilliseconds)
+    };
+    if let Some(timeout_millis) = timeout_millis
+        .as_option()
+        .and_then(|v| match u64::from_str(v) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                log::error!(
+                    "bad {}: {v:?} ({e})",
+                    RemoteConfigKey::ChatRequestConnectionCheckTimeoutMilliseconds
+                );
+                None
+            }
+        })
+    {
+        chat_ws_config.post_request_interface_check_timeout = Duration::from_millis(timeout_millis);
+    }
 
     ChatConnection::start_connect_with(
         connection_resources,
+        env.chat_domain_config.connect.service,
         route_provider,
+        endpoint_path,
         user_agent,
-        libsignal_net::chat::ws::Config {
-            local_idle_timeout,
-            remote_idle_timeout: remote_idle_disconnect_timeout,
-            initial_request_id: 0,
-        },
+        chat_ws_config,
         headers,
-        auth_type,
+        kind,
     )
     .inspect(|r| match r {
-        Ok(_) => log::info!("successfully connected {auth_type} chat"),
-        Err(e) => log::warn!("failed to connect {auth_type} chat: {e}"),
+        Ok(connection) => {
+            match (
+                connection.connection_info().route_info.unresolved.proxy,
+                proxy_mode,
+            ) {
+                (None, DirectOrProxyModeDiscriminants::DirectOnly)
+                | (None, DirectOrProxyModeDiscriminants::DirectThenProxy)
+                | (Some(_), DirectOrProxyModeDiscriminants::ProxyOnly)
+                | (Some(_), DirectOrProxyModeDiscriminants::ProxyThenDirect)
+                | (Some(_), DirectOrProxyModeDiscriminants::DirectThenProxy) => {
+                    log::info!("successfully connected {kind} chat")
+                }
+                (None, DirectOrProxyModeDiscriminants::ProxyThenDirect) => log::warn!(
+                    "connected {kind} chat using a direct connection rather than the specified proxy"
+                ),
+                (None, DirectOrProxyModeDiscriminants::ProxyOnly) => unreachable!(
+                    "made a direct connection despite using only proxy routes; this is a bug in libsignal"
+                ),
+                (Some(_), DirectOrProxyModeDiscriminants::DirectOnly) => unreachable!(
+                    "made a proxy connection despite not having proxy config; this is a bug in libsignal"
+                ),
+            }
+        }
+        Err(e) => log::warn!("failed to connect {kind} chat: {e}"),
     })
     .await
 }
@@ -361,24 +623,37 @@ fn make_route_provider(
     connection_manager: &ConnectionManager,
     enable_domain_fronting: EnableDomainFronting,
     enforce_minimum_tls: EnforceMinimumTls,
-) -> Result<impl RouteProvider<Route = UnresolvedHttpsServiceRoute>, ConnectError> {
+) -> Result<
+    DirectOrProxyProvider<
+        impl RouteProvider<
+            Route = UnresolvedHttpsServiceRoute<
+                TlsRoute<TcpRoute<libsignal_net::infra::route::UnresolvedHost>>,
+            >,
+        > + use<>,
+    >,
+    ConnectError,
+> {
     let ConnectionManager {
         env,
         transport_connector,
         ..
     } = connection_manager;
 
-    let proxy_config: Option<ConnectionProxyConfig> =
-        (&*transport_connector.lock().expect("not poisoned"))
-            .try_into()
-            .map_err(|InvalidProxyConfig| ConnectError::InvalidConnectionConfiguration)?;
+    let proxy_mode: DirectOrProxyMode = (&*transport_connector.lock().expect("not poisoned"))
+        .try_into()
+        .map_err(|InvalidProxyConfig| ConnectError::InvalidConnectionConfiguration)?;
 
     let chat_connect = &env.chat_domain_config.connect;
 
-    Ok(DirectOrProxyProvider::maybe_proxied(
-        chat_connect.route_provider_with_options(enable_domain_fronting, enforce_minimum_tls),
-        proxy_config,
-    ))
+    let inner = chat_connect.route_provider_with_options(
+        enable_domain_fronting,
+        enforce_minimum_tls,
+        OverrideNagleAlgorithm::OverrideToOff,
+    );
+    Ok(DirectOrProxyProvider {
+        inner,
+        mode: proxy_mode,
+    })
 }
 
 pub struct HttpRequest {
@@ -441,16 +716,18 @@ impl HttpRequest {
 /// A trait of callbacks for different kinds of [`chat::server_requests::ServerEvent`].
 ///
 /// Done as multiple functions so we can adjust the types to be more suitable for bridging.
+#[bridge_callbacks(jni = "org.signal.libsignal.net.internal.BridgeChatListener")]
 pub trait ChatListener: Send {
     fn received_incoming_message(
         &mut self,
-        envelope: Bytes,
+        envelope: bytes::Bytes,
         timestamp: Timestamp,
         ack: ServerMessageAck,
     );
     fn received_queue_empty(&mut self);
-    fn received_alerts(&mut self, alerts: Vec<String>);
-    fn connection_interrupted(&mut self, disconnect_cause: DisconnectCause);
+    fn received_alerts(&mut self, alerts: Box<[String]>);
+    fn received_server_timestamp(&mut self, timestamp: Timestamp);
+    fn connection_interrupted(&mut self, disconnect_cause: Option<BridgedError<SendError>>);
 }
 
 impl dyn ChatListener {
@@ -469,14 +746,22 @@ impl dyn ChatListener {
                 ServerMessageAck::new(send_ack),
             ),
             chat::server_requests::ServerEvent::QueueEmpty => self.received_queue_empty(),
-            chat::server_requests::ServerEvent::Alerts(alerts) => self.received_alerts(alerts),
+            chat::server_requests::ServerEvent::Alerts(alerts) => {
+                self.received_alerts(alerts.into_boxed_slice())
+            }
+            chat::server_requests::ServerEvent::ServerTimestamp(timestamp) => {
+                self.received_server_timestamp(timestamp)
+            }
             chat::server_requests::ServerEvent::Stopped(error) => {
-                self.connection_interrupted(error)
+                self.connection_interrupted(match error {
+                    DisconnectCause::LocalDisconnect => None,
+                    DisconnectCause::Error(send_error) => Some(send_error.into()),
+                })
             }
         }
     }
 
-    fn into_event_listener(mut self: Box<Self>) -> Box<dyn FnMut(chat::ws::ListenerEvent) + Send> {
+    pub fn into_event_listener(mut self: Box<Self>) -> chat::ws::EventListener {
         Box::new(move |event| {
             let event: chat::server_requests::ServerEvent = match event.try_into() {
                 Ok(event) => event,
@@ -513,3 +798,993 @@ bridge_as_handle!(ServerMessageAck);
 // makes it `!RefUnwindSafe`. We're putting that back; because we only manipulate the `AtomicTake`
 // using its atomic operations, it can never be in an invalid state.
 impl std::panic::RefUnwindSafe for ServerMessageAck {}
+
+/// A trait of callbacks for different kinds of [`chat::server_requests::ProvisioningEvent`].
+///
+/// Done as multiple functions so we can adjust the types to be more suitable for bridging.
+#[bridge_callbacks(jni = "org.signal.libsignal.net.internal.BridgeProvisioningListener")]
+pub trait ProvisioningListener: Send {
+    fn received_address(&mut self, address: String, send_ack: ServerMessageAck);
+    fn received_envelope(&mut self, envelope: bytes::Bytes, send_ack: ServerMessageAck);
+    fn connection_interrupted(&mut self, disconnect_cause: Option<BridgedError<SendError>>);
+}
+
+impl dyn ProvisioningListener {
+    /// A helper to translate from the libsignal-net enum to the separate callback methods in this
+    /// trait.
+    fn received_server_request(&mut self, request: chat::server_requests::ProvisioningEvent) {
+        match request {
+            chat::server_requests::ProvisioningEvent::ServerTimestamp(_) => {
+                // For now, we don't expose this to the apps.
+            }
+            chat::server_requests::ProvisioningEvent::ReceivedAddress { address, send_ack } => {
+                self.received_address(address, ServerMessageAck::new(send_ack))
+            }
+            chat::server_requests::ProvisioningEvent::ReceivedEnvelope { envelope, send_ack } => {
+                self.received_envelope(envelope, ServerMessageAck::new(send_ack))
+            }
+            chat::server_requests::ProvisioningEvent::Stopped(error) => self
+                .connection_interrupted(match error {
+                    DisconnectCause::LocalDisconnect => None,
+                    DisconnectCause::Error(send_error) => Some(send_error.into()),
+                }),
+        }
+    }
+
+    pub fn into_event_listener(mut self: Box<Self>) -> chat::ws::EventListener {
+        Box::new(move |event| {
+            if let ListenerEvent::ReceivedAlerts(alerts) = &event {
+                if !alerts.is_empty() {
+                    log::warn!(
+                        "unexpected alerts on provisioning connection: {}",
+                        alerts.join(",")
+                    );
+                }
+                return;
+            }
+            let event: chat::server_requests::ProvisioningEvent = match event.try_into() {
+                Ok(event) => event,
+                Err(err) => {
+                    log::error!("{err}");
+                    return;
+                }
+            };
+            self.received_server_request(event);
+        })
+    }
+}
+
+pub struct PreKeysResponse {
+    pub identity_key: IdentityKey,
+    pub pre_key_bundles: Vec<PreKeyBundle>,
+}
+
+// Must be kept in sync with the app languages.
+#[repr(u8)]
+#[derive(derive_more::TryFrom)]
+#[try_from(repr)]
+pub enum UserBasedSendAuthorizationKind {
+    Story,
+    AccessKey,
+    Group,
+    UnrestrictedUnauthenticatedAccess,
+}
+
+#[derive(BridgedAsValue)]
+#[bridge(jni_nice_type = "org.signal.libsignal.net.CopyBackupMediaItem")]
+pub struct BridgeCopyBackupMediaItem {
+    pub source_attachment_cdn: i32,
+    pub source_key: String,
+    pub object_length: i64,
+    pub media_id: [u8; MEDIA_ID_LEN],
+    pub encryption_key: [u8; MEDIA_ENCRYPTION_KEY_LEN],
+}
+
+// TODO: This can go away when we implement u32 and u64 Nice bridging to Kotlin.
+#[derive(BridgedAsValue, StructuralFrom)]
+#[structural_from(MessageBackupInfo)]
+#[bridge(
+    arg = false,
+    jni_nice_type = "org.signal.libsignal.net.MessageBackupInfo"
+)]
+pub struct BridgeMessageBackupInfo {
+    pub backup_dir: String,
+    pub cdn: AsType<u32, i32, { str_as_int("cdn") }>,
+    pub backup_name: String,
+}
+
+#[derive(BridgedAsValue, StructuralFrom)]
+#[structural_from(MediaBackupInfo)]
+#[bridge(
+    arg = false,
+    jni_nice_type = "org.signal.libsignal.net.MediaBackupInfo"
+)]
+pub struct BridgeMediaBackupInfo {
+    pub backup_dir: String,
+    pub media_dir: String,
+    pub used_space: AsType<u64, i64, { str_as_int("usedSpace") }>,
+}
+
+// TODO: When u32 Nice bridging to Kotlin is implemented, this becomes a remote derive on
+// libsignal_net_chat::grpc::keys::PreKeyCounts (and gets renamed PreKeyCountsInternal to match),
+// dropping this `StructuralFrom` impl.
+#[derive(BridgedAsValue, StructuralFrom)]
+#[structural_from(PreKeyCounts)]
+#[bridge(arg = false, jni_nice_type = "org.signal.libsignal.net.PreKeyCounts")]
+pub struct BridgePreKeyCounts {
+    pub aci_ec_pre_key_count: AsType<u32, i32, { str_as_int("AciEcPreKeyCnt") }>,
+    pub aci_kem_pre_key_count: AsType<u32, i32, { str_as_int("AciKemPreKeyCnt") }>,
+    pub pni_ec_pre_key_count: AsType<u32, i32, { str_as_int("PniEcPreKeyCnt") }>,
+    pub pni_kem_pre_key_count: AsType<u32, i32, { str_as_int("PniKemPreKeyCnt") }>,
+}
+
+// TODO: More i32/u32 cheating.
+#[derive(BridgedAsValue, StructuralFrom)]
+#[structural_from(TotpParameters)]
+#[bridge(arg = false)]
+pub struct BridgeTotpParameters {
+    pub algorithm: String,
+    pub password_length: AsType<u32, i32, { str_as_int("passwordLength") }>,
+    pub time_step_seconds: AsType<u32, i32, { str_as_int("timeStepSeconds") }>,
+}
+
+#[derive(BridgedAsValue, StructuralFrom)]
+#[structural_from(PendingTotpKey)]
+#[bridge(arg = false)]
+pub struct BridgePendingTotpKey {
+    pub key: Vec<u8>,
+    pub parameters: BridgeTotpParameters,
+}
+
+#[derive(BridgedAsValue)]
+#[bridge(arg = false)]
+pub struct BridgeMfaMetadata {
+    pub name: String,
+    pub created_at: Timestamp,
+}
+
+impl From<MfaMetadata> for BridgeMfaMetadata {
+    fn from(value: MfaMetadata) -> Self {
+        Self {
+            name: value.name().to_owned(),
+            created_at: value.created_at(),
+        }
+    }
+}
+
+/// The metadata attached to a confirmed MFA key, or a marker that it couldn't be read with the
+/// SVR key provided to the listing.
+#[derive(BridgedAsValue)]
+#[bridge(arg = false)]
+pub enum BridgeConfirmedMfaKeyMetadata {
+    Metadata(BridgeMfaMetadata),
+    Unreadable,
+}
+
+/// The kind of a confirmed MFA key.
+#[derive(BridgedAsValue, StructuralFrom, Clone, Copy, PartialEq, Eq, Debug)]
+#[structural_from(MfaKeyKind)]
+#[bridge(arg = false)]
+pub enum BridgeMfaKeyKind {
+    Totp,
+    WebAuthn,
+    Unknown,
+}
+
+#[derive(BridgedAsValue, StructuralFrom)]
+#[structural_from(WebAuthnCreateParameters)]
+#[bridge(arg = false)]
+pub struct BridgeWebAuthnCreateParameters {
+    pub user_handle: Vec<u8>,
+    // This will be bridged as List<Object> to Java, which is less efficient than it could be, but
+    // in practice, the list will contain only a handful of elements.
+    pub allowed_algorithms: BridgeVec<i32>,
+    pub exclude_credential_ids: BridgeVec<Vec<u8>>,
+}
+
+#[derive(BridgedAsValue)]
+#[bridge(arg = false)]
+pub struct BridgeConfirmedMfaKey {
+    pub id: i32,
+    pub metadata: BridgeConfirmedMfaKeyMetadata,
+    pub kind: BridgeMfaKeyKind,
+}
+
+impl From<ConfirmedMfaKey> for BridgeConfirmedMfaKey {
+    fn from(value: ConfirmedMfaKey) -> Self {
+        let ConfirmedMfaKey { id, metadata, kind } = value;
+        Self {
+            id: u32::from(id)
+                .try_into()
+                .expect("validated by libsignal-net-chat"),
+            metadata: match metadata {
+                Ok(metadata) => BridgeConfirmedMfaKeyMetadata::Metadata(metadata.into()),
+                Err(InvalidMfaMetadata) => BridgeConfirmedMfaKeyMetadata::Unreadable,
+            },
+            kind: kind.into(),
+        }
+    }
+}
+
+impl From<CopyBackupMediaItem> for BridgeCopyBackupMediaItem {
+    fn from(value: CopyBackupMediaItem) -> Self {
+        Self {
+            source_attachment_cdn: value
+                .source_attachment_cdn
+                .try_into()
+                .expect("CDN numbers are small"),
+            source_key: value.source_key,
+            object_length: value
+                .object_length
+                .try_into()
+                .expect("object lengths fit in i64"),
+            media_id: value.media_id,
+            encryption_key: value.encryption_key,
+        }
+    }
+}
+
+#[derive(BridgedAsValue)]
+pub struct BridgeCopyBackupMediaOutcome {
+    pub media_id: [u8; MEDIA_ID_LEN],
+    pub result: BridgeCopyBackupMediaResult,
+}
+
+impl From<CopyBackupMediaOutcome> for BridgeCopyBackupMediaOutcome {
+    fn from(value: CopyBackupMediaOutcome) -> Self {
+        Self {
+            media_id: value.media_id,
+            result: match value.cdn_or_failure {
+                Ok(cdn) => BridgeCopyBackupMediaResult::Success {
+                    cdn: cdn.try_into().expect("CDN numbers are small"),
+                },
+                Err(CopyBackupMediaFailure::OutOfSpace) => BridgeCopyBackupMediaResult::OutOfSpace,
+                Err(CopyBackupMediaFailure::SourceNotFound) => {
+                    BridgeCopyBackupMediaResult::SourceNotFound
+                }
+                Err(CopyBackupMediaFailure::WrongSourceLength) => {
+                    BridgeCopyBackupMediaResult::WrongSourceLength
+                }
+            },
+        }
+    }
+}
+
+#[derive(BridgedAsValue)]
+pub enum BridgeCopyBackupMediaResult {
+    Success { cdn: i32 },
+    SourceNotFound,
+    WrongSourceLength,
+    OutOfSpace,
+}
+
+#[derive(Debug)]
+pub struct StreamCancelled;
+
+pub struct BridgeBulkPolledStream<T, E> {
+    #[expect(clippy::type_complexity)]
+    state: AsyncMutex<Option<BulkPolledStream<BoxStream<'static, Result<T, E>>>>>,
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl<T, E> BridgeBulkPolledStream<T, E> {
+    /// Wraps `stream` for bulk-polling (and cancellation).
+    ///
+    /// The chunk size should be chosen based on the following criteria:
+    /// - How much does bridging cost, relative to consumer-side throughput? (lower limit)
+    /// - How much client memory will this allocate for a full chunk? (upper limit)
+    ///
+    /// It is not especially affected by
+    /// - High producer-side throughput (nearly any chunk size will induce backpressure)
+    /// - Low producer-side throughput (nearly any chunk size will not be reached anyway)
+    /// - Producer-side latency (the first element may be delayed but hopefully the rest will arrive
+    ///   soon after)
+    ///
+    /// The debounce time should be chosen based on the following criteria:
+    /// - How much does bridging cost, relative to consumer-side throughput? (lower limit)
+    /// - How long can the consumer tolerate a lack of updates, relative to producer-side
+    ///   throughput? (upper limit)
+    /// - How much *uneven* latency is there on the connection? (lower and upper limit)
+    ///
+    /// If you don't have any extra information, [`BULK_POLLED_STREAM_DEFAULT_CHUNK_SIZE`] and
+    /// [`BULK_POLLED_STREAM_DEFAULT_DEBOUNCE_TIME`] were chosen to be non-terrible values for an
+    /// average stream.
+    pub fn new(
+        stream: impl Stream<Item = Result<T, E>> + Send + 'static,
+        max_chunk_size: usize,
+        debounce_time: Duration,
+    ) -> Self {
+        Self {
+            state: AsyncMutex::from(Some(BulkPolledStream::new(
+                stream.boxed(),
+                max_chunk_size,
+                debounce_time,
+            ))),
+            cancelled: Default::default(),
+        }
+    }
+
+    pub async fn next_chunk(&self) -> Result<BulkPolledStreamChunk<T, E>, StreamCancelled> {
+        let mut cancelled = self.cancelled.subscribe();
+        let lock_and_poll_stream = async {
+            Ok(self
+                .state
+                .lock()
+                .await
+                .as_mut()
+                .ok_or(StreamCancelled)?
+                .next_chunk_unpin()
+                .await)
+        };
+
+        // The "biased" isn't necessary for correctness, but it's simpler to reason about.
+        tokio::select! { biased;
+            _ = cancelled.wait_for(|flag| *flag) => Err(StreamCancelled),
+            result = lock_and_poll_stream => result,
+        }
+    }
+
+    pub fn cancel(&self) {
+        // First signal any tasks to exit.
+        _ = self.cancelled.send_replace(true);
+        // Wait for exits, then destroy the state.
+        _ = self.state.blocking_lock().take();
+    }
+}
+
+/// A "reasonable" default value to use for bulk-polled streaming network APIs.
+///
+/// Chosen only for being neither too small (thus wasting time in the bridge layer processing many
+/// small chunks) nor too large (thus allocating a bunch of memory at once).
+pub const BULK_POLLED_STREAM_DEFAULT_CHUNK_SIZE: usize = 64;
+
+/// A "reasonable" default value to use for bulk-polled streaming network APIs.
+///
+/// Chosen only for being neither too short (thus wasting time in the bridge layer processing many
+/// small chunks) nor too long (thus delaying reporting progress in a user-visible way).
+pub const BULK_POLLED_STREAM_DEFAULT_DEBOUNCE_TIME: Duration = Duration::from_millis(100);
+
+#[derive(BridgedAsValue)]
+#[bridge(arg = false)]
+pub struct CopyBackupMediaNextChunk {
+    pub chunk: BridgeVec<BridgeCopyBackupMediaOutcome>,
+    pub termination:
+        Option<BulkPolledStreamTerminationReason<RequestError<BackupAuthCredentialRejected>>>,
+}
+
+#[derive(derive_more::From, derive_more::Deref)]
+pub struct CopyBackupMediaStream(
+    BridgeBulkPolledStream<CopyBackupMediaOutcome, RequestError<BackupAuthCredentialRejected>>,
+);
+
+bridge_as_handle!(
+    CopyBackupMediaStream,
+    swift_type = "CopyBackupMediaStream",
+    jni_class = "org.signal.libsignal.net.internal.CopyBackupMediaStream",
+);
+
+#[derive(BridgedAsValue)]
+#[bridge(jni_nice_type = "org.signal.libsignal.net.DeleteBackupMediaItem")]
+pub struct BridgeDeleteBackupMediaItem {
+    pub media_id: [u8; MEDIA_ID_LEN],
+    pub cdn: i32,
+}
+
+impl From<DeleteBackupMediaItem> for BridgeDeleteBackupMediaItem {
+    fn from(value: DeleteBackupMediaItem) -> Self {
+        Self {
+            media_id: value.media_id,
+            cdn: value.cdn.try_into().expect("CDN numbers are small"),
+        }
+    }
+}
+
+#[derive(BridgedAsValue)]
+#[bridge(arg = false)]
+pub struct DeleteBackupMediaNextChunk {
+    pub chunk: BridgeVec<BridgeDeleteBackupMediaItem>,
+    pub termination:
+        Option<BulkPolledStreamTerminationReason<RequestError<BackupAuthCredentialRejected>>>,
+}
+
+#[derive(derive_more::From, derive_more::Deref)]
+pub struct DeleteBackupMediaStream(
+    BridgeBulkPolledStream<BridgeDeleteBackupMediaItem, RequestError<BackupAuthCredentialRejected>>,
+);
+
+bridge_as_handle!(
+    DeleteBackupMediaStream,
+    swift_type = "DeleteBackupMediaStream",
+    jni_class = "org.signal.libsignal.net.internal.DeleteBackupMediaStream",
+);
+
+pub mod remote_derives {
+    use libsignal_bridge_macros::StructuralFrom;
+    use libsignal_core::DeviceId;
+    use libsignal_net_chat::api::S3UploadForm;
+    use libsignal_net_chat::grpc::payments::{Currency, CurrencyConversions};
+
+    use super::*;
+
+    #[derive(BridgedAsValue)]
+    #[bridge(arg = false)]
+    pub struct CurrencyInternal {
+        pub base: String,
+        pub conversions: BridgeVec<(String, String)>,
+    }
+    impl From<Currency> for CurrencyInternal {
+        fn from(Currency { base, conversions }: Currency) -> Self {
+            Self {
+                base,
+                conversions: BridgeVec(conversions.into_iter().collect()),
+            }
+        }
+    }
+    #[derive(BridgedAsValue, StructuralFrom)]
+    #[bridge(arg = false)]
+    #[structural_from(CurrencyConversions)]
+    pub struct CurrencyConversionsInternal {
+        pub timestamp_ms: Timestamp,
+        pub currencies: BridgeVec<CurrencyInternal>,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::grpc::login_purchase::LoginReceiptLevel,
+        ffi_nice_type = "LoginReceiptLevel",
+        jni_nice_type = "org.signal.libsignal.net.LoginReceiptLevel",
+    )]
+    #[allow(unused)]
+    enum LoginReceiptLevel {
+        Normal,
+        Sandbox,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::grpc::credentials::AuthCheckResult,
+        ffi_nice_type = "AuthCheckResult",
+        jni_nice_type = "org.signal.libsignal.net.AuthCheckResult",
+    )]
+    #[allow(unused)]
+    pub enum AuthCheckResult {
+        /// The credentials could be used to make a call to SVR service by the user
+        /// associated with the `CheckSvrCredentialsRequest.number` phone number.
+        Match,
+        /// The credentials were generated by a different user.
+        NoMatch,
+        /// This status indicates that the corresponding credentials token should no longer be used.
+        /// This may be because it has expired or invalid, but it can also mean that there is a more
+        /// recent token in the request which should be used instead.
+        Invalid,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::api::purchase::PaymentProvider,
+        ffi_nice_type = "PaymentProvider",
+        jni_nice_type = "org.signal.libsignal.net.PaymentProvider",
+    )]
+    #[allow(unused)]
+    pub enum PaymentProvider {
+        GooglePlayBilling,
+        AppleAppStore,
+        Stripe,
+        Braintree,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::api::purchase::ChargeFailure,
+        ffi_nice_type = "ChargeFailure",
+        jni_nice_type = "org.signal.libsignal.net.ChargeFailure",
+        node = false,
+    )]
+    #[allow(unused)]
+    pub struct ChargeFailure {
+        pub processor: libsignal_net_chat::api::purchase::PaymentProvider,
+        pub code: String,
+        pub message: String,
+        pub outcome_network_status: Option<String>,
+        pub outcome_reason: Option<String>,
+        pub outcome_type: Option<String>,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::grpc::devices::LinkedDevice,
+        ffi_nice_type = "LinkedDevice",
+        jni_nice_type = "org.signal.libsignal.net.LinkedDevice",
+    )]
+    #[allow(unused)]
+    pub struct LinkedDeviceInternal {
+        pub id: DeviceId,
+        pub encrypted_name: Vec<u8>,
+        pub last_seen: Timestamp,
+        pub registration_id: u16,
+        pub created_at_ciphertext: Vec<u8>,
+    }
+
+    #[derive(BridgedAsValue, StructuralFrom)]
+    #[structural_from(libsignal_net_chat::grpc::backups::ListMediaItem)]
+    #[bridge(
+        arg = false,
+        jni_nice_type = "org.signal.libsignal.net.ListBackupMediaResponse.Item"
+    )]
+    pub struct ListMediaItem {
+        pub cdn: AsType<u32, i32, { str_as_int("cdn") }>,
+        pub media_id: [u8; MEDIA_ID_LEN],
+        pub object_length: AsType<u64, i64, { str_as_int("objectLength") }>,
+    }
+
+    #[derive(BridgedAsValue, StructuralFrom)]
+    #[structural_from(libsignal_net_chat::grpc::backups::ListMediaResponse)]
+    #[bridge(
+        arg = false,
+        jni_nice_type = "org.signal.libsignal.net.ListBackupMediaResponse"
+    )]
+    pub struct ListMediaResponse {
+        /// The requested page of items.
+        pub items: BridgeVec<ListMediaItem>,
+        /// The base directory of the backup data on the CDN.
+        ///
+        /// Always non-empty, even if no media has been stored to the CDN or the credential is for a
+        /// tier that does not support media.
+        pub backup_dir: String,
+        /// The prefix path component for media objects on a CDN.
+        ///
+        /// Stored media for a `media_id` can be found at `/backup_dir/media_dir/media_id`, where the
+        /// `media_id` is encoded in unpadded url-safe base64. Always non-empty, even if no media has
+        /// been stored to the CDN or the credential is for a tier that does not support media.
+        pub media_dir: String,
+        /// If set, the cursor value to pass to the next list request to continue listing. If absent,
+        /// all objects have been listed.
+        pub cursor: Option<String>,
+    }
+
+    #[derive(BridgedAsValue, StructuralFrom)]
+    #[structural_from(libsignal_net_chat::grpc::call_quality::CallQualitySurvey, into)]
+    #[bridge(
+        ffi_nice_type = "CallQualitySurvey",
+        jni_nice_type = "org.signal.libsignal.net.CallQualitySurvey"
+    )]
+    pub struct CallQualitySurveyInternal {
+        /// Indicates whether the caller was generally satisfied with the quality of
+        /// the call
+        pub user_satisfied: bool,
+
+        /// A list of call quality issues selected by the caller
+        pub call_quality_issues: BridgeVec<String>,
+
+        /// A free-form description of any additional issues as written by the caller
+        pub additional_issues_description: Option<String>,
+
+        /// A URL for a set of debug logs associated with the call if the caller chose
+        /// to submit debug logs
+        pub debug_log_url: Option<String>,
+
+        /// The time at which the call started in milliseconds since the epoch
+        pub start_timestamp: Timestamp,
+
+        /// The time at which the call ended in milliseconds since the epoch
+        pub end_timestamp: Timestamp,
+
+        /// The type of call, note that direct voice calls can become video calls and
+        /// vice versa, and this field indicates which mode was selected at call
+        /// initiation time. At the time of writing, expected call types are
+        /// "direct_voice", "direct_video", "group", and "call_link".
+        pub call_type: String,
+
+        /// Indicates whether the call completed without error or if it terminated
+        /// abnormally
+        pub success: bool,
+
+        /// A client-defined, but human-readable reason for call termination
+        pub call_end_reason: String,
+
+        /// The median round-trip time, measured in milliseconds, for STUN/ICE packets
+        /// (i.e. connection maintenance and establishment)
+        pub connection_rtt_median: Option<f32>,
+
+        /// The median round-trip time, measured in milliseconds, for RTP/RTCP packets
+        /// for audio streams
+        pub audio_rtt_median: Option<f32>,
+
+        /// The median round-trip time, measured in milliseconds, for RTP/RTCP packets
+        /// for video streams
+        pub video_rtt_median: Option<f32>,
+
+        /// The median jitter for audio streams, measured in milliseconds, for the
+        /// duration of the call as measured by the client submitting the survey
+        pub audio_recv_jitter_median: Option<f32>,
+
+        /// The median jitter for video streams, measured in milliseconds, for the
+        /// duration of the call as measured by the client submitting the survey
+        pub video_recv_jitter_median: Option<f32>,
+
+        /// The median jitter for audio streams, measured in milliseconds, for the
+        /// duration of the call as measured by the remote endpoint in the call (either
+        /// the peer of the client submitting the survey in a direct call or the SFU in
+        /// a group call)
+        pub audio_send_jitter_median: Option<f32>,
+
+        /// The median jitter for video streams, measured in milliseconds, for the
+        /// duration of the call as measured by the remote endpoint in the call (either
+        /// the peer of the client submitting the survey in a direct call or the SFU in
+        /// a group call)
+        pub video_send_jitter_median: Option<f32>,
+
+        /// The fraction of audio packets lost over the duration of the call as
+        /// measured by the client submitting the survey
+        pub audio_recv_packet_loss_fraction: Option<f32>,
+
+        /// The fraction of video packets lost over the duration of the call as
+        /// measured by the client submitting the survey
+        pub video_recv_packet_loss_fraction: Option<f32>,
+
+        /// The fraction of audio packets lost over the duration of the call as
+        /// measured by the remote endpoint in the call (either the peer of the client
+        /// submitting the survey in a direct call or the SFU in a group call)
+        pub audio_send_packet_loss_fraction: Option<f32>,
+
+        /// The fraction of video packets lost over the duration of the call as
+        /// measured by the remote endpoint in the call (either the peer of the client
+        /// submitting the survey in a direct call or the SFU in a group call)
+        pub video_send_packet_loss_fraction: Option<f32>,
+
+        /// Machine-generated telemetry from the call, this is a serialized protobuf
+        /// entity generated (and, critically, explained to the user!) by the calling
+        /// library
+        pub call_telemetry: Option<Vec<u8>>,
+
+        /// A hash of a call ID (shared between clients and never sent to the calling
+        /// server) that can be used to correlate survey responses from multiple
+        /// participants in a call.
+        pub call_id_hash: Option<Vec<u8>>,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::grpc::devices::DeviceCapability,
+        ffi_nice_type = "DeviceCapability",
+    )]
+    #[allow(unused)]
+    pub enum DeviceCapabilityInternal {
+        Storage,
+        Transfer,
+        AttachmentBackfill,
+        SparsePostQuantumRatchet,
+        ProfilesV2,
+        UsernameChangeSyncMessage,
+        OptionalPhoneNumber,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::grpc::donations::BadgeVisibility,
+        ffi_nice_type = "BadgeVisibility",
+        jni_nice_type = "org.signal.libsignal.net.BadgeVisibility",
+    )]
+    #[allow(unused)]
+    pub enum BadgeVisibility {
+        DoNotSet,
+        SetVisible,
+        SetPrimary,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        remote = libsignal_net_chat::api::S3UploadForm,
+        ffi_nice_type = "S3UploadForm",
+        jni_nice_type = "org.signal.libsignal.net.S3UploadForm"
+    )]
+    #[allow(unused)]
+    struct S3UploadFormInternal {
+        pub key: String,
+        pub credential: String,
+        pub acl: String,
+        pub algorithm: String,
+        pub date: String,
+        pub policy: String,
+        pub signature: String,
+    }
+
+    #[derive(BridgedAsValue, StructuralFrom)]
+    #[structural_from(libsignal_net_chat::grpc::stickers::GetStickerUploadFormsResponse)]
+    #[bridge(
+        arg = false,
+        ffi_nice_type = "GetStickerUploadFormsResponse",
+        jni_nice_type = "org.signal.libsignal.net.GetStickerUploadFormsResponse"
+    )]
+    pub struct GetStickerUploadFormsResponse {
+        pub pack_id: String,
+        pub manifest_upload_form: S3UploadForm,
+        pub sticker_upload_forms: BridgeVec<S3UploadForm>,
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        // TODO: no ffi_nice_type because we want to use UInt32 for the TOTP password there.
+        jni_nice_type = "org.signal.libsignal.net.MfaVerificationCredential"
+    )]
+    pub enum BridgeMfaVerificationCredential {
+        Totp { password: i32 },
+        WebAuthn { json: String },
+    }
+    impl From<BridgeMfaVerificationCredential>
+        for libsignal_net_chat::grpc::accounts::MfaVerificationCredential
+    {
+        fn from(value: BridgeMfaVerificationCredential) -> Self {
+            match value {
+                BridgeMfaVerificationCredential::Totp { password } => Self::Totp {
+                    password: password.try_into().expect("TOTP passwords are 6 digits"),
+                },
+                BridgeMfaVerificationCredential::WebAuthn { json } => Self::WebAuthn { json },
+            }
+        }
+    }
+    impl From<libsignal_net_chat::grpc::accounts::MfaVerificationCredential>
+        for BridgeMfaVerificationCredential
+    {
+        fn from(value: libsignal_net_chat::grpc::accounts::MfaVerificationCredential) -> Self {
+            type OriginalCredential = libsignal_net_chat::grpc::accounts::MfaVerificationCredential;
+            match value {
+                OriginalCredential::Totp { password } => Self::Totp {
+                    password: password.try_into().expect("TOTP passwords are 6 digits"),
+                },
+                OriginalCredential::WebAuthn { json } => Self::WebAuthn { json },
+            }
+        }
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        arg = false,
+        ffi_nice_type = "StartMfaVerificationResponse",
+        jni_nice_type = "org.signal.libsignal.net.StartMfaVerificationResponse"
+    )]
+    pub struct StartMfaVerificationResponse {
+        pub has_totp: bool,
+        pub webauthn_params: Option<BridgeWebAuthnAuthenticationParameters>,
+    }
+
+    impl From<libsignal_net_chat::grpc::accounts::StartMfaVerificationResponse>
+        for StartMfaVerificationResponse
+    {
+        fn from(value: libsignal_net_chat::grpc::accounts::StartMfaVerificationResponse) -> Self {
+            let libsignal_net_chat::grpc::accounts::StartMfaVerificationResponse {
+                has_totp,
+                webauthn_params,
+            } = value;
+            Self {
+                has_totp,
+                webauthn_params: webauthn_params.map(Into::into),
+            }
+        }
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        arg = false,
+        ffi_nice_type = "WebAuthnAuthenticationParameters",
+        jni_nice_type = "org.signal.libsignal.net.WebAuthnAuthenticationParameters"
+    )]
+    pub struct BridgeWebAuthnAuthenticationParameters {
+        pub challenge: Vec<u8>,
+        pub timeout_seconds: i32,
+        pub allowed_credential_ids: BridgeVec<Vec<u8>>,
+    }
+
+    impl From<libsignal_net_chat::grpc::accounts::WebAuthnAuthenticationParameters>
+        for BridgeWebAuthnAuthenticationParameters
+    {
+        fn from(
+            value: libsignal_net_chat::grpc::accounts::WebAuthnAuthenticationParameters,
+        ) -> Self {
+            let libsignal_net_chat::grpc::accounts::WebAuthnAuthenticationParameters {
+                challenge,
+                timeout,
+                allowed_credential_ids,
+            } = value;
+            Self {
+                challenge,
+                timeout_seconds: timeout.as_secs().try_into().expect("timeouts are short"),
+                allowed_credential_ids: allowed_credential_ids.into(),
+            }
+        }
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        arg = false,
+        ffi_nice_type = "AccountEntitlements",
+        jni_nice_type = "org.signal.libsignal.net.AccountEntitlements"
+    )]
+    pub struct AccountEntitlements {
+        pub badges: BridgeVec<BadgeEntitlement>,
+        pub backup: Option<BackupEntitlement>,
+    }
+
+    impl From<libsignal_net_chat::grpc::accounts::AccountEntitlements> for AccountEntitlements {
+        fn from(value: libsignal_net_chat::grpc::accounts::AccountEntitlements) -> Self {
+            let libsignal_net_chat::grpc::accounts::AccountEntitlements { badges, backup } = value;
+            AccountEntitlements {
+                badges: badges.into(),
+                backup: backup.map(Into::into),
+            }
+        }
+    }
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        ffi_nice_type = "BadgeEntitlement",
+        jni_nice_type = "org.signal.libsignal.net.BadgeEntitlement"
+    )]
+    pub struct BadgeEntitlement {
+        pub badge_id: String,
+        pub expiration: libsignal_protocol::Timestamp,
+        pub visible: bool,
+    }
+
+    impl From<libsignal_net_chat::grpc::accounts::BadgeEntitlement> for BadgeEntitlement {
+        fn from(value: libsignal_net_chat::grpc::accounts::BadgeEntitlement) -> Self {
+            let libsignal_net_chat::grpc::accounts::BadgeEntitlement {
+                badge_id,
+                expiration,
+                visible,
+            } = value;
+            Self {
+                badge_id,
+                expiration: expiration
+                    .try_into()
+                    .expect("expiration is not too far in the future"),
+                visible,
+            }
+        }
+    }
+
+    #[derive(BridgedAsValue)]
+    #[bridge(
+        ffi_nice_type = "BackupEntitlement",
+        jni_nice_type = "org.signal.libsignal.net.BackupEntitlement"
+    )]
+    pub struct BackupEntitlement {
+        pub level: i64, /* zkgroup::ReceiptLevel */
+        pub expiration: libsignal_protocol::Timestamp,
+    }
+
+    impl From<libsignal_net_chat::grpc::accounts::BackupEntitlement> for BackupEntitlement {
+        fn from(value: libsignal_net_chat::grpc::accounts::BackupEntitlement) -> Self {
+            let libsignal_net_chat::grpc::accounts::BackupEntitlement { level, expiration } = value;
+            Self {
+                // Preserve all bits for zkgroup receipt levels.
+                level: level as i64,
+                expiration: expiration
+                    .try_into()
+                    .expect("expiration is not too far in the future"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use assert_matches::assert_matches;
+    use libsignal_net_chat::grpc::accounts::MfaKeyId;
+    use test_case::test_case;
+
+    use super::*;
+
+    const TEST_UUID: uuid::Uuid = uuid::uuid!("659aa5f4-a28d-fcc1-1ea1-b997537a3d95");
+
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95" => Some((TEST_UUID.into(), libsignal_core::DeviceId::new(1).expect("valid"))))]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.1" => Some((TEST_UUID.into(), libsignal_core::DeviceId::new(1).expect("valid"))))]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.123" => Some((TEST_UUID.into(), libsignal_core::DeviceId::new(123).expect("valid"))))]
+    #[test_case("659AA5F4-A28D-FCC1-1EA1-B997537A3D95.124" => Some((TEST_UUID.into(), libsignal_core::DeviceId::new(124).expect("valid"))))]
+    #[test_case("659aA5f4-A28d-FcC1-1eA1-b997537A3d95.125" => Some((TEST_UUID.into(), libsignal_core::DeviceId::new(125).expect("valid"))))]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d9" => None)]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95." => None)]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.a" => None)]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.0" => None)]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.2.3" => None)]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.128" => None)]
+    #[test_case("659aa5f4-a28d-fcc1-1ea1-b997537a3d95.9999" => None)]
+    #[test_case(".123" => None)]
+    #[test_case("a.123" => None)]
+    #[test_case("a" => None)]
+    fn test_parse_username(input: &str) -> Option<(libsignal_core::Aci, libsignal_core::DeviceId)> {
+        AuthenticatedChatConnection::parse_username(input)
+    }
+
+    #[test]
+    fn invalid_mfa_metadata_is_bridged_as_unreadable() {
+        let bridged = BridgeConfirmedMfaKey::from(ConfirmedMfaKey {
+            id: MfaKeyId::try_from(1).expect("in range"),
+            metadata: Err(InvalidMfaMetadata),
+            kind: MfaKeyKind::Totp,
+        });
+        assert!(matches!(
+            bridged.metadata,
+            BridgeConfirmedMfaKeyMetadata::Unreadable
+        ));
+        assert_eq!(bridged.kind, BridgeMfaKeyKind::Totp);
+    }
+
+    #[test]
+    fn unknown_mfa_key_kind_is_bridged_as_unknown() {
+        let bridged = BridgeConfirmedMfaKey::from(ConfirmedMfaKey {
+            id: MfaKeyId::try_from(1).expect("in range"),
+            metadata: Err(InvalidMfaMetadata),
+            kind: MfaKeyKind::Unknown,
+        });
+        assert_eq!(bridged.kind, BridgeMfaKeyKind::Unknown);
+    }
+
+    #[tokio::test]
+    async fn bulk_polled_stream_cancel_with_next_chunk_in_flight() {
+        let stream = Arc::new(
+            BridgeBulkPolledStream::<String, std::convert::Infallible>::new(
+                futures_util::stream::pending(),
+                5,
+                Duration::ZERO,
+            ),
+        );
+
+        let next_chunk_task = tokio::task::spawn({
+            let stream = stream.clone();
+            async move { stream.next_chunk().await }
+        });
+        // Make sure the task acquires the lock.
+        tokio::task::yield_now().await;
+
+        // Cancel from an "app" thread, the way a bridge_fn would be called.
+        let (cancel_done_tx, cancel_done_rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            stream.cancel();
+            _ = cancel_done_tx.send(());
+        });
+
+        () = tokio::time::timeout(Duration::from_secs(1), cancel_done_rx)
+            .await
+            .expect("cancel() should return promptly even with a next_chunk in flight")
+            .expect("should have been explicitly signalled");
+
+        let result = tokio::time::timeout(Duration::from_secs(1), next_chunk_task)
+            .await
+            .expect("in-flight next_chunk should resolve once cancelled")
+            .expect("should not have panicked");
+        assert_matches!(result, Err(StreamCancelled));
+    }
+
+    #[tokio::test]
+    async fn bulk_polled_stream_cancel_in_advance() {
+        let stream = Arc::new(
+            BridgeBulkPolledStream::<String, std::convert::Infallible>::new(
+                futures_util::stream::pending(),
+                5,
+                Duration::ZERO,
+            ),
+        );
+
+        // Cancel from an "app" thread, the way a bridge_fn would be called.
+        let (cancel_done_tx, cancel_done_rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn({
+            let stream = stream.clone();
+            move || {
+                stream.cancel();
+                _ = cancel_done_tx.send(());
+            }
+        });
+
+        () = tokio::time::timeout(Duration::from_secs(1), cancel_done_rx)
+            .await
+            .expect("cancel() should return promptly")
+            .expect("should have been explicitly signalled");
+
+        let result = tokio::time::timeout(Duration::from_secs(1), stream.next_chunk())
+            .await
+            .expect("in-flight next_chunk should resolve once cancelled");
+        assert_matches!(result, Err(StreamCancelled));
+    }
+}

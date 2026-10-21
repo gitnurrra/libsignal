@@ -5,14 +5,24 @@
 
 use std::fmt;
 
-use zerocopy::{FromBytes, IntoBytes, KnownLayout};
+use libsignal_core::derive_arrays;
 
 use crate::proto::storage::session_structure;
-use crate::{crypto, PrivateKey, PublicKey, Result};
+use crate::{PrivateKey, PublicKey, Result, crypto};
 
+#[derive(Clone)]
 pub(crate) enum MessageKeyGenerator {
     Keys(MessageKeys),
     Seed((Vec<u8>, u32)),
+}
+
+impl fmt::Debug for MessageKeyGenerator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Keys(k) => f.debug_tuple("Keys").field(&k.counter()).finish(),
+            Self::Seed((_, idx)) => f.debug_tuple("Seed").field(idx).finish(),
+        }
+    }
 }
 
 impl MessageKeyGenerator {
@@ -92,16 +102,12 @@ impl MessageKeys {
         optional_salt: Option<&[u8]>,
         counter: u32,
     ) -> Self {
-        #[derive(Default, KnownLayout, IntoBytes, FromBytes)]
-        #[repr(C, packed)]
-        struct DerivedSecretBytes([u8; 32], [u8; 32], [u8; 16]);
-        let mut okm = DerivedSecretBytes::default();
-
-        hkdf::Hkdf::<sha2::Sha256>::new(optional_salt, input_key_material)
-            .expand(b"WhisperMessageKeys", okm.as_mut_bytes())
-            .expect("valid output length");
-
-        let DerivedSecretBytes(cipher_key, mac_key, iv) = okm;
+        let _trace = libsignal_debug::trace_block!("MessageKeys::derive_keys");
+        let (cipher_key, mac_key, iv) = derive_arrays(|okm| {
+            hkdf::Hkdf::<sha2::Sha256>::new(optional_salt, input_key_material)
+                .expand(b"WhisperMessageKeys", okm)
+                .expect("valid output length")
+        });
 
         MessageKeys {
             cipher_key,
@@ -171,6 +177,7 @@ impl ChainKey {
     }
 
     fn calculate_base_material(&self, seed: [u8; 1]) -> [u8; 32] {
+        let _trace = libsignal_debug::trace_block!("keys::calculate_base_material");
         crypto::hmac_sha256(&self.key, &seed)
     }
 }
@@ -195,16 +202,11 @@ impl RootKey {
         our_ratchet_key: &PrivateKey,
     ) -> Result<(RootKey, ChainKey)> {
         let shared_secret = our_ratchet_key.calculate_agreement(their_ratchet_key)?;
-        #[derive(Default, KnownLayout, IntoBytes, FromBytes)]
-        #[repr(C, packed)]
-        struct DerivedSecretBytes([u8; 32], [u8; 32]);
-        let mut derived_secret_bytes = DerivedSecretBytes::default();
-
-        hkdf::Hkdf::<sha2::Sha256>::new(Some(&self.key), &shared_secret)
-            .expand(b"WhisperRatchet", derived_secret_bytes.as_mut_bytes())
-            .expect("valid output length");
-
-        let DerivedSecretBytes(root_key, chain_key) = derived_secret_bytes;
+        let (root_key, chain_key, []) = derive_arrays(|bytes| {
+            hkdf::Hkdf::<sha2::Sha256>::new(Some(&self.key), &shared_secret)
+                .expand(b"WhisperRatchet", bytes)
+                .expect("valid output length")
+        });
 
         Ok((
             RootKey { key: root_key },

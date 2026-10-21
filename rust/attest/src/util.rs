@@ -18,7 +18,7 @@ pub(crate) struct SmallMap<K, V, const N: usize>([(K, V); N]);
 
 impl<K, V, const N: usize> SmallMap<K, V, N> {
     /// The maximum number of elements allowed in a `SmallMap`.
-    const MAX_SIZE: usize = 10;
+    const MAX_SIZE: usize = 16;
 
     /// Checks at compile-time (via `const`) that `N` is small enough.
     const CHECK_MAX_SIZE: () = assert!(
@@ -37,6 +37,11 @@ impl<K, V, const N: usize> SmallMap<K, V, N> {
     /// Gets the value for the first key that matches `key`, or `None`.
     pub(crate) fn get<Q: PartialEq<K> + ?Sized>(&self, key: &Q) -> Option<&V> {
         self.0.iter().find_map(|(k, v)| (key == k).then_some(v))
+    }
+
+    #[allow(unused)] // Used for compile-time assertions.
+    pub(super) const fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -93,7 +98,7 @@ pub(crate) fn system_time_to_asn1_time(
     Asn1Time::from_unix(t).map_err(|_| FailedToConvertToAsn1Time)
 }
 
-pub(crate) fn get_sw_advisories(enclave_id: &[u8]) -> &[&str] {
+pub fn get_sw_advisories(enclave_id: &[u8]) -> &[&str] {
     ACCEPTABLE_SW_ADVISORIES
         .get(&enclave_id)
         .unwrap_or(&DEFAULT_SW_ADVISORIES)

@@ -5,9 +5,9 @@
 
 use std::result::Result;
 
-use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::Aes256;
-use hmac::{Hmac, Mac};
+use aes::cipher::{KeyIvInit, StreamCipher};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
@@ -28,10 +28,11 @@ pub(crate) enum DecryptionError {
 }
 
 fn aes_256_ctr_encrypt(ptext: &[u8], key: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+    let _trace = libsignal_debug::trace_block!("aes256_ctr_encrypt");
     let key: [u8; 32] = key.try_into().map_err(|_| EncryptionError::BadKeyOrIv)?;
 
     let zero_nonce = [0u8; 16];
-    let mut cipher = ctr::Ctr32BE::<Aes256>::new(key[..].into(), zero_nonce[..].into());
+    let mut cipher = ctr::Ctr32BE::<Aes256>::new(&key.into(), &zero_nonce.into());
 
     let mut ctext = ptext.to_vec();
     cipher.apply_keystream(&mut ctext);
@@ -45,6 +46,7 @@ fn aes_256_ctr_decrypt(ctext: &[u8], key: &[u8]) -> Result<Vec<u8>, DecryptionEr
 }
 
 pub(crate) fn hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
+    let _trace = libsignal_debug::trace_block!("hmac_sha256");
     let mut hmac =
         Hmac::<Sha256>::new_from_slice(key).expect("HMAC-SHA256 should accept any size key");
     hmac.update(input);
@@ -67,16 +69,15 @@ pub(crate) fn aes256_ctr_hmacsha256_decrypt(
     cipher_key: &[u8],
     mac_key: &[u8],
 ) -> Result<Vec<u8>, DecryptionError> {
-    if ctext.len() < 10 {
-        return Err(DecryptionError::BadCiphertext("truncated ciphertext"));
-    }
-    let ptext_len = ctext.len() - 10;
-    let our_mac = hmac_sha256(mac_key, &ctext[..ptext_len]);
-    let same: bool = our_mac[..10].ct_eq(&ctext[ptext_len..]).into();
+    let (ctext, their_mac) = ctext
+        .split_last_chunk::<10>()
+        .ok_or(DecryptionError::BadCiphertext("truncated ciphertext"))?;
+    let our_mac = hmac_sha256(mac_key, ctext);
+    let same: bool = our_mac[..10].ct_eq(their_mac).into();
     if !same {
         return Err(DecryptionError::BadCiphertext("MAC verification failed"));
     }
-    aes_256_ctr_decrypt(&ctext[..ptext_len], cipher_key)
+    aes_256_ctr_decrypt(ctext, cipher_key)
 }
 
 #[cfg(test)]

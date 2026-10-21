@@ -26,7 +26,6 @@ import org.signal.libsignal.protocol.InvalidKeyException;
 import org.signal.libsignal.protocol.SessionBuilder;
 import org.signal.libsignal.protocol.SignalProtocolAddress;
 import org.signal.libsignal.protocol.UntrustedIdentityException;
-import org.signal.libsignal.protocol.UsePqRatchet;
 import org.signal.libsignal.protocol.ecc.ECKeyPair;
 import org.signal.libsignal.protocol.ecc.ECPublicKey;
 import org.signal.libsignal.protocol.groups.GroupCipher;
@@ -53,8 +52,10 @@ public class SealedSender {
       InMemorySignalProtocolStore bobStore =
           new InMemorySignalProtocolStore(IdentityKeyPair.generate(), 0xBB);
       SignalProtocolAddress bobAddress = new SignalProtocolAddress("+14152222222", 1);
+      SignalProtocolAddress aliceAddress =
+          new SignalProtocolAddress("9d0652a3-dcc3-4d11-975f-74d61598733f", 1);
 
-      initializeSessions(aliceStore, bobStore, bobAddress);
+      initializeSessions(aliceStore, bobStore, bobAddress, aliceAddress);
 
       ECKeyPair trustRoot = ECKeyPair.generate();
       SenderCertificate senderCertificate =
@@ -67,10 +68,7 @@ public class SealedSender {
               31337);
       SealedSessionCipher aliceCipher =
           new SealedSessionCipher(
-              aliceStore,
-              UUID.fromString("9d0652a3-dcc3-4d11-975f-74d61598733f"),
-              "+14151111111",
-              1);
+              aliceStore, UUID.fromString(aliceAddress.getName()), "+14151111111", 1);
 
       final BenchmarkState state = benchmarkRule.getState();
       while (state.keepRunning()) {
@@ -100,7 +98,7 @@ public class SealedSender {
             new InMemorySignalProtocolStore(IdentityKeyPair.generate(), i);
         SignalProtocolAddress bobAddress =
             new SignalProtocolAddress(UUID.randomUUID().toString(), i % 127 + 1);
-        filterExceptions(() -> initializeSessions(aliceStore, bobStore, bobAddress));
+        filterExceptions(() -> initializeSessions(aliceStore, bobStore, bobAddress, aliceAddress));
         recipients.add(bobAddress);
       }
     }
@@ -188,7 +186,8 @@ public class SealedSender {
   private static void initializeSessions(
       InMemorySignalProtocolStore aliceStore,
       InMemorySignalProtocolStore bobStore,
-      SignalProtocolAddress bobAddress)
+      SignalProtocolAddress bobAddress,
+      SignalProtocolAddress aliceAddress)
       throws InvalidKeyException, UntrustedIdentityException {
     ECKeyPair bobPreKey = ECKeyPair.generate();
     IdentityKeyPair bobIdentityKey = bobStore.getIdentityKeyPair();
@@ -208,8 +207,8 @@ public class SealedSender {
             12,
             bobKyberPreKey.getKeyPair().getPublicKey(),
             bobKyberPreKey.getSignature());
-    SessionBuilder aliceSessionBuilder = new SessionBuilder(aliceStore, bobAddress);
-    aliceSessionBuilder.process(bobBundle, UsePqRatchet.YES);
+    SessionBuilder aliceSessionBuilder = new SessionBuilder(aliceStore, bobAddress, aliceAddress);
+    aliceSessionBuilder.process(bobBundle);
 
     bobStore.storeSignedPreKey(2, bobSignedPreKey);
     bobStore.storeKyberPreKey(12, bobKyberPreKey);

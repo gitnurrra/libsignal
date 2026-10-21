@@ -6,10 +6,10 @@
 use ::zkgroup;
 use partial_default::PartialDefault;
 use serde::Deserialize;
+pub use zkgroup::Timestamp;
 use zkgroup::groups::*;
 use zkgroup::profiles::*;
 use zkgroup::receipts::*;
-pub use zkgroup::Timestamp;
 use zkgroup::*;
 
 use crate::support::*;
@@ -30,15 +30,21 @@ pub fn validate_serialization<'a, T: Deserialize<'a> + PartialDefault>(
 ///
 /// To be used with [`bridge_fixed_length_serializable_fns`].
 macro_rules! bridge_as_fixed_length_serializable {
-    ($typ:ident) => {
+    ($typ:ident, jni_class = $jni_class:expr$(,)?) => {
         ::paste::paste! {
-            // Declare a marker type for TypeScript, the same as bridge_as_handle.
-            // (This is harmless for the other bridges.)
-            #[doc = "ts: interface " $typ " { readonly __type: unique symbol; }"]
             impl FixedLengthBincodeSerializable for $typ {
                 type Array = [u8; [<$typ:snake:upper _LEN>]];
+                const JNI_CLASS: &'static str = $jni_class;
+                #[cfg(feature = "metadata")]
+                fn name() -> String {
+                    let name = stringify!($typ);
+                    name.rsplit_once("::").map(|(_, x)| x).unwrap_or(name).into()
+                }
             }
         }
+    };
+    ($typ:ident) => {
+        bridge_as_fixed_length_serializable!($typ, jni_class = "");
     };
 }
 
@@ -89,7 +95,10 @@ macro_rules! bridge_serializable_handle_fns {
     };
 }
 
-bridge_as_fixed_length_serializable!(ExpiringProfileKeyCredential);
+bridge_as_fixed_length_serializable!(
+    ExpiringProfileKeyCredential,
+    jni_class = "org.signal.libsignal.zkgroup.profiles.ExpiringProfileKeyCredential",
+);
 bridge_as_fixed_length_serializable!(ExpiringProfileKeyCredentialResponse);
 bridge_as_fixed_length_serializable!(GroupMasterKey);
 bridge_as_fixed_length_serializable!(GroupPublicParams);
@@ -98,13 +107,26 @@ bridge_as_fixed_length_serializable!(ProfileKey);
 bridge_as_fixed_length_serializable!(ProfileKeyCiphertext);
 bridge_as_fixed_length_serializable!(ProfileKeyCommitment);
 bridge_as_fixed_length_serializable!(ProfileKeyCredentialRequest);
-bridge_as_fixed_length_serializable!(ProfileKeyCredentialRequestContext);
+bridge_as_fixed_length_serializable!(
+    ProfileKeyCredentialRequestContext,
+    jni_class = "org.signal.libsignal.zkgroup.profiles.ProfileKeyCredentialRequestContext",
+);
 bridge_as_fixed_length_serializable!(ReceiptCredential);
-bridge_as_fixed_length_serializable!(ReceiptCredentialPresentation);
+bridge_as_fixed_length_serializable!(
+    ReceiptCredentialPresentation,
+    jni_class = "org.signal.libsignal.zkgroup.receipts.ReceiptCredentialPresentation",
+);
 bridge_as_fixed_length_serializable!(ReceiptCredentialRequest);
 bridge_as_fixed_length_serializable!(ReceiptCredentialRequestContext);
 bridge_as_fixed_length_serializable!(ReceiptCredentialResponse);
 bridge_as_fixed_length_serializable!(UuidCiphertext);
 
-bridge_as_handle!(ServerPublicParams);
-bridge_as_handle!(ServerSecretParams);
+bridge_as_handle!(
+    ServerPublicParams,
+    swift_type = "ServerPublicParams",
+    jni_class = "org.signal.libsignal.zkgroup.ServerPublicParams",
+);
+bridge_as_handle!(
+    ServerSecretParams,
+    jni_class = "org.signal.libsignal.zkgroup.ServerSecretParams",
+);

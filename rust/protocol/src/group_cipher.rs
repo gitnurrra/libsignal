@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::protocol::SENDERKEY_MESSAGE_CURRENT_VERSION;
 use crate::sender_keys::{SenderKeyState, SenderMessageKey};
 use crate::{
-    consts, CiphertextMessageType, KeyPair, ProtocolAddress, Result, SenderKeyDistributionMessage,
-    SenderKeyMessage, SenderKeyRecord, SenderKeyStore, SignalProtocolError,
+    CiphertextMessageType, KeyPair, ProtocolAddress, Result, SenderKeyDistributionMessage,
+    SenderKeyMessage, SenderKeyRecord, SenderKeyStore, SignalProtocolError, consts,
 };
 
 pub async fn group_encrypt<R: Rng + CryptoRng>(
@@ -106,7 +106,7 @@ fn get_sender_key(
         );
         return Err(SignalProtocolError::InvalidMessage(
             CiphertextMessageType::SenderKey,
-            "message from too far into the future",
+            "message from too far into the future".to_owned(),
         ));
     }
 
@@ -181,7 +181,7 @@ pub async fn group_decrypt(
             log::error!("sender key decryption failed: {msg}");
             return Err(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::SenderKey,
-                "decryption failed",
+                format!("decryption failed: {msg}"),
             ));
         }
     };

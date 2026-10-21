@@ -14,9 +14,10 @@ public class SignalMessage: NativeHandleOwner<SignalMutPointerSignalMessage> {
     }
 
     public convenience init<Bytes: ContiguousBytes>(bytes: Bytes) throws {
-        var result = SignalMutPointerSignalMessage()
-        try bytes.withUnsafeBorrowedBuffer {
-            try checkError(signal_message_deserialize(&result, $0))
+        let result = try bytes.withUnsafeBorrowedBuffer { bytes in
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_message_deserialize($0, bytes)
+            }
         }
         self.init(owned: NonNull(result)!)
     }
@@ -68,31 +69,6 @@ public class SignalMessage: NativeHandleOwner<SignalMutPointerSignalMessage> {
                     signal_message_get_counter($0, nativeHandle.const())
                 }
             }
-        }
-    }
-
-    public func verifyMac<Bytes: ContiguousBytes>(
-        sender: PublicKey,
-        receiver: PublicKey,
-        macKey: Bytes
-    ) throws -> Bool {
-        return try withAllBorrowed(
-            self,
-            sender,
-            receiver,
-            .bytes(macKey)
-        ) { messageHandle, senderHandle, receiverHandle, macKey in
-            var result = false
-            try checkError(
-                signal_message_verify_mac(
-                    &result,
-                    messageHandle.const(),
-                    senderHandle.const(),
-                    receiverHandle.const(),
-                    macKey
-                )
-            )
-            return result
         }
     }
 }

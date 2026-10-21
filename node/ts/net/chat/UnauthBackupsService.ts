@@ -1,0 +1,620 @@
+//
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import type { Bytes } from '@signalapp/types';
+
+import {
+  RequestOptions,
+  UnauthenticatedChatConnection,
+  UploadForm,
+} from '../Chat.js';
+import * as Native from '../../Native.js';
+import * as NativeNice from '../../NativeNice.js';
+import type {
+  BackupAuthCredential,
+  GenericServerPublicParams,
+} from '../../zkgroup/index.js';
+import type { CdnCredentials } from './CdnCredentials.js';
+import type { PrivateKey } from '../../EcKeys.js';
+import type { Rng } from '../../RngForTesting.js';
+import type {
+  UploadTooLarge,
+  RequestUnauthorizedError,
+  StandardNetworkError,
+} from '../../Errors.js';
+import type { BackupKey } from '../../AccountKeys.js';
+
+export { type CdnCredentials } from './CdnCredentials.js';
+
+declare module '../Chat' {
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface UnauthenticatedChatConnection extends UnauthBackupsService {}
+}
+
+export type BackupAuth = {
+  credential: BackupAuthCredential;
+  serverKeys: GenericServerPublicParams;
+  signingKey: PrivateKey;
+};
+
+export type MessageBackupInfo = {
+  /**
+   * The base directory of the backup data on the CDN.
+   *
+   * Always non-empty, even if a backup has not actually been stored to the CDN. If a backup was
+   * previously uploaded and has not expired, it can be found in {@link MessageBackupInfo#cdn} at
+   * `/backupDir/backupName`.
+   */
+  backupDir: string;
+  /** The CDN type where the message backup is stored. Media may be stored elsewhere. */
+  cdn: number;
+  /**
+   * The location of the message backup on the CDN.
+   *
+   * Always non-empty, even if a backup has not actually been stored to the CDN.
+   */
+  backupName: string;
+};
+
+export type MediaBackupInfo = {
+  /**
+   * The base directory of the backup data on the CDN.
+   *
+   * Always non-empty, even if no media has been stored to the CDN or the credential is for a tier
+   * that does not support media.
+   */
+  backupDir: string;
+  /**
+   * The prefix path component for media objects on a CDN.
+   *
+   * Stored media for a `mediaId` can be found at `/backupDir/mediaDir/mediaId`, where the
+   * `mediaId` is encoded in unpadded url-safe base64. Always non-empty, even if no media has been
+   * stored to the CDN or the credential is for a tier that does not support media.
+   */
+  mediaDir: string;
+  /** The amount of space used to store media, in bytes. */
+  usedSpace: bigint;
+};
+
+/**
+ * A single item to copy from the attachment CDN to the backup CDN.
+ *
+ * `encryptionKey` is the combined HMAC + AES key from {@link BackupKey.deriveMediaEncryptionKey}
+ * or {@link BackupKey.deriveThumbnailTransitEncryptionKey}.
+ */
+export type CopyBackupMediaItem = {
+  sourceAttachmentCdn: number;
+  sourceKey: string;
+  objectLength: number;
+  mediaId: Bytes;
+  encryptionKey: Bytes;
+};
+
+export type CopyBackupMediaOutcome = {
+  mediaId: Bytes;
+  result: CopyBackupMediaResult;
+};
+
+export type CopyBackupMediaResult =
+  | {
+      cdn: number;
+    }
+  | 'sourceNotFound'
+  | 'wrongSourceLength'
+  | 'outOfSpace';
+
+export type DeleteBackupMediaItem = {
+  mediaId: Bytes;
+  cdn: number;
+};
+
+export type ListMediaItem = {
+  cdn: number;
+  mediaId: Bytes;
+  objectLength: bigint;
+};
+
+/** @see UnauthBackupsService#listBackupMedia */
+export type ListMediaResponse = {
+  /** The requested page of items. */
+  items: ListMediaItem[];
+  /**
+   * The base directory of the backup data on the CDN.
+   *
+   * Always non-empty, even if no media has been stored to the CDN or the credential is for a tier
+   * that does not support media.
+   */
+  backupDir: string;
+  /**
+   * The prefix path component for media objects on a CDN.
+   *
+   * Stored media for a `mediaId` can be found at `/backupDir/mediaDir/mediaId`, where the
+   * `mediaId` is encoded in unpadded url-safe base64. Always non-empty, even if no media has been
+   * stored to the CDN or the credential is for a tier that does not support media.
+   */
+  mediaDir: string;
+  /**
+   * If set, the cursor value to pass to the next list request to continue listing. If absent, all
+   * objects have been listed.
+   */
+  cursor?: string;
+};
+
+export interface UnauthBackupsService {
+  /**
+   * Get a messages backup upload form
+   *
+   * @param rng should be omitted in production
+   * @throws {UploadTooLarge} if `uploadSize` is too large
+   * @throws {RequestUnauthorizedError} if `auth` is invalid
+   * @throws {StandardNetworkError}
+   */
+  getUploadForm: (
+    request: {
+      auth: BackupAuth;
+      uploadSize: number;
+      rng?: Rng;
+    },
+    options?: RequestOptions
+  ) => Promise<UploadForm>;
+  /**
+   * Get a media backup upload form
+   *
+   * @param rng should be omitted in production
+   * @throws {UploadTooLarge} if `uploadSize` is too large
+   * @throws {RequestUnauthorizedError} if authorization fails
+   * @throws {StandardNetworkError}
+   */
+  getMediaUploadForm: (
+    request: {
+      auth: BackupAuth;
+      uploadSize: number;
+      rng?: Rng;
+    },
+    options?: RequestOptions
+  ) => Promise<UploadForm>;
+
+  /**
+   * Sets the messages or media backup key based on `auth`.
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails; since the key is being updated, this
+   * suggests the credential in particular is invalid
+   * @throws {StandardNetworkError}
+   */
+  setBackupPublicKey: (
+    request: { auth: BackupAuth; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<void>;
+
+  /**
+   * Fetches the credentials necessary to read from the given backup CDN.
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails
+   * @throws {StandardNetworkError}
+   */
+  getBackupCdnCredentials: (
+    request: { auth: BackupAuth; cdn: number; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<CdnCredentials>;
+
+  /**
+   * Retrieves information about the currently stored message backup.
+   *
+   * The `auth` should be for a messages credential.
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails. Note that the
+   * server does not distinguish an invalid credential from a backup-id that
+   * has never been provisioned: if {@link #setBackupPublicKey} has never been
+   * called for this backup-id, this request also fails with
+   * {@link RequestUnauthorizedError}. Callers using this to check whether a
+   * backup exists should treat that case as "backups not set up" rather than
+   * as a fatal error.
+   * @throws {StandardNetworkError}
+   */
+  getMessageBackupInfo: (
+    request: { auth: BackupAuth; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<MessageBackupInfo>;
+
+  /**
+   * Retrieves information about the currently stored media backup.
+   *
+   * The `auth` should be for a media credential.
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails. Note that the
+   * server does not distinguish an invalid credential from a backup-id that
+   * has never been provisioned: if {@link #setBackupPublicKey} has never been
+   * called for this backup-id, this request also fails with
+   * {@link RequestUnauthorizedError}. Callers using this to check whether a
+   * backup exists should treat that case as "backups not set up" rather than
+   * as a fatal error.
+   * @throws {StandardNetworkError}
+   */
+  getMediaBackupInfo: (
+    request: { auth: BackupAuth; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<MediaBackupInfo>;
+
+  /**
+   * Fetches the credentials for connecting to SVR-B (a username/password pair).
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails
+   * @throws {StandardNetworkError}
+   */
+  getBackupSvrBCredentials: (
+    request: { auth: BackupAuth; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<{ username: string; password: string }>;
+
+  /**
+   * Indicates that the backup is still active.
+   *
+   * Clients must periodically upload new backups or perform a refresh. If a backup has not been
+   * active for 30 days, it may be deleted.
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails
+   * @throws {StandardNetworkError}
+   */
+  refreshBackup: (
+    request: { auth: BackupAuth; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<void>;
+
+  /**
+   * Deletes all backup metadata, objects, and stored public key.
+   *
+   * To use backups again, a public key must be resupplied.
+   *
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails
+   * @throws {StandardNetworkError}
+   */
+  backupDeleteAll: (
+    request: { auth: BackupAuth; rng?: Rng },
+    options?: RequestOptions
+  ) => Promise<void>;
+
+  /**
+   * Copy and re-encrypt media from the attachments CDN into the backup CDN.
+   *
+   * The original, already encrypted, attachments will be encrypted with the
+   * provided key material before being copied. On retries, a particular destination media ID
+   * must not be reused with a different source media key or different encryption parameters.
+   *
+   * The copy operation is not atomic and responses will be returned as copy operations complete
+   * with detailed information about the outcome. If an error is encountered, not all requests
+   * may be reflected in the responses. However, there is no need to retry the items that did
+   * receive a response.
+   *
+   * The stream may be terminated at any time with the standard Signal network exceptions. In
+   * addition, the stream may terminate with {@link RequestUnauthorizedError} if there are
+   * authorization issues. Large numbers of items may result in multiple requests to the server,
+   * which means a `RequestUnauthorizedError` can happen in the middle of the stream.
+   */
+  copyBackupMedia: (request: {
+    auth: BackupAuth;
+    items: ReadonlyArray<CopyBackupMediaItem>;
+    rng?: Rng;
+  }) => ReadableStream<CopyBackupMediaOutcome>;
+
+  /**
+   * Delete media objects stored with this backup ID.
+   *
+   * The delete operation is not atomic and responses will be returned as delete operations
+   * complete. If an error is encountered, not all requests may be reflected in the responses.
+   * However, there is no need to retry the items that did receive a response.
+   *
+   * The stream may be terminated at any time with the standard Signal network exceptions. In
+   * addition, the stream may terminate with {@link RequestUnauthorizedError} if there are
+   * authorization issues. Large numbers of items may result in multiple requests to the server,
+   * which means a `RequestUnauthorizedError` can happen in the middle of the stream.
+   */
+  deleteBackupMedia: (request: {
+    auth: BackupAuth;
+    items: ReadonlyArray<DeleteBackupMediaItem>;
+    rng?: Rng;
+  }) => ReadableStream<DeleteBackupMediaItem>;
+
+  /**
+   * Lists media objects stored with this backup ID.
+   *
+   * This is a paginated API; each invocation will return a `cursor` to use in subsequent requests.
+   * The final page will not have a `cursor`.
+   *
+   * @param cursor pass the cursor from a previous response to fetch the next page of items
+   * @param limit a value up to `10_000`; omit this to leave the page size up to the server
+   * @param rng should be omitted in production
+   * @throws {RequestUnauthorizedError} if authorization fails
+   * @throws {StandardNetworkError}
+   */
+  listBackupMedia: (
+    request: {
+      auth: BackupAuth;
+      cursor?: string;
+      limit?: number;
+      rng?: Rng;
+    },
+    options?: RequestOptions
+  ) => Promise<ListMediaResponse>;
+}
+
+UnauthenticatedChatConnection.prototype.getUploadForm = async function (
+  {
+    auth: { credential, serverKeys, signingKey },
+    uploadSize,
+    rng,
+  }: {
+    auth: BackupAuth;
+    uploadSize: number;
+    rng?: Rng;
+  },
+  options?: RequestOptions
+) {
+  const { cdn, key, headers, signedUploadUrl } =
+    await this._asyncContext.makeCancellable(
+      options?.abortSignal,
+      Native.UnauthenticatedChatConnection_backup_get_upload_form(
+        this._asyncContext,
+        this._chatService,
+        credential.getContents(),
+        serverKeys.getContents(),
+        signingKey,
+        BigInt(uploadSize),
+        rng?.__deterministicRngSeedForTesting ?? -1
+      )
+    );
+  return {
+    cdn,
+    key,
+    headers: new Map(headers),
+    signedUploadUrl: new URL(signedUploadUrl),
+  };
+};
+
+UnauthenticatedChatConnection.prototype.getMediaUploadForm = async function (
+  {
+    auth: { credential, serverKeys, signingKey },
+    uploadSize,
+    rng,
+  }: {
+    auth: BackupAuth;
+    uploadSize: number;
+    rng?: Rng;
+  },
+  options?: RequestOptions
+) {
+  const { cdn, key, headers, signedUploadUrl } =
+    await this._asyncContext.makeCancellable(
+      options?.abortSignal,
+      Native.UnauthenticatedChatConnection_backup_get_media_upload_form(
+        this._asyncContext,
+        this._chatService,
+        credential.getContents(),
+        serverKeys.getContents(),
+        signingKey,
+        BigInt(uploadSize),
+        rng?.__deterministicRngSeedForTesting ?? -1
+      )
+    );
+  return {
+    cdn,
+    key,
+    headers: new Map(headers),
+    signedUploadUrl: new URL(signedUploadUrl),
+  };
+};
+
+UnauthenticatedChatConnection.prototype.setBackupPublicKey = async function (
+  { auth: { credential, serverKeys, signingKey }, rng },
+  options
+) {
+  await NativeNice.UnauthenticatedChatConnection_backup_set_public_key({
+    asyncContext: this._asyncContext,
+    chat: this._chatService,
+    credential,
+    serverKeys,
+    signingKey,
+    rng,
+    abortSignal: options?.abortSignal,
+  });
+};
+
+UnauthenticatedChatConnection.prototype.getBackupCdnCredentials =
+  async function (
+    { auth: { credential, serverKeys, signingKey }, cdn, rng },
+    options
+  ) {
+    return await NativeNice.UnauthenticatedChatConnection_backup_get_cdn_credentials(
+      {
+        asyncContext: this._asyncContext,
+        chat: this._chatService,
+        cdn,
+        credential,
+        serverKeys,
+        signingKey,
+        rng,
+        abortSignal: options?.abortSignal,
+      }
+    );
+  };
+
+UnauthenticatedChatConnection.prototype.getMessageBackupInfo = async function (
+  { auth: { credential, serverKeys, signingKey }, rng },
+  options
+) {
+  return await NativeNice.UnauthenticatedChatConnection_backup_get_message_backup_info(
+    {
+      asyncContext: this._asyncContext,
+      chat: this._chatService,
+      credential,
+      serverKeys,
+      signingKey,
+      rng,
+      abortSignal: options?.abortSignal,
+    }
+  );
+};
+
+UnauthenticatedChatConnection.prototype.getMediaBackupInfo = async function (
+  { auth: { credential, serverKeys, signingKey }, rng },
+  options
+) {
+  return await NativeNice.UnauthenticatedChatConnection_backup_get_media_backup_info(
+    {
+      asyncContext: this._asyncContext,
+      chat: this._chatService,
+      credential,
+      serverKeys,
+      signingKey,
+      rng,
+      abortSignal: options?.abortSignal,
+    }
+  );
+};
+
+UnauthenticatedChatConnection.prototype.getBackupSvrBCredentials =
+  async function (
+    { auth: { credential, serverKeys, signingKey }, rng },
+    options
+  ) {
+    const [username, password] =
+      await NativeNice.UnauthenticatedChatConnection_backup_get_svrb_credentials(
+        {
+          asyncContext: this._asyncContext,
+          chat: this._chatService,
+          credential,
+          serverKeys,
+          signingKey,
+          rng,
+          abortSignal: options?.abortSignal,
+        }
+      );
+    return { username, password };
+  };
+
+UnauthenticatedChatConnection.prototype.refreshBackup = async function (
+  { auth: { credential, serverKeys, signingKey }, rng },
+  options
+) {
+  await NativeNice.UnauthenticatedChatConnection_backup_refresh({
+    asyncContext: this._asyncContext,
+    chat: this._chatService,
+    credential,
+    serverKeys,
+    signingKey,
+    rng,
+    abortSignal: options?.abortSignal,
+  });
+};
+
+UnauthenticatedChatConnection.prototype.backupDeleteAll = async function (
+  { auth: { credential, serverKeys, signingKey }, rng },
+  options
+) {
+  await NativeNice.UnauthenticatedChatConnection_backup_delete_all({
+    asyncContext: this._asyncContext,
+    chat: this._chatService,
+    credential,
+    serverKeys,
+    signingKey,
+    rng,
+    abortSignal: options?.abortSignal,
+  });
+};
+
+UnauthenticatedChatConnection.prototype.copyBackupMedia = function ({
+  auth: { credential, serverKeys, signingKey },
+  items,
+  rng,
+}) {
+  const makeStream = NativeNice.UnauthenticatedChatConnection_backup_copy_media(
+    {
+      chat: this._chatService,
+      credential,
+      serverKeys,
+      signingKey,
+      items: items.map((next) => ({
+        ...next,
+        objectLength: BigInt(next.objectLength),
+      })),
+      rng,
+    }
+  );
+  return makeStream(this._asyncContext).pipeThrough(
+    new TransformStream({
+      transform: ({ media_id, result }, controller) => {
+        const niceResult =
+          NativeNice.returnConverterBridgeCopyBackupMediaResult(result);
+        controller.enqueue({
+          mediaId: media_id,
+          result:
+            typeof niceResult === 'object'
+              ? { cdn: niceResult.success }
+              : niceResult,
+        });
+      },
+    })
+  );
+};
+
+UnauthenticatedChatConnection.prototype.deleteBackupMedia = function ({
+  auth: { credential, serverKeys, signingKey },
+  items,
+  rng,
+}) {
+  const makeStream =
+    NativeNice.UnauthenticatedChatConnection_backup_delete_media({
+      chat: this._chatService,
+      credential,
+      serverKeys,
+      signingKey,
+      items: [...items],
+      rng,
+    });
+  return makeStream(this._asyncContext).pipeThrough(
+    new TransformStream({
+      transform: ({ media_id, cdn }, controller) => {
+        controller.enqueue({
+          mediaId: media_id,
+          cdn,
+        });
+      },
+    })
+  );
+};
+
+UnauthenticatedChatConnection.prototype.listBackupMedia = async function (
+  { auth: { credential, serverKeys, signingKey }, cursor, limit, rng },
+  options
+) {
+  const {
+    items,
+    backupDir,
+    mediaDir,
+    cursor: nextCursor,
+  } = await NativeNice.UnauthenticatedChatConnection_backup_list_media({
+    asyncContext: this._asyncContext,
+    chat: this._chatService,
+    credential,
+    serverKeys,
+    signingKey,
+    cursor: cursor ?? '',
+    limit: limit ?? -1,
+    rng,
+    abortSignal: options?.abortSignal,
+  });
+  return {
+    items,
+    backupDir,
+    mediaDir,
+    ...(nextCursor ? { cursor: nextCursor } : {}),
+  };
+};

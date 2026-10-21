@@ -21,7 +21,7 @@ use crate::backup::frame::RecipientId;
 use crate::backup::method::LookupPair;
 use crate::backup::serialize::{self, SerializeOrder, UnorderedList};
 use crate::backup::time::{ReportUnusualTimestamp, Timestamp, TimestampError};
-use crate::backup::TryIntoWith;
+use crate::backup::{HasUnknownFields, TryIntoWith};
 use crate::proto::backup as proto;
 use crate::proto::backup::recipient::Destination as RecipientDestination;
 
@@ -37,8 +37,8 @@ pub enum RecipientError {
     InvalidId,
     /// multiple frames with the same ID
     DuplicateRecipient,
-    /// Recipient.destination is a oneof but is empty
-    MissingDestination,
+    /// Recipient.destination is a oneof but is empty with {0}
+    MissingDestination(HasUnknownFields),
     /// invalid {0}
     InvalidServiceId(ServiceIdKind),
     /// invalid e164
@@ -51,12 +51,16 @@ pub enum RecipientError {
     MissingIdentityKey(proto::contact::IdentityState),
     /// Contact.nickname is present but empty
     NicknameIsPresentButEmpty,
+    /// Contact.sharedName is present but empty
+    SharedNameIsPresentButEmpty,
     /// distribution destination has invalid UUID
     InvalidDistributionId,
     /// invalid group: {0}
     InvalidGroup(#[from] GroupError),
     /// contact has neither an ACI, nor a PNI, nor an e164
     ContactHasNoIdentifiers,
+    /// contact has a blockedAtTimestamp but is not blocked
+    BlockedAtWithoutBlocked,
     /// contact has a PNI but no e164
     #[allow(dead_code)] // See the commented-out use site in this file.
     PniWithoutE164,
@@ -76,8 +80,8 @@ pub enum RecipientError {
     InvalidContactUsername,
     /// DistributionList for My Story should not be deleted
     CannotDeleteMyStory,
-    /// DistributionList.item is a oneof but is empty
-    DistributionListItemMissing,
+    /// DistributionList.item is a oneof but is empty with {0}
+    DistributionListItemMissing(HasUnknownFields),
     /// distribution list member {0:?} is unknown
     DistributionListMemberUnknown(RecipientId),
     /// distribution list member {0:?} appears multiple times
@@ -90,7 +94,7 @@ pub enum RecipientError {
     InvalidTimestamp(#[from] TimestampError),
 }
 
-/// Data kept in-memory from a [`proto::Recipient`] for [`ValidateOnly`] mode.
+/// Data kept in-memory from a [`proto::Recipient`] for [`ValidateOnly`](crate::ValidateOnly) mode.
 ///
 /// This is intentionally the minimal amount of data required to validate later frames.
 ///
@@ -103,6 +107,7 @@ pub enum MinimalRecipientData {
         e164: Option<E164>,
         aci: Option<Aci>,
         pni: Option<Pni>,
+        username: Option<String>,
     },
     Group {
         master_key: zkgroup::GroupMasterKeyBytes,
@@ -146,6 +151,11 @@ impl ChatRecipientKind {
             Self::ReleaseNotes => false,
             Self::Self_ => false,
         }
+    }
+
+    /// Returns true iff `self` is a group recipient.
+    pub fn is_group(&self) -> bool {
+        matches!(self, Self::Group)
     }
 }
 
@@ -221,7 +231,7 @@ impl AsRef<MinimalRecipientData> for MinimalRecipientData {
     }
 }
 
-/// Data kept in-memory from a [`proto::Recipient`] for [`Store`] mode.
+/// Data kept in-memory from a [`proto::Recipient`] for [`Store`](crate::Store) mode.
 ///
 /// This keeps the full data in memory behind a [`Arc`] so it can be cheaply
 /// cloned when referenced by later frames.
@@ -230,7 +240,7 @@ pub struct FullRecipientData(Arc<(MinimalRecipientData, Destination<FullRecipien
 
 impl serde::Serialize for FullRecipientData {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0 .1.serialize(serializer)
+        self.0.1.serialize(serializer)
     }
 }
 
@@ -292,6 +302,8 @@ pub struct ContactData {
     pub registration: Registration,
     pub e164: Option<E164>,
     pub blocked: bool,
+    // `None` when unblocked, or when the block time is unknown.
+    pub blocked_at: Option<Timestamp>,
     #[serde_as(as = "serialize::EnumAsString")]
     pub visibility: proto::contact::Visibility,
     pub profile_sharing: bool,
@@ -307,8 +319,10 @@ pub struct ContactData {
     pub system_given_name: String,
     pub system_family_name: String,
     pub system_nickname: String,
+    pub shared_name: Option<ContactName>,
     #[serde_as(as = "Option<serialize::EnumAsString>")]
     pub avatar_color: Option<proto::AvatarColor>,
+    pub key_transparency_data: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -316,6 +330,29 @@ pub struct ContactData {
 pub struct ContactName {
     pub given_name: String,
     pub family_name: String,
+}
+
+pub struct EmptyContactName;
+
+impl TryFrom<proto::contact::Name> for ContactName {
+    type Error = EmptyContactName;
+
+    fn try_from(value: proto::contact::Name) -> Result<Self, Self::Error> {
+        let proto::contact::Name {
+            given,
+            family,
+            special_fields: _,
+        } = value;
+
+        if given.is_empty() && family.is_empty() {
+            return Err(EmptyContactName);
+        }
+
+        Ok(ContactName {
+            given_name: given,
+            family_name: family,
+        })
+    }
 }
 
 #[serde_as]
@@ -376,16 +413,25 @@ impl AsRef<DestinationKind> for MinimalRecipientData {
 impl std::ops::Deref for FullRecipientData {
     type Target = Destination<FullRecipientData>;
     fn deref(&self) -> &Self::Target {
-        &self.0 .1
+        &self.0.1
     }
 }
 
 impl<R> From<Destination<R>> for MinimalRecipientData {
     fn from(value: Destination<R>) -> Self {
         match value {
-            Destination::Contact(ContactData { aci, pni, e164, .. }) => {
-                Self::Contact { e164, aci, pni }
-            }
+            Destination::Contact(ContactData {
+                aci,
+                pni,
+                username,
+                e164,
+                ..
+            }) => Self::Contact {
+                e164,
+                aci,
+                pni,
+                username,
+            },
             Destination::Group(GroupData { master_key, .. }) => Self::Group { master_key },
             Destination::DistributionList(
                 DistributionListItem::Deleted {
@@ -416,7 +462,7 @@ impl FullRecipientData {
 
 impl AsRef<MinimalRecipientData> for FullRecipientData {
     fn as_ref(&self) -> &MinimalRecipientData {
-        &self.0 .0
+        &self.0.0
     }
 }
 
@@ -463,10 +509,12 @@ impl<R: Clone, C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusu
         let Self {
             id: _,
             destination,
-            special_fields: _,
+            special_fields,
         } = self;
 
-        let destination = destination.ok_or(RecipientError::MissingDestination)?;
+        let destination = destination.ok_or_else(|| {
+            RecipientError::MissingDestination(HasUnknownFields::check(&special_fields))
+        })?;
 
         Ok(match destination {
             RecipientDestination::Contact(contact) => {
@@ -504,7 +552,9 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
             username,
             e164,
             blocked,
+            blockedAtTimestamp,
             visibility,
+            keyTransparencyData,
             registration,
             profileSharing,
             profileGivenName,
@@ -513,6 +563,7 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
             identityKey,
             identityState,
             nickname,
+            sharedName,
             note,
             systemGivenName,
             systemFamilyName,
@@ -536,7 +587,14 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
             .map(|username| {
                 usernames::Username::new(&username)
                     .map_err(|_| RecipientError::InvalidContactUsername)
-                    .map(|_| username)
+                    .map(|_| {
+                        // NB: There's a little bit of spooky at a distance here.
+                        // By storing the username in a cannonical lowercase format as soon as
+                        // we pull it in from the proto, we ensure that if this backup has multiple
+                        // usernames that are the same despite the capitalization, they will be
+                        // caught by the de-duplication check in the CompletedBackup::try_from.
+                        username.to_ascii_lowercase()
+                    })
             })
             .transpose()?;
 
@@ -576,6 +634,15 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
             .transpose()
             .map_err(|_| RecipientError::InvalidE164)?;
 
+        // A zero value means the block time is unknown (or the contact is not blocked).
+        let blocked_at = NonZeroU64::new(blockedAtTimestamp);
+        if blocked_at.is_some() && !blocked {
+            return Err(RecipientError::BlockedAtWithoutBlocked);
+        }
+        let blocked_at = blocked_at
+            .map(|u| Timestamp::from_millis(u.get(), "Contact.blockedAtTimestamp", context))
+            .transpose()?;
+
         match (&aci, &pni, &e164) {
             (None, None, None) => Err(RecipientError::ContactHasNoIdentifiers),
             // There are a few scenarios where a client can learn of a PNI directly,
@@ -603,22 +670,15 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
 
         let nickname = nickname
             .into_option()
-            .map(
-                |proto::contact::Name {
-                     given,
-                     family,
-                     special_fields: _,
-                 }| {
-                    if given.is_empty() && family.is_empty() {
-                        return Err(RecipientError::NicknameIsPresentButEmpty);
-                    }
-                    Ok(ContactName {
-                        given_name: given,
-                        family_name: family,
-                    })
-                },
-            )
-            .transpose()?;
+            .map(ContactName::try_from)
+            .transpose()
+            .map_err(|_| RecipientError::NicknameIsPresentButEmpty)?;
+
+        let shared_name = sharedName
+            .into_option()
+            .map(ContactName::try_from)
+            .transpose()
+            .map_err(|_| RecipientError::SharedNameIsPresentButEmpty)?;
 
         // The color is allowed to be unset.
         let avatar_color = avatarColor.map(|v| v.enum_value_or_default());
@@ -631,6 +691,7 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
             username,
             e164,
             blocked,
+            blocked_at,
             visibility,
             profile_sharing: profileSharing,
             profile_given_name: profileGivenName,
@@ -643,7 +704,9 @@ impl<C: ReportUnusualTimestamp> TryIntoWith<ContactData, C> for proto::Contact {
             system_given_name: systemGivenName,
             system_family_name: systemFamilyName,
             system_nickname: systemNickname,
+            shared_name,
             avatar_color,
+            key_transparency_data: keyTransparencyData,
         })
     }
 }
@@ -657,7 +720,7 @@ impl<R: Clone, C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusu
         let Self {
             distributionId,
             item,
-            special_fields: _,
+            special_fields,
         } = self;
 
         let distribution_id = Uuid::from_bytes(
@@ -665,107 +728,105 @@ impl<R: Clone, C: LookupPair<RecipientId, MinimalRecipientData, R> + ReportUnusu
                 .try_into()
                 .map_err(|_| RecipientError::InvalidDistributionId)?,
         );
+        let item = item.ok_or_else(|| {
+            RecipientError::DistributionListItemMissing(HasUnknownFields::check(&special_fields))
+        })?;
 
-        Ok(
-            match item.ok_or(RecipientError::DistributionListItemMissing)? {
-                proto::distribution_list_item::Item::DeletionTimestamp(deletion_timestamp) => {
-                    if distribution_id == MY_STORY_UUID {
-                        return Err(RecipientError::CannotDeleteMyStory);
-                    }
-
-                    let at = Timestamp::from_millis(
-                        deletion_timestamp,
-                        "DistributionList.deletionTimestamp",
-                        context,
-                    )?;
-                    DistributionListItem::Deleted {
-                        distribution_id,
-                        at,
-                    }
+        Ok(match item {
+            proto::distribution_list_item::Item::DeletionTimestamp(deletion_timestamp) => {
+                if distribution_id == MY_STORY_UUID {
+                    return Err(RecipientError::CannotDeleteMyStory);
                 }
-                proto::distribution_list_item::Item::DistributionList(
-                    proto::DistributionList {
-                        name,
-                        allowReplies,
-                        privacyMode,
-                        memberRecipientIds,
-                        special_fields: _,
-                    },
-                ) => {
-                    let mut members_seen = IntMap::default();
-                    let members: UnorderedList<R> = memberRecipientIds
-                        .into_iter()
-                        .map(|id| {
-                            let id = RecipientId(id);
-                            if members_seen.insert(id, ()).is_some() {
-                                return Err(RecipientError::DistributionListMemberDuplicate(id));
-                            }
-                            let (recipient_data, recipient_reference) = context
-                                .lookup_pair(&id)
-                                .ok_or(RecipientError::DistributionListMemberUnknown(id))?;
-                            match recipient_data {
-                                MinimalRecipientData::Contact {
-                                    aci: None,
-                                    pni: None,
-                                    e164: _,
-                                } => Err(RecipientError::DistributionListMemberHasNoServiceIds(id)),
-                                MinimalRecipientData::Contact { .. } => {
-                                    Ok(recipient_reference.clone())
-                                }
-                                MinimalRecipientData::Group { .. }
-                                | MinimalRecipientData::DistributionList { .. }
-                                | MinimalRecipientData::Self_
-                                | MinimalRecipientData::ReleaseNotes
-                                | MinimalRecipientData::CallLink { .. } => {
-                                    Err(RecipientError::DistributionListMemberWrongKind(
-                                        id,
-                                        *recipient_data.as_ref(),
-                                    ))
-                                }
-                            }
-                        })
-                        .try_collect()?;
 
-                    let privacy_mode = match (
-                        privacyMode.enum_value_or_default(),
-                        distribution_id == MY_STORY_UUID,
-                    ) {
-                        (proto::distribution_list::PrivacyMode::UNKNOWN, _) => {
-                            return Err(RecipientError::DistributionListPrivacyUnknown)
-                        }
-                        (proto::distribution_list::PrivacyMode::ONLY_WITH, _) => {
-                            PrivacyMode::OnlyWith(members)
-                        }
-                        (proto::distribution_list::PrivacyMode::ALL_EXCEPT, true) => {
-                            if members.is_empty() {
-                                return Err(
-                                    RecipientError::DistributionListPrivacyAllExceptWithEmptyMembers,
-                                );
-                            }
-                            PrivacyMode::AllExcept(members)
-                        }
-                        (proto::distribution_list::PrivacyMode::ALL, true) => {
-                            if !members.is_empty() {
-                                return Err(
-                                    RecipientError::DistributionListPrivacyAllWithNonemptyMembers,
-                                );
-                            }
-                            PrivacyMode::All
-                        }
-                        (privacy, false) => {
-                            return Err(RecipientError::DistributionListPrivacyInvalid(privacy));
-                        }
-                    };
-
-                    DistributionListItem::List {
-                        distribution_id,
-                        name,
-                        allow_replies: allowReplies,
-                        privacy_mode,
-                    }
+                let at = Timestamp::from_millis(
+                    deletion_timestamp,
+                    "DistributionList.deletionTimestamp",
+                    context,
+                )?;
+                DistributionListItem::Deleted {
+                    distribution_id,
+                    at,
                 }
-            },
-        )
+            }
+            proto::distribution_list_item::Item::DistributionList(proto::DistributionList {
+                name,
+                allowReplies,
+                privacyMode,
+                memberRecipientIds,
+                special_fields: _,
+            }) => {
+                let mut members_seen = IntMap::default();
+                let members: UnorderedList<R> = memberRecipientIds
+                    .into_iter()
+                    .map(|id| {
+                        let id = RecipientId(id);
+                        if members_seen.insert(id, ()).is_some() {
+                            return Err(RecipientError::DistributionListMemberDuplicate(id));
+                        }
+                        let (recipient_data, recipient_reference) = context
+                            .lookup_pair(&id)
+                            .ok_or(RecipientError::DistributionListMemberUnknown(id))?;
+                        match recipient_data {
+                            MinimalRecipientData::Contact {
+                                aci: None,
+                                pni: None,
+                                e164: _,
+                                username: _,
+                            } => Err(RecipientError::DistributionListMemberHasNoServiceIds(id)),
+                            MinimalRecipientData::Contact { .. } => Ok(recipient_reference.clone()),
+                            MinimalRecipientData::Group { .. }
+                            | MinimalRecipientData::DistributionList { .. }
+                            | MinimalRecipientData::Self_
+                            | MinimalRecipientData::ReleaseNotes
+                            | MinimalRecipientData::CallLink { .. } => {
+                                Err(RecipientError::DistributionListMemberWrongKind(
+                                    id,
+                                    *recipient_data.as_ref(),
+                                ))
+                            }
+                        }
+                    })
+                    .try_collect()?;
+
+                let privacy_mode = match (
+                    privacyMode.enum_value_or_default(),
+                    distribution_id == MY_STORY_UUID,
+                ) {
+                    (proto::distribution_list::PrivacyMode::UNKNOWN, _) => {
+                        return Err(RecipientError::DistributionListPrivacyUnknown);
+                    }
+                    (proto::distribution_list::PrivacyMode::ONLY_WITH, _) => {
+                        PrivacyMode::OnlyWith(members)
+                    }
+                    (proto::distribution_list::PrivacyMode::ALL_EXCEPT, true) => {
+                        if members.is_empty() {
+                            return Err(
+                                RecipientError::DistributionListPrivacyAllExceptWithEmptyMembers,
+                            );
+                        }
+                        PrivacyMode::AllExcept(members)
+                    }
+                    (proto::distribution_list::PrivacyMode::ALL, true) => {
+                        if !members.is_empty() {
+                            return Err(
+                                RecipientError::DistributionListPrivacyAllWithNonemptyMembers,
+                            );
+                        }
+                        PrivacyMode::All
+                    }
+                    (privacy, false) => {
+                        return Err(RecipientError::DistributionListPrivacyInvalid(privacy));
+                    }
+                };
+
+                DistributionListItem::List {
+                    distribution_id,
+                    name,
+                    allow_replies: allowReplies,
+                    privacy_mode,
+                }
+            }
+        })
     }
 }
 
@@ -833,6 +894,12 @@ mod test {
                     ..Default::default()
                 })
                 .into(),
+                sharedName: Some(proto::contact::Name {
+                    given: "GivenSharedName".to_owned(),
+                    family: "FamilySharedName".to_owned(),
+                    ..Default::default()
+                })
+                .into(),
                 systemGivenName: "GivenSystemName".to_owned(),
                 systemFamilyName: "FamilySystemName".to_owned(),
                 systemNickname: "SystemNickName".to_owned(),
@@ -871,6 +938,7 @@ mod test {
                 username: Some("example.1234".to_owned()),
                 e164: Some(proto::Contact::TEST_E164),
                 blocked: false,
+                blocked_at: None,
                 visibility: proto::contact::Visibility::VISIBLE,
                 profile_sharing: false,
                 profile_given_name: Some("GivenName".to_owned()),
@@ -887,22 +955,37 @@ mod test {
                 system_given_name: "GivenSystemName".to_owned(),
                 system_family_name: "FamilySystemName".to_owned(),
                 system_nickname: "SystemNickName".to_owned(),
+                shared_name: Some(ContactName {
+                    given_name: "GivenSharedName".to_owned(),
+                    family_name: "FamilySharedName".to_owned(),
+                }),
                 note: "nb".into(),
                 avatar_color: None,
+                key_transparency_data: None,
             }
         }
     }
 
     #[test]
     fn requires_destination() {
-        let recipient = proto::Recipient {
+        let mut recipient = proto::Recipient {
             destination: None,
             ..proto::Recipient::test_data()
         };
 
         assert_matches!(
+            recipient.clone().try_into_with(&TestContext::default()),
+            Err(RecipientError::MissingDestination(HasUnknownFields::No))
+        );
+
+        recipient
+            .special_fields
+            .mut_unknown_fields()
+            .add_length_delimited(999, vec![]);
+
+        assert_matches!(
             recipient.try_into_with(&TestContext::default()),
-            Err(RecipientError::MissingDestination)
+            Err(RecipientError::MissingDestination(HasUnknownFields::Yes))
         );
     }
 
@@ -964,6 +1047,15 @@ mod test {
     #[test_case(|x| x.nickname.as_mut().unwrap().given = "".into() => Ok(()); "no nickname given name")]
     #[test_case(|x| x.nickname.as_mut().unwrap().family = "".into() => Ok(()); "no nickname family name")]
     #[test_case(|x| x.nickname = Some(Default::default()).into() => Err(RecipientError::NicknameIsPresentButEmpty); "no nickname given or family name")]
+    #[test_case(|x| x.sharedName = None.into() => Ok(()); "no shared name")]
+    #[test_case(|x| x.sharedName.as_mut().unwrap().given = "".into() => Ok(()); "no shared name given name")]
+    #[test_case(|x| x.sharedName.as_mut().unwrap().family = "".into() => Ok(()); "no shared name family name")]
+    #[test_case(|x| x.sharedName = Some(Default::default()).into() => Err(RecipientError::SharedNameIsPresentButEmpty); "no shared name given or family name")]
+    #[test_case(|x| {x.blocked = true; x.blockedAtTimestamp = 1000} => Ok(()); "blocked with blockedAtTimestamp")]
+    #[test_case(|x| x.blocked = true => Ok(()); "blocked without blockedAtTimestamp")]
+    #[test_case(|x| x.blockedAtTimestamp = 1000 => Err(RecipientError::BlockedAtWithoutBlocked); "blockedAtTimestamp without blocked")]
+    // The blocked/blockedAtTimestamp consistency check runs before the timestamp is validated.
+    #[test_case(|x| x.blockedAtTimestamp = MillisecondsSinceEpoch::FAR_FUTURE.0 => Err(RecipientError::BlockedAtWithoutBlocked); "invalid blockedAtTimestamp without blocked")]
     fn destination_contact(modifier: fn(&mut proto::Contact)) -> Result<(), RecipientError> {
         let mut contact = proto::Contact::test_data();
         modifier(&mut contact);
@@ -991,6 +1083,11 @@ mod test {
 
     #[test_case(|x| x.masterKey = vec![] => Err(RecipientError::InvalidGroup(GroupError::InvalidMasterKey)); "invalid master key")]
     #[test_case(|x| x.storySendMode = Default::default() => Ok(()); "default story send mode")]
+    #[test_case(|x| {x.blocked = true; x.blockedAtTimestamp = 1000} => Ok(()); "blocked with blockedAtTimestamp")]
+    #[test_case(|x| x.blocked = true => Ok(()); "blocked without blockedAtTimestamp")]
+    #[test_case(|x| x.blockedAtTimestamp = 1000 => Err(RecipientError::InvalidGroup(GroupError::BlockedAtWithoutBlocked)); "blockedAtTimestamp without blocked")]
+    // The blocked/blockedAtTimestamp consistency check runs before the timestamp is validated.
+    #[test_case(|x| x.blockedAtTimestamp = MillisecondsSinceEpoch::FAR_FUTURE.0 => Err(RecipientError::InvalidGroup(GroupError::BlockedAtWithoutBlocked)); "invalid blockedAtTimestamp without blocked")]
     fn destination_group(modifier: fn(&mut proto::Group)) -> Result<(), RecipientError> {
         let mut group = proto::Group::test_data();
         modifier(&mut group);

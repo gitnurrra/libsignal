@@ -39,7 +39,16 @@
         "storyViewReceiptsEnabled": true,
         "hasSeenGroupStoryEducationSheet": true,
         "hasCompletedUsernameOnboarding": true,
-        "phoneNumberSharingMode": "NOBODY"
+        "phoneNumberSharingMode": "NOBODY",
+        "defaultSentMediaQuality": "STANDARD",
+        "appTheme": "SYSTEM",
+        "callsUseLessDataSetting": "MOBILE_DATA_ONLY",
+        "unreadBadgeType": "UNREAD_MESSAGES"
+      },
+      "androidSpecificSettings": {
+        "useSystemEmoji": true,
+        "screenshotSecurity": true,
+        "navigationBarSize": "NORMAL"
       }
     }
   },

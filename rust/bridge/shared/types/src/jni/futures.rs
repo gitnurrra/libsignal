@@ -6,6 +6,7 @@
 use std::future::Future;
 
 use futures_util::{FutureExt, TryFutureExt};
+use libsignal_debug::trace_block;
 
 use super::*;
 use crate::support::{AsyncRuntime, CancellationId, ResultReporter};
@@ -13,8 +14,8 @@ use crate::support::{AsyncRuntime, CancellationId, ResultReporter};
 /// Used to complete a Java CompletableFuture from any thread.
 pub struct FutureCompleter<T> {
     jvm: JavaVM,
-    future: GlobalRef,
-    future_creation_stack_trace_elements: GlobalRef,
+    future: Global<JObject<'static>>,
+    future_creation_stack_trace_elements: Global<JObject<'static>>,
     complete_signature: PhantomData<fn(T)>,
 }
 
@@ -37,7 +38,7 @@ impl<T: for<'a> ResultTypeInfo<'a> + std::panic::UnwindSafe> FutureCompleter<T> 
     ///
     /// `future` is expected to refer to a CompletableFuture instance, and will
     /// have methods called on it that match the signatures on CompletableFuture.
-    pub fn new(env: &mut JNIEnv, future: &JObject) -> Result<Self, BridgeLayerError> {
+    pub fn new(env: &mut jni::Env, future: &JObject) -> Result<Self, BridgeLayerError> {
         let future_creation_stack_trace_elements = Self::get_current_thread_stack_trace(env)?;
 
         Ok(Self {
@@ -51,8 +52,9 @@ impl<T: for<'a> ResultTypeInfo<'a> + std::panic::UnwindSafe> FutureCompleter<T> 
     }
 
     fn get_current_thread_stack_trace<'a>(
-        env: &mut JNIEnv<'a>,
+        env: &mut jni::Env<'a>,
     ) -> Result<JObject<'a>, BridgeLayerError> {
+        let _guard = trace_block!("get_current_thread_stack_trace");
         let thread_class = find_class(env, ClassName("java.lang.Thread")).expect_no_exceptions()?;
         let thread = call_static_method_checked(
             env,
@@ -89,83 +91,84 @@ impl<T: for<'a> ResultTypeInfo<'a> + std::panic::UnwindSafe, U> ResultReporter
             complete_signature: _,
         } = receiver;
 
-        let mut env = match jvm.attach_current_thread() {
-            Ok(attach_guard) => attach_guard,
-            Err(e) => {
-                // Most likely this log will fail too,
-                // but really we don't expect attach_current_thread to fail at all.
-                log::error!("failed to attach to JVM: {e}");
-                return;
+        jvm.attach_current_thread_for_scope(
+            move |mut env| -> jni::errors::Result<()> {
+                // Catch panics while converting successful results to Java values.
+                // (We have no *expected* panics, but we don't want to bring down the process for a
+                // libsignal-internal bug if we can help it.)
+                let maybe_error: SignalJniResult<()> = {
+                    // This AssertUnwindSafe isn't totally justified, but if we get a panic talking to the
+                    // JVM, we have bigger problems.
+                    // Note that we need an extra &mut even though `env` is already `&mut jni::Env`,
+                    // so we can *release* it once this block is over.
+                    let env_for_catch_unwind = std::panic::AssertUnwindSafe(&mut env);
+                    let future_for_catch_unwind = &future;
+                    result.and_then(|result| {
+                        std::panic::catch_unwind(move || {
+                            // Force the lambda to capture the whole struct instead of an individual field.
+                            let _ = &env_for_catch_unwind;
+                            let env = env_for_catch_unwind.0;
+                            result
+                                .convert_into(env)
+                                .and_then(|result| {
+                                    let result_as_jobject = box_primitive_if_needed(env, result.into())?;
+                                    _ = call_method_checked(
+                                        env,
+                                        future_for_catch_unwind,
+                                        "complete",
+                                        jni_args!((result_as_jobject => java.lang.Object) -> boolean),
+                                    )?;
+                                    Ok(())
+                                })
+                                .map_err(Into::into)
+                        })
+                        .unwrap_or_else(|panic| Err(BridgeLayerError::unexpected_panic(panic).into()))
+                    })
+                };
+
+                // From this point on we can't catch panics, because SignalJniError isn't UnwindSafe. This
+                // is consistent with the synchronous implementation in run_ffi_safe, which doesn't catch
+                // panics when converting errors to exceptions either.
+                let future_for_convert = &future;
+                let stack_elements_for_convert = &future_creation_stack_trace_elements;
+                maybe_error.unwrap_or_else(move |error| {
+                    let throwable = error.to_throwable(env);
+                    throwable
+                        .and_then(move |throwable| {
+                            call_method_checked(
+                                env,
+                                &throwable,
+                                "setStackTrace",
+                                jni_args!((stack_elements_for_convert => [java.lang.StackTraceElement]) -> void),
+                            )?;
+
+                            _ = call_method_checked(
+                                env,
+                                future_for_convert,
+                                "completeExceptionally",
+                                jni_args!((throwable => java.lang.Throwable) -> boolean),
+                            )?;
+                            Ok(())
+                        })
+                        .unwrap_or_else(|completion_error| {
+                            log::error!(
+                                "failed to complete Future with error \"{error}\": {completion_error}"
+                            );
+                        });
+                });
+
+                // Explicitly drop these while the thread is still attached to the JVM.
+                drop(future);
+                drop(future_creation_stack_trace_elements);
+                drop(extra_args_to_drop);
+
+                Ok(())
             }
-        };
-
-        // Catch panics while converting successful results to Java values.
-        // (We have no *expected* panics, but we don't want to bring down the process for a
-        // libsignal-internal bug if we can help it.)
-        let maybe_error: SignalJniResult<()> = result.and_then(|result| {
-            // This AssertUnwindSafe isn't totally justified, but if we get a panic talking to the
-            // JVM, we have bigger problems.
-            let env_for_catch_unwind = std::panic::AssertUnwindSafe(&mut env);
-            let future_for_catch_unwind = &future;
-            std::panic::catch_unwind(move || {
-                // Force the lambda to capture the whole struct instead of an individual field.
-                let _ = &env_for_catch_unwind;
-                let env = env_for_catch_unwind.0;
-                result
-                    .convert_into(env)
-                    .and_then(|result| {
-                        let result_as_jobject = box_primitive_if_needed(env, result.into())?;
-                        _ = call_method_checked(
-                            env,
-                            future_for_catch_unwind,
-                            "complete",
-                            jni_args!((result_as_jobject => java.lang.Object) -> boolean),
-                        )?;
-                        Ok(())
-                    })
-                    .map_err(Into::into)
-            })
-            .unwrap_or_else(|panic| Err(BridgeLayerError::UnexpectedPanic(panic).into()))
+        ).unwrap_or_else(|e: jni::errors::Error| {
+            // Most likely this log will fail too,
+            // but really we don't expect attach_current_thread to fail at all.
+            log::error!("failed to attach to JVM: {e}");
         });
-
-        // From this point on we can't catch panics, because SignalJniError isn't UnwindSafe. This
-        // is consistent with the synchronous implementation in run_ffi_safe, which doesn't catch
-        // panics when converting errors to exceptions either.
-        let future_for_convert = &future;
-        let stack_elements_for_convert = &future_creation_stack_trace_elements;
-        let env_mut = &mut *env;
-        maybe_error.unwrap_or_else(move |error| {
-            convert_to_exception(env_mut, error, move |env, throwable, error| {
-                throwable
-                    .and_then(move |throwable| {
-                        call_method_checked(
-                            env,
-                            &throwable,
-                            "setStackTrace",
-                            jni_args!((stack_elements_for_convert => [java.lang.StackTraceElement]) -> void),
-                        )?;
-
-                        _ = call_method_checked(
-                            env,
-                            future_for_convert,
-                            "completeExceptionally",
-                            jni_args!((throwable => java.lang.Throwable) -> boolean),
-                        )?;
-                        Ok(())
-                    })
-                    .unwrap_or_else(|completion_error| {
-                        log::error!(
-                            "failed to complete Future with error \"{error}\": {completion_error}"
-                        );
-                    });
-            })
-        });
-
-        // Explicitly drop these while the thread is still attached to the JVM.
-        drop(future);
-        drop(future_creation_stack_trace_elements);
-        drop(extra_args_to_drop);
-        drop(env);
     }
 }
 
@@ -179,11 +182,10 @@ impl<T: for<'a> ResultTypeInfo<'a> + std::panic::UnwindSafe, U> ResultReporter
 /// ## Example
 ///
 /// ```no_run
-/// # use jni::JNIEnv;
 /// # use libsignal_bridge_types::jni::*;
 /// # use libsignal_bridge_types::support::NoOpAsyncRuntime;
-/// # fn test(env: &mut JNIEnv, async_runtime: &NoOpAsyncRuntime) -> SignalJniResult<()> {
-/// let java_future = run_future_on_runtime(env, async_runtime, |_cancel| async {
+/// # fn test(env: &mut jni::Env, async_runtime: &NoOpAsyncRuntime) -> SignalJniResult<()> {
+/// let java_future = run_future_on_runtime(env, async_runtime, "task", |_cancel| async {
 ///     let result: i32 = 1 + 2;
 ///     // Do some complicated awaiting here.
 ///     FutureResultReporter::new(Ok(result), ())
@@ -191,8 +193,9 @@ impl<T: for<'a> ResultTypeInfo<'a> + std::panic::UnwindSafe, U> ResultReporter
 /// # Ok(())
 /// # }
 pub fn run_future_on_runtime<'local, R, F, O>(
-    env: &mut JNIEnv<'local>,
+    env: &mut jni::Env<'local>,
     runtime: &R,
+    label: &'static str,
     future: impl FnOnce(R::Cancellation) -> F,
 ) -> SignalJniResult<JavaCompletableFuture<'local, <O as ResultTypeInfo<'local>>::ResultType>>
 where
@@ -209,7 +212,7 @@ where
     )?;
 
     let completer = FutureCompleter::new(env, &java_future)?;
-    let cancellation_token = runtime.run_future(future, completer);
+    let cancellation_token = runtime.run_future(future, completer, label);
     if let CancellationId::Id(cancellation_id) = cancellation_token {
         call_method_checked(
             env,
@@ -222,11 +225,12 @@ where
     Ok(java_future.into())
 }
 
-/// Catches panics that occur in `future` and converts them to [`BridgeLayerError::UnexpectedPanic`].
+/// Catches panics that occur in `future` and converts them to
+/// [`crate::jni::BridgeLayerErrorInner::UnexpectedPanic`]
 pub fn catch_unwind<'a, O>(
     future: impl Future<Output = SignalJniResult<O>> + Send + std::panic::UnwindSafe + 'a,
 ) -> impl Future<Output = SignalJniResult<O>> + Send + std::panic::UnwindSafe + 'a {
     future
         .catch_unwind()
-        .unwrap_or_else(|panic| Err(BridgeLayerError::UnexpectedPanic(panic).into()))
+        .unwrap_or_else(|panic| Err(BridgeLayerError::unexpected_panic(panic).into()))
 }

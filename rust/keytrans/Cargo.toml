@@ -8,7 +8,7 @@ name = "libsignal-keytrans"
 version = "0.0.1"
 authors.workspace = true
 license.workspace = true
-edition = "2021"
+edition = "2024"
 
 [lints]
 workspace = true
@@ -17,9 +17,12 @@ workspace = true
 curve25519-dalek = { workspace = true }
 displaydoc = { workspace = true }
 ed25519-dalek = { workspace = true }
+hex = { workspace = true }
 hmac = { workspace = true }
+itertools = { workspace = true }
 prost = { workspace = true }
 sha2 = { workspace = true }
+zerocopy = { workspace = true, features = ["derive"] }
 
 [build-dependencies]
 prost-build = { workspace = true }

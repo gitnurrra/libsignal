@@ -7,10 +7,11 @@
 
 #![warn(missing_docs)]
 
+use libsignal_core::{ProtocolAddress, ServiceId};
 use prost::Message;
 use rand::{CryptoRng, Rng};
 
-use crate::{proto, KeyPair, PrivateKey, PublicKey, Result, SignalProtocolError};
+use crate::{KeyPair, PrivateKey, PublicKey, Result, SignalProtocolError, proto};
 
 // Used for domain separation between alternate-identity signatures and other key-to-key signatures.
 const ALTERNATE_IDENTITY_SIGNATURE_PREFIX_1: &[u8] = &[0xFF; 32];
@@ -19,9 +20,7 @@ const ALTERNATE_IDENTITY_SIGNATURE_PREFIX_2: &[u8] = b"Signal_PNI_Signature";
 /// A public key that represents the identity of a user.
 ///
 /// Wrapper for [`PublicKey`].
-#[derive(
-    Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, derive_more::From, derive_more::Into,
-)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, derive_more::From, derive_more::Into)]
 pub struct IdentityKey {
     public_key: PublicKey,
 }
@@ -36,6 +35,11 @@ impl IdentityKey {
     #[inline]
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+
+    /// Return the public key representing this identity
+    pub fn into_public_key(self) -> PublicKey {
+        self.public_key
     }
 
     /// Return an owned byte slice which can be deserialized with [`Self::decode`].
@@ -63,6 +67,32 @@ impl IdentityKey {
             ],
             signature,
         ))
+    }
+
+    /// Do two (identity key, protocol address) pairs map to the same account
+    ///
+    /// This function will always return false if the names in the protocol addresses aren't valid
+    /// service IDs.
+    pub fn is_same_account(
+        &self,
+        self_protocol_address: &ProtocolAddress,
+        other_key: &IdentityKey,
+        other_protocol_address: &ProtocolAddress,
+    ) -> bool {
+        if self.public_key() != other_key.public_key() {
+            return false;
+        }
+        let Some(self_service_id) =
+            ServiceId::parse_from_service_id_string(self_protocol_address.name())
+        else {
+            return false;
+        };
+        let Some(other_service_id) =
+            ServiceId::parse_from_service_id_string(other_protocol_address.name())
+        else {
+            return false;
+        };
+        self_service_id == other_service_id
     }
 }
 
@@ -197,8 +227,8 @@ impl From<IdentityKeyPair> for KeyPair {
 
 #[cfg(test)]
 mod tests {
-    use rand::rngs::OsRng;
     use rand::TryRngCore as _;
+    use rand::rngs::OsRng;
 
     use super::*;
 
@@ -245,28 +275,38 @@ mod tests {
         let secondary = IdentityKeyPair::generate(&mut rng);
 
         let signature = secondary.sign_alternate_identity(primary.identity_key(), &mut rng)?;
-        assert!(secondary
-            .identity_key()
-            .verify_alternate_identity(primary.identity_key(), &signature)?);
+        assert!(
+            secondary
+                .identity_key()
+                .verify_alternate_identity(primary.identity_key(), &signature)?
+        );
         // Not symmetric.
-        assert!(!primary
-            .identity_key()
-            .verify_alternate_identity(secondary.identity_key(), &signature)?);
+        assert!(
+            !primary
+                .identity_key()
+                .verify_alternate_identity(secondary.identity_key(), &signature)?
+        );
 
         let another_signature =
             secondary.sign_alternate_identity(primary.identity_key(), &mut rng)?;
         assert_ne!(signature, another_signature);
-        assert!(secondary
-            .identity_key()
-            .verify_alternate_identity(primary.identity_key(), &another_signature)?);
+        assert!(
+            secondary
+                .identity_key()
+                .verify_alternate_identity(primary.identity_key(), &another_signature)?
+        );
 
         let unrelated = IdentityKeyPair::generate(&mut rng);
-        assert!(!secondary
-            .identity_key()
-            .verify_alternate_identity(unrelated.identity_key(), &signature)?);
-        assert!(!unrelated
-            .identity_key()
-            .verify_alternate_identity(primary.identity_key(), &signature)?);
+        assert!(
+            !secondary
+                .identity_key()
+                .verify_alternate_identity(unrelated.identity_key(), &signature)?
+        );
+        assert!(
+            !unrelated
+                .identity_key()
+                .verify_alternate_identity(primary.identity_key(), &signature)?
+        );
 
         Ok(())
     }

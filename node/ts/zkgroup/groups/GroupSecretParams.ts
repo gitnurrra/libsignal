@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { randomBytes } from 'crypto';
+import type { Bytes } from '@signalapp/types';
+import { randomBytes } from 'node:crypto';
 
-import ByteArray from '../internal/ByteArray';
-import * as Native from '../../../Native';
-import { RANDOM_LENGTH } from '../internal/Constants';
-import GroupMasterKey from './GroupMasterKey';
-import GroupPublicParams from './GroupPublicParams';
+import ByteArray from '../internal/ByteArray.js';
+import * as Native from '../../Native.js';
+import { RANDOM_LENGTH } from '../internal/Constants.js';
+import GroupMasterKey from './GroupMasterKey.js';
+import GroupPublicParams from './GroupPublicParams.js';
 
 export default class GroupSecretParams extends ByteArray {
   private readonly __type?: never;
@@ -20,7 +21,7 @@ export default class GroupSecretParams extends ByteArray {
     return GroupSecretParams.generateWithRandom(random);
   }
 
-  static generateWithRandom(random: Uint8Array): GroupSecretParams {
+  static generateWithRandom(random: Bytes): GroupSecretParams {
     return new GroupSecretParams(
       Native.GroupSecretParams_GenerateDeterministic(random)
     );
@@ -34,7 +35,7 @@ export default class GroupSecretParams extends ByteArray {
     );
   }
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, Native.GroupSecretParams_CheckValidContents);
   }
 

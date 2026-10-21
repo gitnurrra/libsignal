@@ -8,7 +8,16 @@
         "account": {
             "profileKey": "YQKRq+3DQklInaOaMcmlzZnN0m/1hzLiaONX7gB12dg=",
             "accountSettings": {
-                "phoneNumberSharingMode": "NOBODY"
+                "phoneNumberSharingMode": "NOBODY",
+                "defaultSentMediaQuality": "STANDARD",
+                "appTheme": "SYSTEM",
+                "callsUseLessDataSetting": "MOBILE_DATA_ONLY",
+                "unreadBadgeType": "UNREAD_MESSAGES"
+            },
+            "androidSpecificSettings": {
+                "useSystemEmoji": true,
+                "screenshotSecurity": true,
+                "navigationBarSize": "NORMAL"
             }
         }
     },

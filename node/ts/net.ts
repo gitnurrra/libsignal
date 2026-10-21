@@ -4,27 +4,78 @@
 //
 
 import type { ReadonlyDeep } from 'type-fest';
-import * as Native from '../Native';
-import { cdsiLookup, CDSRequestOptionsType, CDSResponseType } from './net/CDSI';
+import type { Bytes } from '@signalapp/types';
+
+import * as Native from './Native.js';
+import {
+  cdsiLookup,
+  CDSRequestOptionsType,
+  CDSResponseType,
+} from './net/CDSI.js';
 import {
   ChatConnection,
   ConnectionEventsListener,
   UnauthenticatedChatConnection,
   AuthenticatedChatConnection,
   ChatServiceListener,
-} from './net/Chat';
-import { RegistrationService } from './net/Registration';
-import { SvrB } from './net/SvrB';
-import { BridgedStringMap, newNativeHandle } from './internal';
-export * from './net/CDSI';
-export * from './net/Chat';
-export * from './net/Registration';
-export * from './net/SvrB';
+  ProvisioningConnection,
+  ProvisioningConnectionListener,
+} from './net/Chat.js';
+import {
+  RegisterAccountResponse,
+  RegisterAccountWithoutNumberArgs,
+  RegistrationService,
+  ReregisterAccountArgs,
+  ReregisterAccountWithoutNumberArgs,
+} from './net/Registration.js';
+import { Svr2 } from './net/Svr2.js';
+import { SvrB } from './net/SvrB.js';
+import { BridgedStringMap, newNativeHandle } from './internal.js';
+export * from './net/CDSI.js';
+export * from './net/Chat.js';
+
+export * from './net/chat/AuthAccountsService.js';
+export * from './net/chat/AuthBackupsService.js';
+export * from './net/chat/AuthDevicesService.js';
+export * from './net/chat/AuthDonationsService.js';
+export * from './net/chat/AuthKeysService.js';
+export * from './net/chat/AuthMessagesService.js';
+export * from './net/chat/AuthPaymentsService.js';
+export * from './net/chat/AuthStickersService.js';
+export * from './net/chat/AuthUsernamesService.js';
+export * from './net/chat/PurchaseTypes.js';
+export * from './net/chat/UnauthBackupsService.js';
+export * from './net/chat/UnauthCallQualityService.js';
+export * from './net/chat/UnauthCredentialsService.js';
+export * from './net/chat/UnauthKeysService.js';
+export * from './net/chat/UnauthLoginPurchaseService.js';
+export * from './net/chat/UnauthMessagesService.js';
+export * from './net/chat/UnauthProfilesService.js';
+export * from './net/chat/UnauthSubscriptionsService.js';
+export * from './net/chat/UnauthUsernamesService.js';
+
+export * from './net/Registration.js';
+export * from './net/Svr2.js';
+export * from './net/SvrB.js';
 
 // This must match the libsignal-bridge Rust enum of the same name.
 export enum Environment {
   Staging = 0,
   Production = 1,
+}
+
+/**
+ * Build variant for remote config key selection.
+ *
+ * This must match the libsignal-bridge Rust enum of the same name.
+ *
+ * - `Production`: Use for release builds. Only uses base remote config keys without suffixes.
+ * - `Beta`: Use for all other builds (nightly, alpha, internal, public betas). Prefers
+ *   keys with a `.beta` suffix, falling back to base keys if the suffixed key is not present.
+ */
+export enum BuildVariant {
+  Production = 0,
+  Beta = 1,
 }
 
 export type ServiceAuth = {
@@ -36,7 +87,7 @@ export type ChatRequest = Readonly<{
   verb: string;
   path: string;
   headers: ReadonlyArray<[string, string]>;
-  body?: Uint8Array;
+  body?: Bytes;
   timeoutMillis?: number;
 }>;
 
@@ -76,6 +127,7 @@ export type NetConstructorOptions = Readonly<
       env: Environment;
       userAgent: string;
       remoteConfig?: Map<string, string>;
+      buildVariant?: BuildVariant;
     }
   | {
       localTestServer: true;
@@ -84,7 +136,8 @@ export type NetConstructorOptions = Readonly<
       TESTING_localServer_cdsiPort: number;
       TESTING_localServer_svr2Port: number;
       TESTING_localServer_svrBPort: number;
-      TESTING_localServer_rootCertificateDer: Uint8Array;
+      TESTING_localServer_rootCertificateDer: Bytes;
+      TESTING_localServer_httpVersion?: 1 | 2;
     }
 >;
 
@@ -99,6 +152,28 @@ export type ProxyOptions = {
 
 /** The "scheme" for Signal TLS proxies. See {@link Net.setProxy()}. */
 export const SIGNAL_TLS_PROXY_SCHEME = 'org.signal.tls';
+
+type WithSuffix<Keys extends readonly string[], Suffix extends string> = {
+  [Key in keyof Keys]: `${Keys[Key]}.${Suffix}`;
+};
+
+function withSuffix<Keys extends readonly string[], Suffix extends string>(
+  keys: Keys,
+  suffix: Suffix
+): WithSuffix<Keys, Suffix> {
+  return keys.map((key) => `${key}.${suffix}`) as WithSuffix<Keys, Suffix>;
+}
+
+const BETA_REMOTE_CONFIG_KEYS = withSuffix(Native.NetRemoteConfigKeys, 'beta');
+// By convention suffix-less keys mean ".prod". These keys predate convention.
+// TODO: Remove this line once all the non-conventional keys have been removed.
+const PROD_REMOTE_CONFIG_KEYS = ['chatPermessageDeflate.prod'] as const;
+
+export const REMOTE_CONFIG_KEYS = [
+  ...Native.NetRemoteConfigKeys,
+  ...BETA_REMOTE_CONFIG_KEYS,
+  ...PROD_REMOTE_CONFIG_KEYS,
+] as const;
 
 export class Net {
   private readonly asyncContext: TokioAsyncContext;
@@ -116,17 +191,23 @@ export class Net {
           options.TESTING_localServer_cdsiPort,
           options.TESTING_localServer_svr2Port,
           options.TESTING_localServer_svrBPort,
-          options.TESTING_localServer_rootCertificateDer
+          options.TESTING_localServer_rootCertificateDer,
+          options.TESTING_localServer_httpVersion ?? 1
         )
       );
     } else {
+      const {
+        env,
+        userAgent,
+        remoteConfig = new Map<string, string>(),
+        buildVariant = BuildVariant.Production,
+      } = options;
       this._connectionManager = newNativeHandle(
         Native.ConnectionManager_new(
-          options.env,
-          options.userAgent,
-          new BridgedStringMap(
-            options.remoteConfig || new Map<string, string>()
-          )
+          env,
+          userAgent,
+          new BridgedStringMap(remoteConfig),
+          buildVariant
         )
       );
     }
@@ -211,6 +292,25 @@ export class Net {
     );
   }
 
+  /**
+   * Creates a new instance of {@link ProvisioningConnection}.
+   *
+   * @param listener the listener for incoming events.
+   * @param options additional options to pass through.
+   * @param options.abortSignal an {@link AbortSignal} that will cancel the connection attempt.
+   */
+  public async connectProvisioning(
+    listener: ProvisioningConnectionListener,
+    options?: { abortSignal?: AbortSignal }
+  ): Promise<ProvisioningConnection> {
+    return ProvisioningConnection.connect(
+      this.asyncContext,
+      this._connectionManager,
+      listener,
+      options
+    );
+  }
+
   public async resumeRegistrationSession({
     sessionId,
     e164,
@@ -238,6 +338,65 @@ export class Net {
         tokioAsyncContext: this.asyncContext,
       },
       { e164 }
+    );
+  }
+
+  /**
+   * Re-registers an account that has a phone number.
+   *
+   * Uses the account's recovery password to authenticate instead of a
+   * verification session, so there is no session to create or resume.
+   */
+  public async reregisterAccount(
+    args: Readonly<ReregisterAccountArgs>
+  ): Promise<RegisterAccountResponse> {
+    return RegistrationService.reregisterAccount(
+      {
+        connectionManager: this._connectionManager,
+        tokioAsyncContext: this.asyncContext,
+      },
+      args
+    );
+  }
+
+  /**
+   * Registers a new account that has no phone number.
+   *
+   * No PNI keys are accepted here, since the account has no phone number to
+   * associate them with.
+   *
+   * `accountAttributes.recoveryPassword` must not be empty: a recovery
+   * password is the only way an account with no phone number can ever be
+   * recovered.
+   */
+  public async registerAccountWithoutNumber(
+    args: Readonly<RegisterAccountWithoutNumberArgs>
+  ): Promise<RegisterAccountResponse> {
+    return RegistrationService.registerAccountWithoutNumber(
+      {
+        connectionManager: this._connectionManager,
+        tokioAsyncContext: this.asyncContext,
+      },
+      args
+    );
+  }
+
+  /**
+   * Re-registers an account that has no phone number, identified by its ACI.
+   *
+   * The counterpart to {@link Net.reregisterAccount} for an account with no
+   * phone number. No PNI keys are accepted here; libsignal generates the PNI
+   * material the server requires and then discards.
+   */
+  public async reregisterAccountWithoutNumber(
+    args: Readonly<ReregisterAccountWithoutNumberArgs>
+  ): Promise<RegisterAccountResponse> {
+    return RegistrationService.reregisterAccountWithoutNumber(
+      {
+        connectionManager: this._connectionManager,
+        tokioAsyncContext: this.asyncContext,
+      },
+      args
     );
   }
 
@@ -374,8 +533,10 @@ export class Net {
     // This does not distinguish between "https://proxy.example" and "https://@proxy.example".
     // This could be done by manually checking `url.href`.
     // But until someone complains about it, let's not worry about it.
-    const username = url.username != '' ? url.username : undefined;
-    const password = url.password != '' ? url.password : undefined;
+    const username =
+      url.username != '' ? decodeURIComponent(url.username) : undefined;
+    const password =
+      url.password != '' ? decodeURIComponent(url.password) : undefined;
 
     const host = url.hostname;
     const port = url.port != '' ? Number.parseInt(url.port, 10) : undefined;
@@ -429,12 +590,43 @@ export class Net {
    * Only new connections made *after* this call will use the new remote config settings.
    * Existing connections are not affected.
    *
+   * @deprecated Calling without buildVariant is deprecated. Please explicitly specify BuildVariant.Production or BuildVariant.Beta.
    * @param remoteConfig A map containing preprocessed libsignal configuration keys and their associated values.
    */
-  setRemoteConfig(remoteConfig: Map<string, string>): void {
+  setRemoteConfig(
+    remoteConfig: ReadonlyMap<(typeof REMOTE_CONFIG_KEYS)[number], string>
+  ): void;
+  /**
+   * Updates libsignal's remote configuration settings.
+   *
+   * The provided configuration map must conform to the following requirements:
+   * - Each key represents an enabled configuration and directly indicates that the setting is enabled.
+   * - Keys must have had the platform-specific prefix (e.g., `"desktop.libsignal."`) removed.
+   * - Entries explicitly disabled by the server must not appear in the map.
+   * - Values originally set to `null` by the server must be represented as empty strings.
+   * - Values should otherwise maintain the same format as they are returned by the server.
+   *
+   * These constraints ensure configurations passed to libsignal precisely reflect enabled
+   * server-provided settings without ambiguity.
+   *
+   * Only new connections made *after* this call will use the new remote config settings.
+   * Existing connections are not affected.
+   *
+   * @param remoteConfig A map containing preprocessed libsignal configuration keys and their associated values.
+   * @param buildVariant The build variant (BuildVariant.Production or BuildVariant.Beta) that determines which remote config keys to use.
+   */
+  setRemoteConfig(
+    remoteConfig: ReadonlyMap<(typeof REMOTE_CONFIG_KEYS)[number], string>,
+    buildVariant: BuildVariant
+  ): void;
+  setRemoteConfig(
+    remoteConfig: ReadonlyMap<(typeof REMOTE_CONFIG_KEYS)[number], string>,
+    buildVariant: BuildVariant = BuildVariant.Production
+  ): void {
     Native.ConnectionManager_set_remote_config(
       this._connectionManager,
-      new BridgedStringMap(remoteConfig)
+      new BridgedStringMap(remoteConfig),
+      buildVariant
     );
   }
 
@@ -479,5 +671,22 @@ export class Net {
       ? Environment.Staging
       : this.options.env;
     return new SvrB(this.asyncContext, this._connectionManager, auth, env);
+  }
+
+  /**
+   * Returns an SVR2 service instance for this network configuration.
+   *
+   * SVR2 stores a small piece of data protected by a pin in a secure enclave.
+   * See {@link Svr2} for the storage and restore protocols.
+   *
+   * @param auth The authentication credentials to use when connecting to the SVR2 server.
+   * @returns An Svr2 service instance configured for this network environment.
+   * @see {@link Svr2}
+   */
+  svr2(auth: Readonly<ServiceAuth>): Svr2 {
+    const env = this.options.localTestServer
+      ? Environment.Staging
+      : this.options.env;
+    return new Svr2(this.asyncContext, this._connectionManager, auth, env);
   }
 }

@@ -5,13 +5,15 @@
 
 /* eslint @typescript-eslint/no-shadow: ["error", { "allow": ["hash"] }] */
 
-import { randomBytes } from 'crypto';
-import { RANDOM_LENGTH } from './zkgroup/internal/Constants';
-import * as Native from '../Native';
+import type { Bytes } from '@signalapp/types';
+import { randomBytes } from 'node:crypto';
+
+import { RANDOM_LENGTH } from './zkgroup/internal/Constants.js';
+import * as Native from './Native.js';
 
 export type UsernameLink = {
-  entropy: Uint8Array;
-  encryptedUsername: Uint8Array;
+  entropy: Bytes;
+  encryptedUsername: Bytes;
 };
 
 export function generateCandidates(
@@ -31,7 +33,7 @@ export function fromParts(
   discriminator: string,
   minNicknameLength: number,
   maxNicknameLength: number
-): { username: string; hash: Uint8Array } {
+): { username: string; hash: Bytes } {
   const hash = Native.Username_HashFromParts(
     nickname,
     discriminator,
@@ -43,19 +45,19 @@ export function fromParts(
   return { username, hash };
 }
 
-export function hash(username: string): Uint8Array {
+export function hash(username: string): Bytes {
   return Native.Username_Hash(username);
 }
 
-export function generateProof(username: string): Uint8Array {
+export function generateProof(username: string): Bytes {
   const random = randomBytes(RANDOM_LENGTH);
   return generateProofWithRandom(username, random);
 }
 
 export function generateProofWithRandom(
   username: string,
-  random: Uint8Array
-): Uint8Array {
+  random: Bytes
+): Bytes {
   return Native.Username_Proof(username, random);
 }
 
@@ -68,7 +70,7 @@ export function decryptUsernameLink(usernameLink: UsernameLink): string {
 
 export function createUsernameLink(
   username: string,
-  previousEntropy?: Uint8Array
+  previousEntropy?: Bytes
 ): UsernameLink {
   const usernameLinkData = Native.UsernameLink_Create(
     username,
@@ -80,6 +82,6 @@ export function createUsernameLink(
 }
 
 // Only for testing. Will throw on failure.
-export function verifyProof(proof: Uint8Array, hash: Uint8Array): void {
+export function verifyProof(proof: Bytes, hash: Bytes): void {
   Native.Username_Verify(proof, hash);
 }

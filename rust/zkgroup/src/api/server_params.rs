@@ -37,7 +37,8 @@ pub struct ServerSecretParams {
     auth_credentials_with_pni_key_pair:
         crypto::credentials::KeyPair<crypto::credentials::AuthCredentialWithPni>,
 
-    pub(crate) generic_credential_key_pair: zkcredential::credentials::CredentialKeyPair,
+    pub(crate) generic_credential_key_pair:
+        zkcredential::credentials::CredentialKeyPair<zkcredential::credentials::LegacyMode>,
     pub(crate) endorsement_key_pair: zkcredential::endorsements::ServerRootKeyPair,
 }
 
@@ -203,7 +204,10 @@ impl ServerSecretParams {
                 Err(ZkGroupVerificationFailure)
             }
 
-            api::profiles::AnyProfileKeyCredentialPresentation::V3(presentation) => self
+            api::profiles::AnyProfileKeyCredentialPresentation::V3(_) => {
+                Err(ZkGroupVerificationFailure)
+            }
+            api::profiles::AnyProfileKeyCredentialPresentation::V4(presentation) => self
                 .verify_expiring_profile_key_credential_presentation(
                     group_public_params,
                     presentation,
@@ -215,7 +219,7 @@ impl ServerSecretParams {
     pub fn verify_expiring_profile_key_credential_presentation(
         &self,
         group_public_params: api::groups::GroupPublicParams,
-        presentation: &api::profiles::ExpiringProfileKeyCredentialPresentation,
+        presentation: &api::profiles::ExpiringProfileKeyCredentialPresentationV2,
         current_time: Timestamp,
     ) -> Result<(), ZkGroupVerificationFailure> {
         let credentials_key_pair = self.expiring_profile_key_credentials_key_pair;
@@ -441,7 +445,7 @@ impl ServerPublicParams {
         randomness: RandomnessBytes,
         group_secret_params: api::groups::GroupSecretParams,
         expiring_profile_key_credential: api::profiles::ExpiringProfileKeyCredential,
-    ) -> api::profiles::ExpiringProfileKeyCredentialPresentation {
+    ) -> api::profiles::ExpiringProfileKeyCredentialPresentationV2 {
         let mut sho = Sho::new(
             b"Signal_ZKGroup_20220508_Random_ServerPublicParams_CreateExpiringProfileKeyCredentialPresentation",
             &randomness,
@@ -503,6 +507,10 @@ impl ServerPublicParams {
         context: &api::receipts::ReceiptCredentialRequestContext,
         response: &api::receipts::ReceiptCredentialResponse,
     ) -> Result<api::receipts::ReceiptCredential, ZkGroupVerificationFailure> {
+        if !response.receipt_expiration_time.is_day_aligned() {
+            return Err(ZkGroupVerificationFailure);
+        }
+
         let receipt_struct = crypto::receipt_struct::ReceiptStruct::new(
             context.receipt_serial_bytes,
             response.receipt_expiration_time,

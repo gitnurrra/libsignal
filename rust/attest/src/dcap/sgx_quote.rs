@@ -19,7 +19,7 @@ use sha2::Digest;
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 use crate::cert_chain::CertChain;
-use crate::dcap::ecdsa::{ecdsa_signature_from_bytes, EcdsaSigned};
+use crate::dcap::ecdsa::{EcdsaSigned, ecdsa_signature_from_bytes};
 use crate::dcap::sgx_report_body::SgxReportBody;
 use crate::dcap::sgx_x509::SgxPckExtension;
 use crate::dcap::{Error, Expireable};
@@ -47,7 +47,7 @@ impl<'a> SgxQuote<'a> {
         }
 
         // check the version before we try to deserialize (don't advance bytes)
-        let version = u16::from_le_bytes(bytes[0..2].try_into().expect("correct size"));
+        let version = u16::from_le_bytes(*bytes.first_chunk().expect("checked size"));
         if version != QUOTE_V3 {
             return Err(Error::new("unsupported quote version"));
         }

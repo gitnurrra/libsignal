@@ -3,10 +3,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import * as Native from '../../Native';
-import { TokioAsyncContext, Environment, Net } from '../net';
-import { BackupKey, BackupForwardSecrecyToken } from '../AccountKeys';
-import { MessageBackupKey } from '../MessageBackup';
+import type { Bytes } from '@signalapp/types';
+
+import * as Native from '../Native.js';
+import type { TokioAsyncContext, Environment, Net } from '../net.js';
+import { BackupKey, BackupForwardSecrecyToken } from '../AccountKeys.js';
+import { MessageBackupKey } from '../MessageBackup.js';
+import type {
+  IoError,
+  RateLimitedError,
+  SvrAttestationError,
+  SvrDataMissingError,
+  SvrInvalidDataError,
+  SvrRestoreFailedError,
+} from '../Errors.js';
 
 type ConnectionManager = Native.Wrapper<Native.ConnectionManager>;
 
@@ -37,7 +47,7 @@ export type StoreBackupResponse = {
    * to fetch the forward secrecy token from SVR-B. This is currently stored in the header of
    * the backup file.
    */
-  metadata: Uint8Array;
+  metadata: Bytes;
 
   /**
    * Opaque value that must be persisted and provided to the next call to {@link SvrB#store}.
@@ -45,7 +55,7 @@ export type StoreBackupResponse = {
    * See the {@link SvrB} documentation for lifecycle and persistence handling
    * for this value.
    */
-  nextBackupSecretData: Uint8Array;
+  nextBackupSecretData: Bytes;
 };
 
 class StoreBackupResponseImpl implements StoreBackupResponse {
@@ -58,11 +68,11 @@ class StoreBackupResponseImpl implements StoreBackupResponse {
     return new BackupForwardSecrecyToken(tokenBytes);
   }
 
-  get metadata(): Uint8Array {
+  get metadata(): Bytes {
     return Native.BackupStoreResponse_GetOpaqueMetadata(this);
   }
 
-  get nextBackupSecretData(): Uint8Array {
+  get nextBackupSecretData(): Bytes {
     return Native.BackupStoreResponse_GetNextBackupSecretData(this);
   }
 }
@@ -92,7 +102,7 @@ export type RestoreBackupResponse = {
    * See the {@link SvrB} documentation for lifecycle and persistence handling
    * for this value.
    */
-  nextBackupSecretData: Uint8Array;
+  nextBackupSecretData: Bytes;
 };
 
 class RestoreBackupResponseImpl implements RestoreBackupResponse {
@@ -106,7 +116,7 @@ class RestoreBackupResponseImpl implements RestoreBackupResponse {
     return new BackupForwardSecrecyToken(tokenBytes);
   }
 
-  get nextBackupSecretData(): Uint8Array {
+  get nextBackupSecretData(): Bytes {
     return Native.BackupRestoreResponse_GetNextBackupSecretData(this);
   }
 }
@@ -144,10 +154,13 @@ class RestoreBackupResponseImpl implements RestoreBackupResponse {
  * ## Secret handling
  *
  * When calling {@link SvrB#store}, the `previousSecretData` parameter must be from the last call to
- * {@link SvrB#store} or {@link SvrB#restore} that succeeded. The returned secret from a successful
- * store or restore should be persisted until it is overwritten by the value from a subsequent
- * successful call. The caller should use {@link SvrB#createNewBackupChain} only for the very first
- * backup with a particular backup key.
+ * {@link SvrB#store} or {@link SvrB#restore} that succeeded. This "chaining" is used to construct
+ * each backup file so that it can be decrypted with either the *previous* token stored in SVR-B, or
+ * the *next* one, which is important in case the overall backup upload is ever interrupted.
+ *
+ * The returned secret from a successful store or restore should be persisted until it is
+ * overwritten by the value from a subsequent successful call. The caller should use
+ * {@link SvrB#createNewBackupChain} only for the very first backup with a particular backup key.
  *
  * ## Restore Flow
  *
@@ -186,7 +199,7 @@ export class SvrB {
    * Should not be used if any previous backups exist for this `backupKey`, whether uploaded or
    * restored by the local device. See {@link SvrB} for more information.
    */
-  createNewBackupChain(backupKey: BackupKey): Uint8Array {
+  createNewBackupChain(backupKey: BackupKey): Bytes {
     return Native.SecureValueRecoveryForBackups_CreateNewBackupChain(
       this.environment,
       backupKey.serialize()
@@ -212,11 +225,19 @@ export class SvrB {
    * @param options.abortSignal An AbortSignal that will cancel the request.
    * @returns a {@link StoreBackupResponse} containing the forward secrecy token, metadata, and
    * secret data.
-   * @throws Error if the previous secret data is malformed, or if processing or upload fail.
+   * @throws {SvrInvalidDataError} if the previous secret data is malformed. There's no choice here
+   * but to **start a new chain**.
+   * @throws {RateLimitedError} if the server is rate limiting this client. This is **retryable**
+   * after waiting the designated delay.
+   * @throws {IoError} if the network operation fails (connection, service, or timeout errors).
+   * These can be **automatically retried** (backoff recommended), but some may indicate a possible
+   * bug in libsignal or in the enclave.
+   * @throws {SvrAttestationError} if enclave attestation fails. This indicates a possible bug in
+   * libsignal or in the enclave.
    */
   async store(
     backupKey: BackupKey,
-    previousSecretData: Uint8Array,
+    previousSecretData: Bytes,
     options?: { abortSignal?: AbortSignal }
   ): Promise<StoreBackupResponse> {
     const promise = Native.SecureValueRecoveryForBackups_StoreBackup(
@@ -238,8 +259,8 @@ export class SvrB {
    * Fetches the forward secrecy token needed to decrypt a backup.
    *
    * This function makes a network call to the SVR-B server to retrieve the forward secrecy token
-   * associated with a specific backup. The token is required to derive the message backup keys
-   * for decryption.
+   * associated with a specific backup. The token is required to derive the message backup keys for
+   * decryption.
    *
    * The typical restore flow:
    * 1. Fetch the backup metadata (stored in a header in the backup file)
@@ -249,16 +270,28 @@ export class SvrB {
    * 5. Store the returned {@link RestoreBackupResponse#nextBackupSecretData} locally.
    *
    * @param backupKey The backup key derived from the Account Entropy Pool (AEP).
-   * @param metadata The metadata that was stored in a header in the backup file during backup creation.
+   * @param metadata The metadata that was stored in a header in the backup file during backup
+   * creation.
    * @param options Optional configuration.
    * @param options.abortSignal An AbortSignal that will cancel the request.
    * @returns The forward secrecy token needed to derive keys for decrypting the backup.
-   * @throws Error if the metadata is invalid, the network operation fails, or the
-   *   backup cannot be found.
+   * @throws {SvrInvalidDataError} if the previous secret data is malformed. In this case the user's
+   * data is **not recoverable**.
+   * @throws {SvrRestoreFailedError} if restoration fails (with remaining tries count). This should
+   * never happen but if it does the user's data is **not recoverable**.
+   * @throws {SvrDataMissingError} if the backup data is not found on the server, indicating an
+   * **incorrect backup key** (which may in turn imply the user's data is not recoverable).
+   * @throws {RateLimitedError} if the server is rate limiting this client. This is **retryable**
+   * after waiting the designated delay.
+   * @throws {IoError} if the network operation fails (connection, service, or timeout errors).
+   * These can be **automatically retried** (backoff recommended), but some may indicate a possible
+   * bug in libsignal or in the enclave.
+   * @throws {SvrAttestationError} if enclave attestation fails. This indicates a possible bug in
+   * libsignal or in the enclave.
    */
   async restore(
     backupKey: BackupKey,
-    metadata: Uint8Array,
+    metadata: Bytes,
     options?: { abortSignal?: AbortSignal }
   ): Promise<RestoreBackupResponse> {
     const promise =
@@ -275,5 +308,36 @@ export class SvrB {
       promise
     );
     return new RestoreBackupResponseImpl(response);
+  }
+
+  /**
+   * Attempts to remove the info stored with SVR-B for this particular username/password pair.
+   *
+   * This is a best-effort operation; a successful return means the data has been removed from (or
+   * never was present in) the current SVR-B enclaves, but may still be present in previous ones
+   * that have yet to be decommissioned. Conversely, a thrown error may still have removed
+   * information from previous enclaves.
+   *
+   * This should not typically be needed; rather than explicitly removing an entry, the client
+   * should generally overwrite with a new {@link #store} instead.
+   *
+   * @param options Optional configuration.
+   * @param options.abortSignal An AbortSignal that will cancel the request.
+   * @throws {RateLimitedError} if the server is rate limiting this client. This is **retryable**
+   * after waiting the designated delay.
+   * @throws {IoError} if the network operation fails (connection, service, or timeout errors).
+   * These can be **automatically retried** (backoff recommended), but some may indicate a possible
+   * bug in libsignal or in the enclave.
+   * @throws {SvrAttestationError} if enclave attestation fails. This indicates a possible bug in
+   * libsignal or in the enclave.
+   */
+  async remove(options?: { abortSignal?: AbortSignal }): Promise<void> {
+    const promise = Native.SecureValueRecoveryForBackups_RemoveBackup(
+      this.asyncContext,
+      this.connectionManager,
+      this.auth.username,
+      this.auth.password
+    );
+    await this.asyncContext.makeCancellable(options?.abortSignal, promise);
   }
 }

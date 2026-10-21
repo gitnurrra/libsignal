@@ -6,12 +6,12 @@
 import Foundation
 import SignalFfi
 
-public class PublicKey: ClonableHandleOwner<SignalMutPointerPublicKey>, @unchecked Sendable {
+public class PublicKey: ClonableHandleOwner<SignalMutPointerPublicKey>, @unchecked Sendable, Equatable {
     public convenience init<Bytes: ContiguousBytes>(_ bytes: Bytes) throws {
-        let handle = try bytes.withUnsafeBorrowedBuffer {
-            var result = SignalMutPointerPublicKey()
-            try checkError(signal_publickey_deserialize(&result, $0))
-            return result
+        let handle = try bytes.withUnsafeBorrowedBuffer { bytes in
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_publickey_deserialize($0, bytes)
+            }
         }
         self.init(owned: NonNull(handle)!)
     }
@@ -49,11 +49,14 @@ public class PublicKey: ClonableHandleOwner<SignalMutPointerPublicKey>, @uncheck
     }
 
     public func verifySignature(message: some ContiguousBytes, signature: some ContiguousBytes) throws -> Bool {
-        var result = false
-        try withAllBorrowed(self, .bytes(message), .bytes(signature)) { nativeHandle, messageBuffer, signatureBuffer in
-            try checkError(signal_publickey_verify(&result, nativeHandle.const(), messageBuffer, signatureBuffer))
+        return try withAllBorrowed(self, .bytes(message), .bytes(signature)) {
+            nativeHandle,
+            messageBuffer,
+            signatureBuffer in
+            try invokeFnReturningBool {
+                signal_publickey_verify($0, nativeHandle.const(), messageBuffer, signatureBuffer)
+            }
         }
-        return result
     }
 
     /// Seals a message so only the holder of the private key can decrypt it.
@@ -63,7 +66,7 @@ public class PublicKey: ClonableHandleOwner<SignalMutPointerPublicKey>, @uncheck
     /// describing the purpose of the message, while `associatedData` can be used to restrict
     /// successful decryption beyond holding the private key.
     ///
-    /// - SeeAlso ``PrivateKey/open(_:info:associatedData:)-55nax``
+    /// - SeeAlso ``PrivateKey/open(_:info:associatedData:)-(_,ContiguousBytes,_)``
     ///
     /// [RFC 9180]: https://www.rfc-editor.org/rfc/rfc9180.html
     public func seal(
@@ -84,7 +87,7 @@ public class PublicKey: ClonableHandleOwner<SignalMutPointerPublicKey>, @uncheck
         }
     }
 
-    /// Convenience overload for ``seal(_:info:associatedData:)-iyot``, using the UTF-8 bytes of `info`.
+    /// Convenience overload for ``seal(_:info:associatedData:)-(_,ContiguousBytes,_)``, using the UTF-8 bytes of `info`.
     public func seal(
         _ message: some ContiguousBytes,
         info: String,
@@ -96,26 +99,14 @@ public class PublicKey: ClonableHandleOwner<SignalMutPointerPublicKey>, @uncheck
         }
     }
 
-    public func compare(_ other: PublicKey) -> Int32 {
-        var result: Int32 = 0
-        failOnError {
-            try withAllBorrowed(self, other) { selfHandle, otherHandle in
-                try checkError(signal_publickey_compare(&result, selfHandle.const(), otherHandle.const()))
+    public static func == (lhs: PublicKey, rhs: PublicKey) -> Bool {
+        return failOnError {
+            try withAllBorrowed(lhs, rhs) { lhsHandle, rhsHandle in
+                try invokeFnReturningBool {
+                    signal_publickey_equals($0, lhsHandle.const(), rhsHandle.const())
+                }
             }
         }
-        return result
-    }
-}
-
-extension PublicKey: Equatable {
-    public static func == (lhs: PublicKey, rhs: PublicKey) -> Bool {
-        return lhs.compare(rhs) == 0
-    }
-}
-
-extension PublicKey: Comparable {
-    public static func < (lhs: PublicKey, rhs: PublicKey) -> Bool {
-        return lhs.compare(rhs) < 0
     }
 }
 

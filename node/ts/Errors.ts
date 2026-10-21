@@ -3,8 +3,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { ProtocolAddress } from './Address';
-import * as Native from '../Native';
+import type { Bytes } from '@signalapp/types';
+
+import { ProtocolAddress, ServiceId } from './Address.js';
+import * as Native from './Native.js';
+import { newNativeHandle } from './internal.js';
+import {
+  convertNativeRegistrationSessionState,
+  RegistrationSessionState,
+} from './net/RegistrationSession.js';
+import type { PaymentProvider } from './net/chat/PurchaseTypes.js';
+// Re-export this for compatibility.
+export type { PaymentProvider } from './net/chat/PurchaseTypes.js';
 
 export enum ErrorCode {
   Generic,
@@ -48,14 +58,16 @@ export enum ErrorCode {
   SvrDataMissing,
   SvrRequestFailed,
   SvrRestoreFailed,
-  SvrMultipleErrors,
   SvrAttestationError,
+  SvrInvalidData,
+  SvrDataMismatch,
 
   ChatServiceInactive,
   AppExpired,
   DeviceDelinked,
   ConnectionInvalidated,
   ConnectedElsewhere,
+  PossibleCaptiveNetwork,
 
   BackupValidation,
 
@@ -63,12 +75,113 @@ export enum ErrorCode {
 
   KeyTransparencyError,
   KeyTransparencyVerificationFailed,
+
+  IncrementalMacVerificationFailed,
+
+  RequestUnauthorized,
+  MismatchedDevices,
+
+  ServiceIdNotFound,
+  DeviceIdNotFound,
+
+  UploadTooLarge,
+
+  RegisterAccountRequestRejected,
+  RegistrationCredentialsCouldNotBeParsed,
+  RegistrationDeviceTransferPossibleNotSkipped,
+  RegistrationInvalidReceipt,
+  RegistrationInvalidSession,
+  RegistrationLock,
+  RegistrationOneTimePasswordRequired,
+  RegistrationRecoveryPasswordRequired,
+  RegistrationRecoveryVerificationFailed,
+  RegistrationRequestInvalid,
+  RegistrationRequestRejected,
+  RegistrationSessionIdInvalid,
+  RegistrationSessionNotFound,
+  RegistrationSessionNotReadyForVerification,
+  RegistrationVerificationCodeNotDeliverable,
+  RegistrationVerificationSendFailed,
+
+  UsernameNotAvailable,
+  UsernameNotSet,
+  UsernameReservationNotFound,
+
+  InvalidReceipt,
+  MissingBackupId,
+
+  ReceiptCredentialErrorPaymentStillProcessing,
+  ReceiptCredentialErrorPaymentRequired,
+  ReceiptCredentialErrorPaymentNotFound,
+  ReceiptCredentialErrorReceiptAlreadyIssued,
+  TooManyTotpKeys,
+  TooManyMfaKeys,
+  MfaNotVerified,
+  /** @deprecated Use {@link MfaNotVerified} instead. */
+  OneTimePasswordNotVerified = MfaNotVerified,
+  MfaKeyNotFound,
+  WebAuthnRegistrationUnsuccessful,
+
+  ProfileNotFound,
+
+  ReceiptAlreadyRedeemed,
 }
+
+/** Called out as a separate type so it's not confused with a normal ServiceIdBinary. */
+type ServiceIdFixedWidthBinary = Bytes;
+
+/**
+ * A failure sending to a recipient on account of not being up to date on their devices.
+ *
+ * An entry in {@link MismatchedDevicesError}. Each entry represents a recipient that has either
+ * added, removed, or relinked some devices in their account (potentially including their primary
+ * device), as represented by the {@link MismatchedDevicesEntry#missingDevices},
+ * {@link MismatchedDevicesEntry#extraDevices}, and {@link MismatchedDevicesEntry#staleDevices}
+ * arrays, respectively. Handling the exception involves removing the "extra" devices and
+ * establishing new sessions for the "missing" and "stale" devices.
+ */
+export class MismatchedDevicesEntry {
+  account: ServiceId;
+  missingDevices: number[];
+  extraDevices: number[];
+  staleDevices: number[];
+
+  constructor({
+    account,
+    missingDevices,
+    extraDevices,
+    staleDevices,
+  }: {
+    account: ServiceId | ServiceIdFixedWidthBinary;
+    missingDevices?: number[];
+    extraDevices?: number[];
+    staleDevices?: number[];
+  }) {
+    this.account =
+      account instanceof ServiceId
+        ? account
+        : ServiceId.parseFromServiceIdFixedWidthBinary(account);
+    this.missingDevices = missingDevices ?? [];
+    this.extraDevices = extraDevices ?? [];
+    this.staleDevices = staleDevices ?? [];
+  }
+}
+
+export type ChargeFailure = {
+  processor: PaymentProvider;
+  code: string;
+  message: string;
+  outcomeNetworkStatus: string | null;
+  outcomeReason: string | null;
+  outcomeType: string | null;
+};
 
 export class LibSignalErrorBase extends Error {
   public readonly code: ErrorCode;
   public readonly operation: string;
   readonly _addr?: string | Native.ProtocolAddress;
+  readonly _sessionState?: Native.RegistrationSession;
+  readonly _chargeFailure?: ChargeFailure | null;
 
   constructor(
     message: string,
@@ -110,19 +223,36 @@ export class LibSignalErrorBase extends Error {
     }
   }
 
+  public get sessionState(): RegistrationSessionState | undefined {
+    if (this._sessionState === undefined) {
+      return undefined;
+    }
+    return convertNativeRegistrationSessionState(
+      newNativeHandle(this._sessionState)
+    );
+  }
+
+  public get chargeFailure(): ChargeFailure | null {
+    if (this._chargeFailure === undefined)
+      throw new TypeError(`cannot get ChargeFailure from this error (${this})`);
+    return this._chargeFailure;
+  }
+
   public toString(): string {
     return `${this.name} - ${this.operation}: ${this.message}`;
   }
 
-  /// Like `error.code === code`, but also providing access to any additional properties.
+  /** Like `error.code === code`, but also providing access to any additional properties. */
   public is<E extends ErrorCode>(
     code: E
   ): this is Extract<LibSignalError, { code: E }> {
     return this.code === code;
   }
 
-  /// Like `error instanceof LibSignalErrorBase && error.code === code`, but all in one expression,
-  /// and providing access to any additional properties.
+  /**
+   * Like `error instanceof LibSignalErrorBase && error.code === code`, but all in one expression,
+   * and providing access to any additional properties.
+   */
   public static is<E extends ErrorCode>(
     error: unknown,
     code: E
@@ -134,7 +264,10 @@ export class LibSignalErrorBase extends Error {
   }
 }
 
-export type LibSignalErrorCommon = Omit<LibSignalErrorBase, 'addr'>;
+export type LibSignalErrorCommon = Omit<
+  LibSignalErrorBase,
+  'addr' | 'chargeFailure'
+>;
 
 export type GenericError = LibSignalErrorCommon & {
   code: ErrorCode.Generic;
@@ -259,6 +392,7 @@ export type RateLimitChallengeError = LibSignalErrorBase & {
   code: ErrorCode.RateLimitChallengeError;
   readonly token: string;
   readonly options: Set<'pushChallenge' | 'captcha'>;
+  readonly retryAfterSecs: number | null;
 };
 
 export type ChatServiceInactive = LibSignalErrorBase & {
@@ -281,6 +415,10 @@ export type ConnectedElsewhereError = LibSignalErrorBase & {
   code: ErrorCode.ConnectedElsewhere;
 };
 
+export type PossibleCaptiveNetworkError = LibSignalErrorBase & {
+  code: ErrorCode.PossibleCaptiveNetwork;
+};
+
 export type SvrDataMissingError = LibSignalErrorBase & {
   code: ErrorCode.SvrDataMissing;
 };
@@ -294,12 +432,16 @@ export type SvrRestoreFailedError = LibSignalErrorCommon & {
   readonly triesRemaining: number;
 };
 
-export type SvrMultipleErrorsError = LibSignalErrorCommon & {
-  code: ErrorCode.SvrMultipleErrors;
-};
-
 export type SvrAttestationError = LibSignalErrorCommon & {
   code: ErrorCode.SvrAttestationError;
+};
+
+export type SvrInvalidDataError = LibSignalErrorCommon & {
+  code: ErrorCode.SvrInvalidData;
+};
+
+export type SvrDataMismatchError = LibSignalErrorCommon & {
+  code: ErrorCode.SvrDataMismatch;
 };
 
 export type BackupValidationError = LibSignalErrorCommon & {
@@ -317,6 +459,190 @@ export type KeyTransparencyError = LibSignalErrorCommon & {
 
 export type KeyTransparencyVerificationFailed = LibSignalErrorCommon & {
   code: ErrorCode.KeyTransparencyVerificationFailed;
+};
+
+export type IncrementalMacVerificationFailed = LibSignalErrorCommon & {
+  code: ErrorCode.IncrementalMacVerificationFailed;
+};
+
+export type RequestUnauthorizedError = LibSignalErrorCommon & {
+  code: ErrorCode.RequestUnauthorized;
+};
+
+export type MismatchedDevicesError = LibSignalErrorCommon & {
+  code: ErrorCode.MismatchedDevices;
+  readonly entries: MismatchedDevicesEntry[];
+};
+
+export type ServiceIdNotFound = LibSignalErrorCommon & {
+  code: ErrorCode.ServiceIdNotFound;
+};
+
+export type UploadTooLarge = LibSignalErrorCommon & {
+  code: ErrorCode.UploadTooLarge;
+};
+
+export type RegistrationSessionNotFoundError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationSessionNotFound;
+};
+
+export type RegistrationSessionIdInvalidError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationSessionIdInvalid;
+};
+
+export type RegistrationRequestInvalidError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationRequestInvalid;
+};
+
+export type RegistrationRequestRejectedError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationRequestRejected;
+};
+
+export type RegistrationSessionNotReadyForVerificationError =
+  LibSignalErrorCommon & {
+    code: ErrorCode.RegistrationSessionNotReadyForVerification;
+    readonly sessionState?: RegistrationSessionState;
+  };
+
+export type RegistrationVerificationSendFailedError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationVerificationSendFailed;
+  readonly sessionState?: RegistrationSessionState;
+};
+
+export type RegistrationVerificationCodeNotDeliverableError =
+  LibSignalErrorCommon & {
+    code: ErrorCode.RegistrationVerificationCodeNotDeliverable;
+    readonly reason: string;
+    readonly permanentFailure: boolean;
+  };
+
+export type RegistrationLockError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationLock;
+  readonly timeRemainingSeconds: number;
+  // null when the existing lock has no associated SVR2 secret.
+  readonly svr2Username: string | null;
+  readonly svr2Password: string | null;
+};
+
+export type RegistrationDeviceTransferPossibleNotSkippedError =
+  LibSignalErrorCommon & {
+    code: ErrorCode.RegistrationDeviceTransferPossibleNotSkipped;
+  };
+
+export type RegistrationOneTimePasswordRequiredError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationOneTimePasswordRequired;
+};
+
+export type RegistrationRecoveryPasswordRequiredError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationRecoveryPasswordRequired;
+};
+
+export type RegistrationRecoveryVerificationFailedError =
+  LibSignalErrorCommon & {
+    code: ErrorCode.RegistrationRecoveryVerificationFailed;
+  };
+
+export type RegisterAccountRequestRejectedError = LibSignalErrorCommon & {
+  code: ErrorCode.RegisterAccountRequestRejected;
+};
+
+export type RegistrationCredentialsCouldNotBeParsedError =
+  LibSignalErrorCommon & {
+    code: ErrorCode.RegistrationCredentialsCouldNotBeParsed;
+  };
+
+export type RegistrationInvalidSessionError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationInvalidSession;
+};
+
+export type RegistrationInvalidReceiptError = LibSignalErrorCommon & {
+  code: ErrorCode.RegistrationInvalidReceipt;
+};
+
+export type DeviceIdNotFound = LibSignalErrorCommon & {
+  code: ErrorCode.DeviceIdNotFound;
+};
+
+export type UsernameNotAvailable = LibSignalErrorCommon & {
+  code: ErrorCode.UsernameNotAvailable;
+};
+
+/**
+ * @throws {ChatServiceInactive} if the chat connection has been closed.
+ * @throws {IoError} if an error occurred while communicating with the server.
+ * @throws {RateLimitedError} if the server is rate limiting this client. This is **retryable**
+ * after waiting the designated delay.
+ */
+export type StandardNetworkError =
+  | ChatServiceInactive
+  | IoError
+  | RateLimitedError;
+
+export type UsernameNotSet = LibSignalErrorCommon & {
+  code: ErrorCode.UsernameNotSet;
+};
+
+export type UsernameReservationNotFound = LibSignalErrorCommon & {
+  code: ErrorCode.UsernameReservationNotFound;
+};
+
+export type InvalidReceiptError = LibSignalErrorCommon & {
+  code: ErrorCode.InvalidReceipt;
+};
+
+export type MissingBackupId = LibSignalErrorCommon & {
+  code: ErrorCode.MissingBackupId;
+};
+
+export type ReceiptCredentialErrorPaymentStillProcessing =
+  LibSignalErrorCommon & {
+    code: ErrorCode.ReceiptCredentialErrorPaymentStillProcessing;
+  };
+export type ReceiptCredentialErrorPaymentRequired = LibSignalErrorCommon & {
+  code: ErrorCode.ReceiptCredentialErrorPaymentRequired;
+  readonly chargeFailure: ChargeFailure | null;
+};
+export type ReceiptCredentialErrorPaymentNotFound = LibSignalErrorCommon & {
+  code: ErrorCode.ReceiptCredentialErrorPaymentNotFound;
+};
+export type ReceiptCredentialErrorReceiptAlreadyIssued =
+  LibSignalErrorCommon & {
+    code: ErrorCode.ReceiptCredentialErrorReceiptAlreadyIssued;
+  };
+export type TooManyTotpKeys = LibSignalErrorCommon & {
+  code: ErrorCode.TooManyTotpKeys;
+};
+
+export type TooManyMfaKeys = LibSignalErrorCommon & {
+  code: ErrorCode.TooManyMfaKeys;
+};
+
+export type MfaNotVerified = LibSignalErrorCommon & {
+  code: ErrorCode.MfaNotVerified;
+};
+/** @deprecated Use {@link MfaNotVerified} instead. */
+export type OneTimePasswordNotVerified = MfaNotVerified;
+
+export type MfaKeyNotFound = LibSignalErrorCommon & {
+  code: ErrorCode.MfaKeyNotFound;
+};
+
+export type WebAuthnRegistrationUnsuccessful = LibSignalErrorCommon & {
+  code: ErrorCode.WebAuthnRegistrationUnsuccessful;
+};
+
+export type ProfileNotFound = LibSignalErrorCommon & {
+  code: ErrorCode.ProfileNotFound;
+};
+
+/**
+ * A receipt was already redeemed for a badge.
+ *
+ * Not the same as {@link ReceiptCredentialErrorReceiptAlreadyIssued}, which means a receipt
+ * credential was already issued for the purchase.
+ */
+export type ReceiptAlreadyRedeemed = LibSignalErrorCommon & {
+  code: ErrorCode.ReceiptAlreadyRedeemed;
 };
 
 export type LibSignalError =
@@ -351,17 +677,57 @@ export type LibSignalError =
   | SvrDataMissingError
   | SvrRestoreFailedError
   | SvrRequestFailedError
-  | SvrMultipleErrorsError
   | SvrAttestationError
+  | SvrInvalidDataError
+  | SvrDataMismatchError
   | UnsupportedMediaInputError
   | ChatServiceInactive
   | AppExpiredError
   | DeviceDelinkedError
   | ConnectionInvalidatedError
   | ConnectedElsewhereError
+  | PossibleCaptiveNetworkError
   | RateLimitedError
   | RateLimitChallengeError
   | BackupValidationError
   | CancellationError
   | KeyTransparencyError
-  | KeyTransparencyVerificationFailed;
+  | KeyTransparencyVerificationFailed
+  | IncrementalMacVerificationFailed
+  | RequestUnauthorizedError
+  | MismatchedDevicesError
+  | ServiceIdNotFound
+  | UploadTooLarge
+  | RegistrationSessionNotFoundError
+  | RegistrationSessionIdInvalidError
+  | RegistrationRequestInvalidError
+  | RegistrationRequestRejectedError
+  | RegistrationSessionNotReadyForVerificationError
+  | RegistrationVerificationSendFailedError
+  | RegistrationVerificationCodeNotDeliverableError
+  | RegistrationLockError
+  | RegistrationDeviceTransferPossibleNotSkippedError
+  | RegistrationOneTimePasswordRequiredError
+  | RegistrationRecoveryPasswordRequiredError
+  | RegistrationRecoveryVerificationFailedError
+  | RegisterAccountRequestRejectedError
+  | RegistrationCredentialsCouldNotBeParsedError
+  | RegistrationInvalidSessionError
+  | RegistrationInvalidReceiptError
+  | DeviceIdNotFound
+  | UsernameNotAvailable
+  | UsernameNotSet
+  | UsernameReservationNotFound
+  | InvalidReceiptError
+  | MissingBackupId
+  | ReceiptCredentialErrorPaymentStillProcessing
+  | ReceiptCredentialErrorPaymentRequired
+  | ReceiptCredentialErrorPaymentNotFound
+  | ReceiptCredentialErrorReceiptAlreadyIssued
+  | TooManyTotpKeys
+  | TooManyMfaKeys
+  | MfaNotVerified
+  | MfaKeyNotFound
+  | WebAuthnRegistrationUnsuccessful
+  | ProfileNotFound
+  | ReceiptAlreadyRedeemed;

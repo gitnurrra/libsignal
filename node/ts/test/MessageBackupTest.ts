@@ -4,21 +4,26 @@
 //
 
 import { assert } from 'chai';
-import * as MessageBackup from '../MessageBackup';
-import * as util from './util';
-import { Aci } from '../Address';
-import { Uint8ArrayInputStream, ErrorInputStream } from './ioutil';
+import type { Bytes } from '@signalapp/types';
+import { Buffer } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { hkdf, LogLevel } from '..';
+import { Readable } from 'node:stream';
+import protobuf from 'protobufjs/minimal.js';
+const { Reader } = protobuf;
+
+import * as MessageBackup from '../MessageBackup.js';
+import * as util from './util.js';
+import { Aci } from '../Address.js';
+import { Uint8ArrayInputStream, ErrorInputStream } from './ioutil.js';
+import { hkdf, LogLevel } from '../index.js';
 import {
   AccountEntropyPool,
   BackupForwardSecrecyToken,
   BackupKey,
-} from '../AccountKeys';
-import { Readable } from 'node:stream';
-import { InputStream } from '../io';
-import { assertArrayNotEquals } from './util';
+} from '../AccountKeys.js';
+import { InputStream } from '../io.js';
+import { assertArrayNotEquals } from './util.js';
 
 util.initLogger(LogLevel.Trace);
 
@@ -75,7 +80,10 @@ describe('MessageBackup', () => {
   describe('validate', () => {
     it('successfully validates a minimal backup', async () => {
       const input = fs.readFileSync(
-        path.join(__dirname, '../../ts/test/new_account.binproto.encrypted')
+        path.join(
+          import.meta.dirname,
+          '../../ts/test/new_account.binproto.encrypted'
+        )
       );
 
       const outcome = await MessageBackup.validate(
@@ -153,7 +161,7 @@ describe('MessageBackup', () => {
         async close(): Promise<void> {
           closeCount += 1;
         }
-        async read(_amount: number): Promise<Uint8Array> {
+        async read(_amount: number): Promise<Bytes> {
           return Uint8Array.of();
         }
         async skip(amount: number): Promise<void> {
@@ -182,8 +190,122 @@ describe('MessageBackup', () => {
 });
 
 const exampleBackup = fs.readFileSync(
-  path.join(__dirname, '../../ts/test/canonical-backup.binproto')
+  path.join(import.meta.dirname, '../../ts/test/canonical-backup.binproto')
 );
+
+function chunkLengthDelimited(binproto: Bytes): Bytes[] {
+  const r = Reader.create(binproto);
+  const chunks: Bytes[] = [];
+
+  while (r.pos < r.len) {
+    const headerStart = r.pos; // start of the varint length prefix
+    const length = r.uint32(); // implicitly advances to the start of the body
+    const bodyStart = r.pos; // now points to the start of the proto message
+    const end = bodyStart + length;
+
+    if (end > r.len) {
+      throw new Error('truncated length-delimited chunk');
+    }
+
+    // Include the varint header + body
+    chunks.push(binproto.subarray(headerStart, end));
+    r.pos = end;
+  }
+
+  return chunks;
+}
+
+function stripLengthPrefix(chunk: Bytes): Bytes {
+  const reader = Reader.create(chunk);
+  const length = reader.uint32();
+  const bodyStart = reader.pos;
+  const bodyEnd = bodyStart + length;
+  if (bodyEnd > reader.len) {
+    throw new Error('truncated length-delimited chunk');
+  }
+  if (bodyEnd !== reader.len) {
+    throw new Error('unexpected trailing data after chunk body');
+  }
+  return chunk.subarray(bodyStart, bodyEnd);
+}
+
+function insertLengthPrefix(chunk: Bytes): Bytes {
+  if (chunk.byteLength > 0x7f) {
+    throw new Error(
+      'not implemented: chunks with more than one varint byte of length'
+    );
+  }
+  return concatFrames([Uint8Array.of(chunk.byteLength), chunk]);
+}
+
+const exampleBackupChunks = chunkLengthDelimited(exampleBackup);
+if (exampleBackupChunks.length === 0) {
+  throw new Error('expected at least one length-delimited chunk');
+}
+const [exampleBackupInfoChunk, ...exampleFrameChunks] = exampleBackupChunks;
+const exampleBackupInfo = stripLengthPrefix(exampleBackupInfoChunk);
+const exampleFrames = exampleFrameChunks;
+
+function concatFrames(chunks: ReadonlyArray<Bytes>): Bytes {
+  if (chunks.length === 0) {
+    return new Uint8Array();
+  }
+  if (chunks.length === 1) {
+    return new Uint8Array(chunks[0]);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+}
+
+// The following frame encodes a disappearing chat item. Regenerate with:
+// % protoc rust/message-backup/src/proto/backup.proto \
+//     --encode signal.backup.Frame <<'PROTO' | base64
+// chatItem: {
+//   chatId: 1
+//   authorId: 2
+//   dateSent: 3
+//   expiresInMs: 1
+// }
+// PROTO
+const DISAPPEARING_CHAT_ITEM_FRAME = Uint8Array.from(
+  Buffer.from('IggIARACGAMoAQ==', 'base64')
+);
+
+// The following frame encodes a view-once chat item with revisions (not something that's normally
+// allowed, but we want to test the recursive sanitization). Regenerate with:
+// % protoc rust/message-backup/src/proto/backup.proto \
+//     --encode signal.backup.Frame <<'PROTO' | base64
+// chatItem: {
+//   chatId: 10
+//   authorId: 11
+//   dateSent: 12
+//   viewOnceMessage: {
+//     attachment: {
+//       wasDownloaded: true
+//     }
+//   }
+//   revisions: [{
+//     chatId: 10
+//     authorId: 11
+//     dateSent: 9
+//     viewOnceMessage: {
+//       attachment: {
+//         wasDownloaded: true
+//       }
+//     }
+//   }]
+// }
+// PROTO
+const VIEW_ONCE_CHAT_ITEM_FRAME = Uint8Array.from(
+  Buffer.from('IhwIChALGAwyDQgKEAsYCZIBBAoCGAGSAQQKAhgB', 'base64')
+);
+
+function createDisappearingChatItemFrame(): Bytes {
+  return insertLengthPrefix(DISAPPEARING_CHAT_ITEM_FRAME);
+}
+
+function createViewOnceChatItemFrame(): Bytes {
+  return insertLengthPrefix(VIEW_ONCE_CHAT_ITEM_FRAME);
+}
 
 describe('ComparableBackup', () => {
   describe('exampleBackup', () => {
@@ -195,11 +317,287 @@ describe('ComparableBackup', () => {
       );
 
       const expectedOutput = fs.readFileSync(
-        path.join(__dirname, '../../ts/test/canonical-backup.expected.json')
+        path.join(
+          import.meta.dirname,
+          '../../ts/test/canonical-backup.expected.json'
+        )
       );
       const output = comparable.comparableString();
       assert.equal(output, new String(expectedOutput));
     });
+  });
+});
+
+describe('BackupJsonExporter', () => {
+  it('streams JSON lines for a canonical backup', () => {
+    const backupInfo = exampleBackupInfo;
+    const frames = exampleFrames.slice();
+
+    const { exporter, chunk: initialChunk } =
+      MessageBackup.BackupJsonExporter.start(backupInfo);
+
+    // Stream the frames across multiple chunks to mirror the real exporter usage.
+    const chunkGroups = [frames.slice(0, 2), frames.slice(2)].filter(
+      (group) => group.length > 0
+    );
+    const exportedFrameResults = chunkGroups.flatMap((group) =>
+      exporter.exportFrames(concatFrames(group))
+    );
+    const exportedFrameLines = exportedFrameResults.map((result) => {
+      assert.isDefined(result.line, 'canonical backup should validate');
+      assert.isUndefined(
+        result.errorMessage,
+        'canonical backup should validate'
+      );
+      return result.line;
+    });
+    const finishResult = exporter.finish();
+    assert.isUndefined(
+      finishResult.errorMessage,
+      'canonical backup should validate'
+    );
+
+    const allLines = [initialChunk, ...exportedFrameLines];
+
+    assert.lengthOf(allLines, frames.length + 1);
+    for (const line of allLines) {
+      assert.isFalse(line.includes('\n'));
+    }
+
+    const parsedLines = allLines.map(
+      (line) => JSON.parse(line) as Record<string, unknown>
+    );
+
+    const [backupInfoJson, firstFrame, ...rest] = parsedLines;
+    assert.containsAllKeys(backupInfoJson, ['version', 'mediaRootBackupKey']);
+    assert.property(firstFrame, 'account');
+    const accountValue = firstFrame.account;
+    assert.isObject(accountValue);
+    const accountRecord = accountValue as Record<string, unknown>;
+    assert.containsAllKeys(accountRecord, [
+      'profileKey',
+      'username',
+      'accountSettings',
+    ]);
+    assert.lengthOf(rest, frames.length - 1);
+  });
+
+  it('returns an empty chunk when no frames are provided', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+    assert.deepEqual(exporter.exportFrames(new Uint8Array()), []);
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage, 'ok');
+  });
+
+  it('filters disappearing messages from the output', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+
+    const frame = createDisappearingChatItemFrame();
+    const results = exporter.exportFrames(frame);
+    assert.deepEqual(results, [{}]);
+
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage, 'ok');
+  });
+
+  it('includes results without errors for otherwise legal filtered frames', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: true,
+    });
+
+    const frame = createDisappearingChatItemFrame();
+    const results = exporter.exportFrames(frame);
+    assert.lengthOf(results, 1);
+    const [result] = results;
+    assert.isUndefined(result.line);
+    assert.isUndefined(result.errorMessage);
+    const finishResult = exporter.finish();
+    // We should see an error here because we don't include an AccountData frame.
+    assert.isNotEmpty(finishResult.errorMessage);
+  });
+
+  it('strips attachments from view-once messages', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+
+    const frame = createViewOnceChatItemFrame();
+    const results = exporter.exportFrames(frame);
+    assert.lengthOf(results, 1);
+    const [result] = results;
+    assert.isDefined(result.line);
+    assert.isUndefined(result.errorMessage);
+
+    const json = JSON.parse(result.line) as Record<string, unknown>;
+    assert.deepStrictEqual(json, {
+      chatItem: {
+        chatId: '10',
+        authorId: '11',
+        dateSent: '12',
+        viewOnceMessage: {
+          // no "attachment"
+        },
+        revisions: [
+          {
+            chatId: '10',
+            authorId: '11',
+            dateSent: '9',
+            viewOnceMessage: {
+              // no "attachment"
+            },
+          },
+        ],
+      },
+    });
+
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage, 'ok');
+  });
+
+  it('filters disappearing messages from the output', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+
+    const frame = createDisappearingChatItemFrame();
+    const results = exporter.exportFrames(frame);
+    assert.deepEqual(results, [{}]);
+
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage, 'ok');
+  });
+
+  it('sanitizes frames before validation to avoid validation errors', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: true,
+    });
+
+    const frame = createDisappearingChatItemFrame();
+    const results = exporter.exportFrames(frame);
+    assert.lengthOf(results, 1);
+    const [result] = results;
+    assert.isUndefined(result.line);
+    assert.isUndefined(result.errorMessage);
+    const finishResult = exporter.finish();
+    assert.isDefined(finishResult.errorMessage);
+  });
+
+  it('strips attachments from view-once messages', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+
+    const frame = createViewOnceChatItemFrame();
+    const results = exporter.exportFrames(frame);
+    assert.lengthOf(results, 1);
+    const [result] = results;
+    assert.isDefined(result.line);
+    assert.isUndefined(result.errorMessage);
+
+    const json = JSON.parse(result.line) as Record<string, unknown>;
+    assert.deepStrictEqual(json, {
+      chatItem: {
+        chatId: '10',
+        authorId: '11',
+        dateSent: '12',
+        viewOnceMessage: {
+          // no "attachment"
+        },
+        revisions: [
+          {
+            chatId: '10',
+            authorId: '11',
+            dateSent: '9',
+            viewOnceMessage: {
+              // no "attachment"
+            },
+          },
+        ],
+      },
+    });
+
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage, 'ok');
+  });
+
+  it('validates frames when requested', () => {
+    const backupInfo = exampleBackupInfo;
+    const frames = exampleFrames.slice();
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: true,
+    });
+
+    const groupedFrames = [frames.slice(0, 1), frames.slice(1)];
+    for (const group of groupedFrames) {
+      if (group.length === 0) {
+        continue;
+      }
+      const results = exporter.exportFrames(concatFrames(group));
+      for (const result of results) {
+        assert.isDefined(result.line);
+        assert.isUndefined(result.errorMessage);
+      }
+    }
+
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage);
+  });
+
+  it('throws when validation fails', () => {
+    const backupInfo = exampleBackupInfo;
+    const frames = exampleFrames.slice();
+    const { exporter, chunk } = MessageBackup.BackupJsonExporter.start(
+      backupInfo,
+      {
+        validate: true,
+      }
+    );
+
+    // baseline chunk should still be produced
+    assert.isAbove(chunk.length, 0);
+    assert.isTrue(chunk[0].startsWith('{'));
+
+    const missingAccountChunk = concatFrames(frames.slice(1));
+    exporter.exportFrames(missingAccountChunk);
+    const finishResult = exporter.finish();
+    assert.isNotEmpty(finishResult.errorMessage);
+  });
+
+  it('can skip validation when explicitly disabled', () => {
+    const backupInfo = exampleBackupInfo;
+    const frames = exampleFrames.slice();
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+
+    const missingAccountChunk = concatFrames(frames.slice(1));
+    const results = exporter.exportFrames(missingAccountChunk);
+    for (const result of results) {
+      assert.isUndefined(result.errorMessage);
+    }
+
+    const finishResult = exporter.finish();
+    assert.isUndefined(finishResult.errorMessage);
+  });
+
+  it('still rejects malformed data even when validation is disabled', () => {
+    const backupInfo = exampleBackupInfo;
+    const { exporter } = MessageBackup.BackupJsonExporter.start(backupInfo, {
+      validate: false,
+    });
+
+    assert.throws(() => exporter.exportFrames(Uint8Array.of(0x02, 0x01)));
   });
 });
 
@@ -209,7 +607,7 @@ describe('OnlineBackupValidator', () => {
     // Here we override that `read` member with one that always produces a Uint8Array,
     // for more convenient use in the test. Note that this is unchecked.
     type ReadableUsingUint8Array = Omit<Readable, 'read'> & {
-      read(size: number): Uint8Array;
+      read: (size: number) => Bytes;
     };
     const input: ReadableUsingUint8Array = new Readable();
     input.push(exampleBackup);
@@ -259,7 +657,7 @@ describe('OnlineBackupValidator', () => {
   // 1: 1
   // 2: 1731715200000
   // 3: {`00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff`}
-  const VALID_BACKUP_INFO: Buffer = Buffer.from(
+  const VALID_BACKUP_INFO: Buffer<ArrayBuffer> = Buffer.from(
     'CAEQgOiTkrMyGiAAESIzRFVmd4iZqrvM3e7/ABEiM0RVZneImaq7zN3u/w==',
     'base64'
   );
@@ -278,5 +676,47 @@ describe('OnlineBackupValidator', () => {
       MessageBackup.Purpose.RemoteBackup
     );
     assert.throws(() => backup.finalize());
+  });
+});
+
+describe('MessageBackup sizing', () => {
+  // If this fails, the fix is not to update the numbers.
+  it('has the expected flush intervals', () => {
+    assert.equal(MessageBackup.flushInterval(0n), 8192n);
+    assert.equal(MessageBackup.flushInterval(65536n), 9459n);
+    assert.equal(MessageBackup.flushInterval(1048576n), 37837n);
+    assert.equal(MessageBackup.flushInterval(16777216n), 151348n);
+    assert.equal(MessageBackup.flushInterval(200000000n), 522557n);
+
+    assert.equal(MessageBackup.flushInterval(0n, 1048576n), 26754n);
+    assert.equal(MessageBackup.flushInterval(0n, 16777216n), 107019n);
+  });
+
+  it('holds a fixed interval until the backup crosses the estimate', () => {
+    const estimate = 16777216n;
+    assert.equal(
+      MessageBackup.flushInterval(0n, estimate),
+      MessageBackup.flushInterval(estimate / 2n, estimate)
+    );
+    assert.isBelow(
+      Number(MessageBackup.flushInterval(0n, estimate)),
+      Number(MessageBackup.flushInterval(estimate))
+    );
+
+    // Past the estimate, the interval is the one that suits a backup ending here.
+    assert.equal(
+      MessageBackup.flushInterval(4n * estimate, estimate),
+      MessageBackup.flushInterval(0n, 4n * estimate)
+    );
+  });
+
+  it('emits small backups at a single size', () => {
+    const compressedLength = 1000n;
+    for (let i = 0; i < 100; i++) {
+      assert.equal(
+        compressedLength + MessageBackup.paddingSize(8192n, compressedLength),
+        65536n
+      );
+    }
   });
 });

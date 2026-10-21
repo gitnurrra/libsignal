@@ -11,42 +11,6 @@ SCRIPT_DIR=$(dirname "$0")
 cd "${SCRIPT_DIR}"/..
 . bin/build_helpers.sh
 
-check_rust
-
-# Fetch dependencies first, so we can use them in computing later options.
-cargo fetch
-
-export CARGO_PROFILE_RELEASE_DEBUG=1 # enable line tables
-
-if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
-  # Avoid overriding RUSTFLAGS for host builds, because that resets the incremental build.
-  RUSTFLAGS="--cfg aes_armv8 ${RUSTFLAGS:-}" # Enable ARMv8 cryptography acceleration when available
-  RUSTFLAGS="$(rust_remap_path_options) ${RUSTFLAGS:-}" # Strip absolute paths
-  export RUSTFLAGS
-fi
-
-if [[ "${CARGO_BUILD_TARGET:-}" =~ -ios(-sim|-macabi)?$ ]]; then
-  export IPHONEOS_DEPLOYMENT_TARGET=15
-
-  # Use full LTO to reduce binary size
-  export CARGO_PROFILE_RELEASE_LTO=fat
-  export CFLAGS="-flto=full ${CFLAGS:-}"
-  export CXXFLAGS="-flto=full ${CXXFLAGS:-}"
-
-  # Use small BoringSSL curve tables to reduce binary size
-  export CFLAGS="-DOPENSSL_SMALL ${CFLAGS:-}"
-  export CXXFLAGS="-DOPENSSL_SMALL ${CXXFLAGS:-}"
-fi
-
-# Work around cc crate bug with Catalyst targets
-export CFLAGS_aarch64_apple_ios_macabi="--target=arm64-apple-ios-macabi ${CFLAGS:-}"
-export CFLAGS_x86_64_apple_ios_macabi="--target=x86_64-apple-ios-macabi ${CFLAGS:-}"
-
-FEATURES=()
-if [[ "${CARGO_BUILD_TARGET:-}" != "aarch64-apple-ios" ]]; then
-  FEATURES+=("libsignal-bridge-testing")
-fi
-
 usage() {
   cat >&2 <<END
 Usage: $(basename "$0") [options]
@@ -64,18 +28,6 @@ Options:
 Use CARGO_BUILD_TARGET for cross-compilation (such as for iOS).
 END
 }
-
-check_cbindgen() {
-  if ! command -v cbindgen > /dev/null; then
-    echo 'error: cbindgen not found in PATH' >&2
-    if command -v cargo > /dev/null; then
-      echo 'note: get it by running' >&2
-      printf "\n\t%s\n\n" "cargo +stable install cbindgen" >&2
-    fi
-    exit 1
-  fi
-}
-
 
 RELEASE_BUILD=
 VERBOSE=
@@ -119,6 +71,43 @@ while [ "${1:-}" != "" ]; do
   shift
 done
 
+check_rust "$BUILD_STD"
+
+# Fetch dependencies first, so we can use them in computing later options.
+cargo fetch
+
+export CARGO_PROFILE_RELEASE_DEBUG=1 # enable line tables
+
+if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
+  # Avoid overriding RUSTFLAGS for host builds, because that resets the incremental build.
+  RUSTFLAGS="--cfg aes_armv8 ${RUSTFLAGS:-}" # Enable ARMv8 cryptography acceleration when available
+  RUSTFLAGS="--cfg tokio_unstable ${RUSTFLAGS:-}" # Access tokio's unstable metrics
+  RUSTFLAGS="$(rust_remap_path_options) ${RUSTFLAGS:-}" # Strip absolute paths
+  export RUSTFLAGS
+fi
+
+if [[ "${CARGO_BUILD_TARGET:-}" =~ -ios(-sim|-macabi)?$ ]]; then
+  export IPHONEOS_DEPLOYMENT_TARGET=15
+
+  # Use full LTO to reduce binary size
+  export CARGO_PROFILE_RELEASE_LTO=fat
+  export CFLAGS="-flto=full ${CFLAGS:-}"
+  export CXXFLAGS="-flto=full ${CXXFLAGS:-}"
+
+  # Use small BoringSSL curve tables to reduce binary size
+  export CFLAGS="-DOPENSSL_SMALL ${CFLAGS:-}"
+  export CXXFLAGS="-DOPENSSL_SMALL ${CXXFLAGS:-}"
+fi
+
+# Work around cc crate bug with Catalyst targets
+export CFLAGS_aarch64_apple_ios_macabi="--target=arm64-apple-ios-macabi ${CFLAGS:-}"
+export CFLAGS_x86_64_apple_ios_macabi="--target=x86_64-apple-ios-macabi ${CFLAGS:-}"
+
+FEATURES=()
+if [[ "${CARGO_BUILD_TARGET:-}" != "aarch64-apple-ios" ]]; then
+  FEATURES+=("libsignal-bridge-testing")
+fi
+
 if [[ -n "${DEVELOPER_SDK_DIR:-}" ]]; then
   # Assume we're in Xcode, which means we're probably cross-compiling.
   # In this case, we need to add an extra library search path for build scripts and proc-macros,
@@ -150,37 +139,17 @@ if [[ -n "${RELEASE_BUILD:-}" && -z "${DEBUG_LEVEL_LOGS:-}" ]]; then
     exit 2
   fi
 fi
-
-FFI_HEADER_PATH=swift/Sources/SignalFfi/signal_ffi.h
-FFI_TESTING_HEADER_PATH=swift/Sources/SignalFfi/signal_ffi_testing.h
+if [[ -n "${RELEASE_BUILD:-}" ]]; then
+  if grep -q -- 'ATTEST TEST-UTIL IS ENABLED' "${CARGO_TARGET_DIR:-target}/${CARGO_BUILD_TARGET:-}/release/libsignal_ffi.a"; then
+    echo 'error: attest library included with test-util enabled!' >&2
+    exit 2
+  fi
+fi
 
 if [[ -n "${SHOULD_CBINDGEN}" ]]; then
-  check_cbindgen
-  cbindgen --version
   if [[ -n "${CBINDGEN_VERIFY}" ]]; then
-    echo diff -u "${FFI_HEADER_PATH}" "<(cbindgen -q ${RELEASE_BUILD:+--profile release} rust/bridge/ffi)"
-    if ! diff -u "${FFI_HEADER_PATH}"  <(cbindgen -q ${RELEASE_BUILD:+--profile release} rust/bridge/ffi); then
-      echo
-      echo 'error: signal_ffi.h not up to date; run' "$0" '--generate-ffi' >&2
-      exit 1
-    fi
-    echo diff -u "${FFI_TESTING_HEADER_PATH}" "<(cbindgen -q ${RELEASE_BUILD:+--profile release} rust/bridge/shared/testing --config rust/bridge/ffi/cbindgen-testing.toml)"
-    if ! diff -u "${FFI_TESTING_HEADER_PATH}"  <(cbindgen -q ${RELEASE_BUILD:+--profile release} rust/bridge/shared/testing --config rust/bridge/ffi/cbindgen-testing.toml); then
-      echo
-      echo 'error: signal_ffi_testing.h not up to date; run' "$0" '--generate-ffi' >&2
-      exit 1
-    fi
+    cargo run -p libsignal-ffi-native_swift -- --verify
   else
-    echo cbindgen ${RELEASE_BUILD:+--profile release} -o "${FFI_HEADER_PATH}" rust/bridge/ffi
-    # Use sed to ignore irrelevant cbindgen warnings.
-    # ...and then disable the shellcheck warning about literal backticks in single-quotes
-    # shellcheck disable=SC2016
-    cbindgen ${RELEASE_BUILD:+--profile release} -o "${FFI_HEADER_PATH}" rust/bridge/ffi 2>&1 |
-      sed '/WARN: Missing `\[defines\]` entry for `feature = "ffi"` in cbindgen config\./ d' >&2
-
-    echo cbindgen ${RELEASE_BUILD:+--profile release} -o "${FFI_TESTING_HEADER_PATH}" rust/bridge/shared/testing --config rust/bridge/ffi/cbindgen-testing.toml
-    # shellcheck disable=SC2016
-    cbindgen ${RELEASE_BUILD:+--profile release} -o "${FFI_TESTING_HEADER_PATH}" rust/bridge/shared/testing --config rust/bridge/ffi/cbindgen-testing.toml 2>&1 |
-      sed '/WARN: Missing `\[defines\]` entry for `feature = "ffi"` in cbindgen config\./ d' >&2
+    cargo run -p libsignal-ffi-native_swift
   fi
 fi

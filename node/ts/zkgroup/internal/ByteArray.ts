@@ -3,17 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { LibSignalErrorBase } from '../../Errors';
-import * as Native from '../../../Native';
+import type { Bytes } from '@signalapp/types';
+
+import { LibSignalErrorBase } from '../../Errors.js';
+import * as Native from '../../Native.js';
 
 export const UNCHECKED_AND_UNCLONED: unique symbol = Symbol();
 
 export default class ByteArray {
-  contents: Uint8Array;
+  contents: Bytes;
 
   protected constructor(
-    contents: Uint8Array,
-    checkValid: ((contents: Uint8Array) => void) | typeof UNCHECKED_AND_UNCLONED
+    contents: Bytes,
+    checkValid: ((contents: Bytes) => void) | typeof UNCHECKED_AND_UNCLONED
   ) {
     if (checkValid === UNCHECKED_AND_UNCLONED) {
       this.contents = contents;
@@ -25,7 +27,7 @@ export default class ByteArray {
 
   protected static checkLength(
     expectedLength: number
-  ): (contents: Uint8Array) => void {
+  ): (contents: Bytes) => void {
     return (contents) => {
       if (contents.length !== expectedLength) {
         throw new LibSignalErrorBase(
@@ -37,11 +39,11 @@ export default class ByteArray {
     };
   }
 
-  public getContents(): Uint8Array {
+  public getContents(): Bytes {
     return this.contents;
   }
 
-  public serialize(): Uint8Array {
+  public serialize(): Bytes {
     return Uint8Array.from(this.contents);
   }
 }

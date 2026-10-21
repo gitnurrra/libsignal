@@ -8,9 +8,10 @@
 use std::sync::LazyLock;
 
 use const_str::hex;
-use curve25519_dalek_signal::constants::RISTRETTO_BASEPOINT_POINT;
-use curve25519_dalek_signal::ristretto::RistrettoPoint;
-use curve25519_dalek_signal::scalar::Scalar;
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::scalar::Scalar;
+use derive_where::derive_where;
 use partial_default::PartialDefault;
 use serde::{Deserialize, Serialize};
 
@@ -26,8 +27,9 @@ use crate::{
     NUM_AUTH_CRED_ATTRIBUTES, NUM_PROFILE_KEY_CRED_ATTRIBUTES, NUM_RECEIPT_CRED_ATTRIBUTES,
 };
 
-static SYSTEM_PARAMS: LazyLock<SystemParams> =
-    LazyLock::new(|| crate::deserialize::<SystemParams>(SystemParams::SYSTEM_HARDCODED).unwrap());
+static SYSTEM_PARAMS: LazyLock<SystemParams> = LazyLock::new(|| {
+    crate::deserialize(SystemParams::SYSTEM_HARDCODED).expect("valid hardcoded params")
+});
 
 const NUM_SUPPORTED_ATTRS: usize = 6;
 #[derive(Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +91,7 @@ impl AttrScalars for PniCredential {
 
 #[derive(Serialize, Deserialize, PartialDefault)]
 #[partial_default(bound = "S::Storage: Default")]
+#[derive_where(Clone, Copy, PartialEq, Eq; S: AttrScalars)]
 pub struct KeyPair<S: AttrScalars> {
     // private
     pub(crate) w: Scalar,
@@ -102,29 +105,6 @@ pub struct KeyPair<S: AttrScalars> {
     pub(crate) C_W: RistrettoPoint,
     pub(crate) I: RistrettoPoint,
 }
-
-impl<S: AttrScalars> Clone for KeyPair<S> {
-    fn clone(&self) -> Self {
-        // Rely on Copy
-        *self
-    }
-}
-
-impl<S: AttrScalars> Copy for KeyPair<S> {}
-
-impl<S: AttrScalars> PartialEq for KeyPair<S> {
-    fn eq(&self, other: &Self) -> bool {
-        self.w == other.w
-            && self.wprime == other.wprime
-            && self.W == other.W
-            && self.x0 == other.x0
-            && self.x1 == other.x1
-            && self.y == other.y
-            && self.C_W == other.C_W
-            && self.I == other.I
-    }
-}
-impl<S: AttrScalars> Eq for KeyPair<S> {}
 
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialDefault)]
 pub struct PublicKey {
@@ -282,7 +262,9 @@ impl SystemParams {
         *SYSTEM_PARAMS
     }
 
-    const SYSTEM_HARDCODED: &'static [u8] = &hex!("9ae7c8e5ed779b114ae7708aa2f794670adda324987b659913122c35505b105e6ca31025d2d76be7fd34944f98f7fa0e37babb2c8b98bbbdbd3dd1bf130cca2c8a9a3bdfaaa2b6b322d46b93eca7b0d51c86a3c839e11466358258a6c10c577fc2bffd34cd99164c9a6cd29fab55d91ff9269322ec3458603cc96a0d47f704058288f62ee0acedb8aa23242121d98965a9bb2991250c11758095ece0fd2b33285286fe1fcb056103b6081744b975f550d08521568dd3d8618f25c140375a0f4024c3aa23bdfffb27fbd982208d3ecd1fd3bcb7ac0c3a14b109804fc748d7fa456cffb4934f980b6e09a248a60f44a6150ae6c13d7e3c06261d7e4eed37f39f60b04dd9d607fd357012274d3c63dbb38e7378599c9e97dfbb28842694891d5f0ddc729919b798b4131503408cc57a9c532f4427632c88f54cea53861a5bc44c61cc6037dc31c2e8d4474fb519587a448693182ad9d6d86b535957858f547b9340127da75f8074caee944ac36c0ac662d38c9b3ccce03a093fcd9644047398b86b6e83372ff14fb8bb0dea65531252ac70d58a4a0810d682a0e709c9227b30ef6c8e17c5915d527221bb00da8175cd6489aa8aa492a500f9abee5690b9dfca8855dc0bd02a7f277add240f639ac16801e81574afb4683edff63b9a01e93dbd867a04b616c706c80c756c11a3016bbfb60977f4648b5f2395a4b428b7211940813e3afde2b87aa9c2c37bf716e2578f95656df12c2fb6f5d0631f6f71e2c3193f6d");
+    const SYSTEM_HARDCODED: &'static [u8] = &hex!(
+        "9ae7c8e5ed779b114ae7708aa2f794670adda324987b659913122c35505b105e6ca31025d2d76be7fd34944f98f7fa0e37babb2c8b98bbbdbd3dd1bf130cca2c8a9a3bdfaaa2b6b322d46b93eca7b0d51c86a3c839e11466358258a6c10c577fc2bffd34cd99164c9a6cd29fab55d91ff9269322ec3458603cc96a0d47f704058288f62ee0acedb8aa23242121d98965a9bb2991250c11758095ece0fd2b33285286fe1fcb056103b6081744b975f550d08521568dd3d8618f25c140375a0f4024c3aa23bdfffb27fbd982208d3ecd1fd3bcb7ac0c3a14b109804fc748d7fa456cffb4934f980b6e09a248a60f44a6150ae6c13d7e3c06261d7e4eed37f39f60b04dd9d607fd357012274d3c63dbb38e7378599c9e97dfbb28842694891d5f0ddc729919b798b4131503408cc57a9c532f4427632c88f54cea53861a5bc44c61cc6037dc31c2e8d4474fb519587a448693182ad9d6d86b535957858f547b9340127da75f8074caee944ac36c0ac662d38c9b3ccce03a093fcd9644047398b86b6e83372ff14fb8bb0dea65531252ac70d58a4a0810d682a0e709c9227b30ef6c8e17c5915d527221bb00da8175cd6489aa8aa492a500f9abee5690b9dfca8855dc0bd02a7f277add240f639ac16801e81574afb4683edff63b9a01e93dbd867a04b616c706c80c756c11a3016bbfb60977f4648b5f2395a4b428b7211940813e3afde2b87aa9c2c37bf716e2578f95656df12c2fb6f5d0631f6f71e2c3193f6d"
+    );
 }
 
 impl<S: AttrScalars> KeyPair<S> {

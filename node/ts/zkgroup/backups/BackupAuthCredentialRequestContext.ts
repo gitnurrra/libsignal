@@ -3,21 +3,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import * as uuid from 'uuid';
+import type { Bytes } from '@signalapp/types';
 
-import ByteArray from '../internal/ByteArray';
-import * as Native from '../../../Native';
+import ByteArray from '../internal/ByteArray.js';
+import * as Native from '../../Native.js';
 
-import BackupAuthCredentialRequest from './BackupAuthCredentialRequest';
-import BackupAuthCredentialResponse from './BackupAuthCredentialResponse';
-import BackupAuthCredential from './BackupAuthCredential';
-import GenericServerPublicParams from '../GenericServerPublicParams';
-import type { Uuid } from '../..';
+import BackupAuthCredentialRequest from './BackupAuthCredentialRequest.js';
+import BackupAuthCredentialResponse from './BackupAuthCredentialResponse.js';
+import BackupAuthCredential from './BackupAuthCredential.js';
+import GenericServerPublicParams from '../GenericServerPublicParams.js';
+import * as uuid from '../../uuid.js';
+
+type Uuid = uuid.Uuid;
 
 export default class BackupAuthCredentialRequestContext extends ByteArray {
   private readonly __type?: never;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(
       contents,
       Native.BackupAuthCredentialRequestContext_CheckValidContents
@@ -25,7 +27,7 @@ export default class BackupAuthCredentialRequestContext extends ByteArray {
   }
 
   static create(
-    backupKey: Uint8Array,
+    backupKey: Bytes,
     aci: Uuid
   ): BackupAuthCredentialRequestContext {
     return new BackupAuthCredentialRequestContext(

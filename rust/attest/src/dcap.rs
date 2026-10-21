@@ -34,7 +34,7 @@ use boring_signal::pkey::{PKey, PKeyRef, Public};
 use boring_signal::x509::crl::X509CRLRef;
 use boring_signal::x509::store::{X509Store, X509StoreBuilder};
 use boring_signal::x509::verify::X509VerifyFlags;
-use boring_signal::x509::{X509Ref, X509};
+use boring_signal::x509::{X509, X509Ref};
 use hex::ToHex;
 use uuid::Uuid;
 
@@ -93,16 +93,15 @@ pub fn verify_remote_attestation(
     let attestation = attest(evidence_bytes, endorsement_bytes, current_time)?;
 
     // 4. Verify the status of the Intel® SGX TCB described in the chain.
-    if let TcbStanding::SWHardeningNeeded { advisory_ids } = attestation.tcb_standing {
-        if advisory_ids
+    if let TcbStanding::SWHardeningNeeded { advisory_ids } = attestation.tcb_standing
+        && advisory_ids
             .iter()
             .any(|id| !acceptable_sw_advisories.contains(&id.as_str()))
-        {
-            return Err(Error::new(format!(
-                "TCB contains unmitigated unaccepted advisory ids: {advisory_ids:?}"
-            ))
-            .into());
-        }
+    {
+        return Err(Error::new(format!(
+            "TCB contains unmitigated unaccepted advisory ids: {advisory_ids:?}"
+        ))
+        .into());
     }
 
     // 5. Verify the enclave measurements in the Quote reflect an enclave identity expected.
@@ -372,7 +371,7 @@ pub(crate) fn from_trusted(
                 .expect("haven't yet overflowed time_t"),
         );
         for &cert in trusted_certs {
-            store_builder.add_cert(cert.to_owned())?;
+            store_builder.add_cert(cert)?;
         }
         for &crl in trusted_crls {
             store_builder.add_crl(crl.to_owned())?;
@@ -532,13 +531,13 @@ fn verify_tcb_status(evidence: &Evidence, endorsements: &SgxEndorsements) -> Res
     if pck_ext.fmspc != tcb_info.fmspc {
         return Err(Error::new(format!(
             "tcb fmspc mismatch (pck extension fmspc was {:?}, tcb_info fmspc was {:?})",
-            &pck_ext.fmspc, &tcb_info.fmspc
+            pck_ext.fmspc, tcb_info.fmspc
         )));
     }
     if pck_ext.pceid != tcb_info.pce_id {
         return Err(Error::new(format!(
             "tcb pceid mismatch (pck extension pceid was {:?}, tcb_info pceid was {:?})",
-            &pck_ext.pceid, &tcb_info.pce_id
+            pck_ext.pceid, tcb_info.pce_id
         )));
     }
 
@@ -643,30 +642,37 @@ mod test {
     use std::time::{Duration, SystemTime};
 
     use boring_signal::bn::BigNum;
-    use const_str::hex;
+    use prost::Message;
 
     use super::*;
+    use crate::constants::SGX_TCB_EVALUATION_DATA_NUMBER_MIN;
     use crate::dcap::endorsements::{QeTcbLevel, TcbInfoVersion};
     use crate::dcap::fakes::FakeAttestation;
+    use crate::proto::cds2::ClientHandshakeStart;
 
-    const EXPECTED_MRENCLAVE: MREnclave =
-        hex!("337ac97ce088a132daeb1308ea3159f807de4a827e875b2c90ce21bf4751196f");
-
-    const ACCEPTED_SW_ADVISORIES: &[&str] = &["INTEL-SA-00615", "INTEL-SA-00657"];
+    const EXPECTED_MRENCLAVE: &[u8; 32] = include_bytes!("../tests/data/cdsi.mrenclave");
 
     #[test]
     fn test_verify_remote_attestation() {
-        let current_time: SystemTime =
-            SystemTime::UNIX_EPOCH + Duration::from_millis(1674105089000);
-
-        let evidence_bytes = include_bytes!("../tests/data/dcap.evidence");
-        let endorsements_bytes = include_bytes!("../tests/data/dcap.endorsements");
+        let current_time = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(u64::from_be_bytes(*include_bytes!(
+                "../tests/data/cdsi.timestamp"
+            )));
+        let attestation_msg = include_bytes!("../tests/data/cdsi.handshakestart");
+        let cdsi_msg = ClientHandshakeStart::decode(&attestation_msg[..]).unwrap();
+        let evidence_bytes = &cdsi_msg.evidence;
+        let endorsements_bytes = &cdsi_msg.endorsement;
+        let advisories = include_bytes!("../tests/data/cdsi.advisories")
+            .split(|&b| b == b'\n')
+            .map(|a| String::from_utf8(a.to_vec()).unwrap())
+            .collect::<Vec<_>>();
+        let advisories_arr = advisories.iter().map(|s| s.as_str()).collect::<Vec<_>>();
 
         let pubkey = verify_remote_attestation(
             evidence_bytes.as_ref(),
             endorsements_bytes.as_ref(),
-            &EXPECTED_MRENCLAVE,
-            ACCEPTED_SW_ADVISORIES,
+            EXPECTED_MRENCLAVE,
+            &advisories_arr,
             current_time,
         )
         .unwrap()
@@ -674,51 +680,32 @@ mod test {
         .unwrap()
         .to_owned();
 
-        let expected_pubkey = hex::decode(include_bytes!("../tests/data/dcap.pubkey")).unwrap();
-        assert_eq!(&expected_pubkey, pubkey.as_slice());
-    }
-
-    #[test]
-    fn test_verify_remote_attestation_v3() {
-        // Verify with collateral from the V3 PCS API (current version is V4)
-
-        let current_time: SystemTime =
-            SystemTime::UNIX_EPOCH + Duration::from_millis(1657856984000);
-
-        let evidence_bytes = include_bytes!("../tests/data/dcap_v3.evidence");
-        let endorsements_bytes = include_bytes!("../tests/data/dcap_v3.endorsements");
-
-        let pubkey = verify_remote_attestation(
-            evidence_bytes.as_ref(),
-            endorsements_bytes.as_ref(),
-            &hex!("e5eaa62da3514e8b37ccabddb87e52e7f319ccf5120a13f9e1b42b87ec9dd3dd"),
-            &[],
-            current_time,
-        )
-        .unwrap()
-        .get("pk")
-        .unwrap()
-        .to_owned();
-
-        let expected_pubkey = hex::decode(include_bytes!("../tests/data/dcap_v3.pubkey")).unwrap();
-        assert_eq!(&expected_pubkey, pubkey.as_slice());
+        let expected_pubkey = include_bytes!("../tests/data/cdsi.pubkey");
+        assert_eq!(&expected_pubkey[..], pubkey.as_slice());
     }
 
     #[test]
     fn test_verify_remote_attestation_accepted_sw_advisories_not_present() {
-        let current_time: SystemTime =
-            SystemTime::UNIX_EPOCH + Duration::from_millis(1674105089000);
-
-        let evidence_bytes = include_bytes!("../tests/data/dcap.evidence");
-        let endorsements_bytes = include_bytes!("../tests/data/dcap.endorsements");
-
-        let sw_advisories = &[ACCEPTED_SW_ADVISORIES, &["INTEL-SA-1234"]].concat();
+        let current_time = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(u64::from_be_bytes(*include_bytes!(
+                "../tests/data/cdsi.timestamp"
+            )));
+        let attestation_msg = include_bytes!("../tests/data/cdsi.handshakestart");
+        let cdsi_msg = ClientHandshakeStart::decode(&attestation_msg[..]).unwrap();
+        let evidence_bytes = &cdsi_msg.evidence;
+        let endorsements_bytes = &cdsi_msg.endorsement;
+        let advisories = include_bytes!("../tests/data/cdsi.advisories")
+            .split(|&b| b == b'\n')
+            .map(|a| String::from_utf8(a.to_vec()).unwrap())
+            .collect::<Vec<_>>();
+        let mut advisories_arr = advisories.iter().map(|s| s.as_str()).collect::<Vec<_>>();
+        advisories_arr.push("INTEL-SA-1234");
 
         let pubkey = verify_remote_attestation(
             evidence_bytes.as_ref(),
             endorsements_bytes.as_ref(),
-            &EXPECTED_MRENCLAVE,
-            sw_advisories,
+            EXPECTED_MRENCLAVE,
+            &advisories_arr,
             current_time,
         )
         .unwrap()
@@ -726,8 +713,8 @@ mod test {
         .unwrap()
         .to_owned();
 
-        let expected_pubkey = hex::decode(include_bytes!("../tests/data/dcap.pubkey")).unwrap();
-        assert_eq!(expected_pubkey, pubkey.as_slice());
+        let expected_pubkey = include_bytes!("../tests/data/cdsi.pubkey");
+        assert_eq!(&expected_pubkey[..], pubkey.as_slice());
     }
 
     #[test]
@@ -754,20 +741,31 @@ mod test {
 
     #[test]
     fn test_verify_remote_attestation_expired_attestation() {
-        let current_time: SystemTime =
-            SystemTime::UNIX_EPOCH + Duration::from_millis(1652744306000);
+        let current_time = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(
+                u64::from_be_bytes(*include_bytes!("../tests/data/cdsi.timestamp"))
+                    + 86400 * 365 * 2, // Add 2 years
+            );
+        let attestation_msg = include_bytes!("../tests/data/cdsi.handshakestart");
+        let cdsi_msg = ClientHandshakeStart::decode(&attestation_msg[..]).unwrap();
+        let evidence_bytes = &cdsi_msg.evidence;
+        let endorsements_bytes = &cdsi_msg.endorsement;
+        let advisories = include_bytes!("../tests/data/cdsi.advisories")
+            .split(|&b| b == b'\n')
+            .map(|a| String::from_utf8(a.to_vec()).unwrap())
+            .collect::<Vec<_>>();
+        let advisories_arr = advisories.iter().map(|s| s.as_str()).collect::<Vec<_>>();
 
-        let evidence_bytes = include_bytes!("../tests/data/dcap-expired.evidence");
-        let endorsements_bytes = include_bytes!("../tests/data/dcap-expired.endorsements");
-
-        assert!(verify_remote_attestation(
-            evidence_bytes.as_ref(),
-            endorsements_bytes.as_ref(),
-            &EXPECTED_MRENCLAVE,
-            ACCEPTED_SW_ADVISORIES,
-            current_time,
-        )
-        .is_err());
+        assert!(
+            verify_remote_attestation(
+                evidence_bytes.as_ref(),
+                endorsements_bytes.as_ref(),
+                EXPECTED_MRENCLAVE,
+                &advisories_arr,
+                current_time,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -983,6 +981,30 @@ mod test {
             })
             .collect();
         builder.sign().attest().unwrap();
+    }
+
+    #[test]
+    fn tcb_level_too_low_tcb_info() {
+        let mut builder = FakeAttestation::builder();
+
+        builder.uendorsements.tcb_info.tcb_evaluation_data_number =
+            SGX_TCB_EVALUATION_DATA_NUMBER_MIN - 1;
+        builder
+            .sign()
+            .attest()
+            .expect_err("should fail because tcb_evaluation_data_number is too low");
+    }
+
+    #[test]
+    fn tcb_level_too_low_enclave_identity() {
+        let mut builder = FakeAttestation::builder();
+
+        builder.uendorsements.qe_id_info.tcb_evaluation_data_number =
+            SGX_TCB_EVALUATION_DATA_NUMBER_MIN - 1;
+        builder
+            .sign()
+            .attest()
+            .expect_err("should fail because tcb_evaluation_data_number is too low");
     }
 
     #[test]

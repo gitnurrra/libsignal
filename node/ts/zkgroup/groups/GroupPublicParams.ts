@@ -3,14 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import ByteArray from '../internal/ByteArray';
-import * as Native from '../../../Native';
-import GroupIdentifier from './GroupIdentifier';
+import type { Bytes } from '@signalapp/types';
+
+import ByteArray from '../internal/ByteArray.js';
+import * as Native from '../../Native.js';
+import GroupIdentifier from './GroupIdentifier.js';
 
 export default class GroupPublicParams extends ByteArray {
   private readonly __type?: never;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, Native.GroupPublicParams_CheckValidContents);
   }
 

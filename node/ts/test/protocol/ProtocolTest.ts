@@ -3,14 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-/* eslint-disable @typescript-eslint/require-await */
-
-import * as SignalClient from '../../index';
-import * as util from '../util';
+import * as SignalClient from '../../index.js';
+import * as util from '../util.js';
 
 import { assert, use } from 'chai';
-import * as chaiAsPromised from 'chai-as-promised';
-import * as Chance from 'chance';
+import chaiAsPromised from 'chai-as-promised';
+import Chance from 'chance';
+import { Buffer } from 'node:buffer';
 
 import TestStores, {
   InMemoryIdentityKeyStore,
@@ -19,7 +18,7 @@ import TestStores, {
   InMemorySenderKeyStore,
   InMemorySessionStore,
   InMemorySignedPreKeyStore,
-} from './TestStores';
+} from './TestStores.js';
 
 use(chaiAsPromised);
 util.initLogger();
@@ -194,12 +193,13 @@ it('DecryptionErrorMessage', async () => {
   // Set up the session with a message from A to B.
 
   const bAddress = SignalClient.ProtocolAddress.new(bUuid, bDeviceId);
+  const aAddress = SignalClient.ProtocolAddress.new(aUuid, aDeviceId);
   await SignalClient.processPreKeyBundle(
     bPreKeyBundle,
     bAddress,
+    aAddress,
     aSess,
-    aKeys,
-    SignalClient.UsePQRatchet.Yes
+    aKeys
   );
 
   const aPlaintext = Buffer.from('hi there', 'utf8');
@@ -223,15 +223,14 @@ it('DecryptionErrorMessage', async () => {
     bKeys,
     bPreK,
     bSPreK,
-    bKyberStore,
-    SignalClient.UsePQRatchet.Yes
+    bKyberStore
   );
 
   // Pretend to send a message from B back to A that "fails".
-  const aAddress = SignalClient.ProtocolAddress.new(aUuid, aDeviceId);
   const bCiphertext = await SignalClient.signalEncrypt(
     Buffer.from('reply', 'utf8'),
     aAddress,
+    bAddress,
     bSess,
     bKeys
   );
@@ -455,7 +454,10 @@ describe('SenderKeyDistributionMessage Store API', () => {
       distributionId,
       undefined as unknown as SignalClient.SenderKeyStore
     );
-    await assert.isRejected(messagePromise, TypeError);
+    await assert.isRejected(
+      messagePromise,
+      /Cannot read properties of undefined/
+    );
 
     const messagePromise2 = SignalClient.SenderKeyDistributionMessage.create(
       {} as unknown as SignalClient.ProtocolAddress,
@@ -665,7 +667,8 @@ const sessionVersionTestCases = [
 
 async function makePQXDHBundle(
   address: SignalClient.ProtocolAddress,
-  stores: TestStores
+  stores: TestStores,
+  excludeOneTimePreKey?: boolean
 ): Promise<SignalClient.PreKeyBundle> {
   const identityKey = await stores.identity.getIdentityKey();
   const prekeyId = chance.natural({ max: 10000 });
@@ -710,8 +713,8 @@ async function makePQXDHBundle(
   return SignalClient.PreKeyBundle.new(
     await stores.identity.getLocalRegistrationId(),
     address.deviceId(),
-    prekeyId,
-    prekey.getPublicKey(),
+    excludeOneTimePreKey ? null : prekeyId,
+    excludeOneTimePreKey ? null : prekey.getPublicKey(),
     signedPrekeyId,
     signedPrekey.getPublicKey(),
     signedPrekeySignature,
@@ -736,15 +739,16 @@ for (const testCase of sessionVersionTestCases) {
       await SignalClient.processPreKeyBundle(
         bPreKeyBundle,
         bAddress,
+        aAddress,
         aliceStores.session,
-        aliceStores.identity,
-        SignalClient.UsePQRatchet.Yes
+        aliceStores.identity
       );
       const aMessage = Buffer.from('Greetings hoo-man', 'utf8');
 
       const aCiphertext = await SignalClient.signalEncrypt(
         aMessage,
         bAddress,
+        aAddress,
         aliceStores.session,
         aliceStores.identity
       );
@@ -761,12 +765,12 @@ for (const testCase of sessionVersionTestCases) {
       const bDPlaintext = await SignalClient.signalDecryptPreKey(
         aCiphertextR,
         aAddress,
+        bAddress,
         bobStores.session,
         bobStores.identity,
         bobStores.prekey,
         bobStores.signed,
-        bobStores.kyber,
-        SignalClient.UsePQRatchet.Yes
+        bobStores.kyber
       );
       assert.deepEqual(bDPlaintext, aMessage);
 
@@ -778,6 +782,7 @@ for (const testCase of sessionVersionTestCases) {
       const bCiphertext = await SignalClient.signalEncrypt(
         bMessage,
         aAddress,
+        bAddress,
         bobStores.session,
         bobStores.identity
       );
@@ -794,6 +799,7 @@ for (const testCase of sessionVersionTestCases) {
       const aDPlaintext = await SignalClient.signalDecrypt(
         bCiphertextR,
         bAddress,
+        aAddress,
         aliceStores.session,
         aliceStores.identity
       );
@@ -834,15 +840,16 @@ for (const testCase of sessionVersionTestCases) {
       await SignalClient.processPreKeyBundle(
         bPreKeyBundle,
         bAddress,
+        aAddress,
         aliceStores.session,
-        aliceStores.identity,
-        SignalClient.UsePQRatchet.Yes
+        aliceStores.identity
       );
       const aMessage = Buffer.from('Greetings hoo-man', 'utf8');
 
       const aCiphertext = await SignalClient.signalEncrypt(
         aMessage,
         bAddress,
+        aAddress,
         aliceStores.session,
         aliceStores.identity
       );
@@ -859,12 +866,12 @@ for (const testCase of sessionVersionTestCases) {
       const bDPlaintext = await SignalClient.signalDecryptPreKey(
         aCiphertextR,
         aAddress,
+        bAddress,
         bobStores.session,
         bobStores.identity,
         bobStores.prekey,
         bobStores.signed,
-        bobStores.kyber,
-        SignalClient.UsePQRatchet.Yes
+        bobStores.kyber
       );
       assert.deepEqual(bDPlaintext, aMessage);
 
@@ -872,12 +879,12 @@ for (const testCase of sessionVersionTestCases) {
         await SignalClient.signalDecryptPreKey(
           aCiphertextR,
           aAddress,
+          bAddress,
           bobStores.session,
           bobStores.identity,
           bobStores.prekey,
           bobStores.signed,
-          bobStores.kyber,
-          SignalClient.UsePQRatchet.Yes
+          bobStores.kyber
         );
         assert.fail();
       } catch (e) {
@@ -898,6 +905,7 @@ for (const testCase of sessionVersionTestCases) {
       const bCiphertext = await SignalClient.signalEncrypt(
         bMessage,
         aAddress,
+        bAddress,
         bobStores.session,
         bobStores.identity
       );
@@ -914,6 +922,7 @@ for (const testCase of sessionVersionTestCases) {
       const aDPlaintext = await SignalClient.signalDecrypt(
         bCiphertextR,
         bAddress,
+        aAddress,
         aliceStores.session,
         aliceStores.identity
       );
@@ -924,6 +933,7 @@ for (const testCase of sessionVersionTestCases) {
         await SignalClient.signalDecrypt(
           bCiphertextR,
           bAddress,
+          aAddress,
           aliceStores.session,
           aliceStores.identity
         );
@@ -943,6 +953,7 @@ for (const testCase of sessionVersionTestCases) {
       const aliceStores = new TestStores();
       const bobStores = new TestStores();
 
+      const aAddress = SignalClient.ProtocolAddress.new('+14151111111', 1);
       const bAddress = SignalClient.ProtocolAddress.new('+19192222222', 1);
 
       const bPreKeyBundle = await testCase.makeBundle(bAddress, bobStores);
@@ -950,9 +961,9 @@ for (const testCase of sessionVersionTestCases) {
       await SignalClient.processPreKeyBundle(
         bPreKeyBundle,
         bAddress,
+        aAddress,
         aliceStores.session,
         aliceStores.identity,
-        SignalClient.UsePQRatchet.Yes,
         new Date('2020-01-01')
       );
 
@@ -964,6 +975,7 @@ for (const testCase of sessionVersionTestCases) {
       const aCiphertext = await SignalClient.signalEncrypt(
         aMessage,
         bAddress,
+        aAddress,
         aliceStores.session,
         aliceStores.identity,
         new Date('2020-01-01')
@@ -982,9 +994,75 @@ for (const testCase of sessionVersionTestCases) {
         SignalClient.signalEncrypt(
           aMessage,
           bAddress,
+          aAddress,
           aliceStores.session,
           aliceStores.identity,
           new Date('2023-01-01')
+        )
+      );
+    });
+
+    it('rejects pre-key messages sent from a second user', async () => {
+      const aliceStores = new TestStores();
+      const bobStores = new TestStores();
+
+      const aAddress = SignalClient.ProtocolAddress.new('+14151111111', 1);
+      const bAddress = SignalClient.ProtocolAddress.new('+14151111112', 1);
+      const mAddress = SignalClient.ProtocolAddress.new('+14151111113', 1);
+
+      const bPreKeyBundle = await testCase.makeBundle(
+        bAddress,
+        bobStores,
+        /*excludeOneTimePreKey*/ true
+      );
+
+      await SignalClient.processPreKeyBundle(
+        bPreKeyBundle,
+        bAddress,
+        aAddress,
+        aliceStores.session,
+        aliceStores.identity
+      );
+      const aMessage = Buffer.from('Greetings hoo-man', 'utf8');
+
+      const aCiphertext = await SignalClient.signalEncrypt(
+        aMessage,
+        bAddress,
+        aAddress,
+        aliceStores.session,
+        aliceStores.identity
+      );
+
+      assert.deepEqual(
+        aCiphertext.type(),
+        SignalClient.CiphertextMessageType.PreKey
+      );
+
+      const aCiphertextR = SignalClient.PreKeySignalMessage.deserialize(
+        aCiphertext.serialize()
+      );
+
+      void (await SignalClient.signalDecryptPreKey(
+        aCiphertextR,
+        aAddress,
+        bAddress,
+        bobStores.session,
+        bobStores.identity,
+        bobStores.prekey,
+        bobStores.signed,
+        bobStores.kyber
+      ));
+
+      await assert.isRejected(
+        SignalClient.signalDecryptPreKey(
+          aCiphertextR,
+          mAddress,
+          bAddress,
+          bobStores.session,
+          bobStores.identity,
+          bobStores.prekey,
+          bobStores.signed,
+          bobStores.kyber
         )
       );
     });

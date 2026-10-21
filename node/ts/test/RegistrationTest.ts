@@ -3,23 +3,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import { assert, config, expect, use } from 'chai';
-import * as chaiAsPromised from 'chai-as-promised';
-import * as sinonChai from 'sinon-chai';
-import * as util from './util';
-import * as Native from '../../Native';
-import { ErrorCode, LibSignalErrorBase } from '../Errors';
+import { config, expect, use } from 'chai';
+import chaiAsPromised from 'chai-as-promised';
+import sinonChai from 'sinon-chai';
+import { Buffer } from 'node:buffer';
+
+import * as util from './util.js';
+import * as Native from '../Native.js';
+import { ErrorCode, LibSignalErrorBase } from '../Errors.js';
 import {
   RegisterAccountResponse,
   RegistrationService,
   RegistrationSessionState,
   Svr2CredentialResult,
   TokioAsyncContext,
-} from '../net';
-import { InternalRequest } from './NetTest';
-import { IdentityKeyPair } from '../EcKeys';
-import { Aci, Pni } from '../Address';
-import { newNativeHandle } from '../internal';
+} from '../net.js';
+import { IdentityKeyPair } from '../EcKeys.js';
+import { Aci, Pni } from '../Address.js';
+import { newNativeHandle } from '../internal.js';
 
 use(chaiAsPromised);
 use(sinonChai);
@@ -82,6 +83,21 @@ describe('Registration types', () => {
       expirationSeconds: 888888n,
     });
     expect(response.reregistration).to.eq(true);
+    void expect(response.authCredentialSalt).to.be.null;
+  });
+
+  it('converts a response for an account with no phone number', () => {
+    const response = new RegisterAccountResponse(
+      Native.TESTING_RegisterAccountResponse_CreateTestValueWithoutPhoneNumber()
+    );
+    void expect(response.number).to.be.null;
+    void expect(response.pni).to.be.null;
+    expect(response.aci).to.deep.eq(
+      Aci.parseFromServiceIdString('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+    );
+    expect(response.authCredentialSalt).to.deep.eq(
+      Buffer.from('auth-credential-salt')
+    );
   });
 
   it('converts SVR2 credential response correctly', () => {
@@ -132,6 +148,16 @@ describe('Registration types', () => {
         code: ErrorCode.RateLimitChallengeError,
         token: 'token',
         options: new Set(['pushChallenge']),
+        retryAfterSecs: null,
+      },
+    ];
+    const rateLimitRetryChallengeCase: [string, object] = [
+      'PushChallengeRetryAfter42Seconds',
+      {
+        code: ErrorCode.RateLimitChallengeError,
+        token: 'token42',
+        options: new Set(['pushChallenge']),
+        retryAfterSecs: 42,
       },
     ];
     const cases: Array<{
@@ -143,31 +169,33 @@ describe('Registration types', () => {
         operationName: 'CreateSession',
         convertFn: Native.TESTING_RegistrationService_CreateSessionErrorConvert,
         cases: [
-          ['InvalidSessionId', ErrorCode.Generic],
+          ['InvalidSessionId', ErrorCode.RegistrationSessionIdInvalid],
           retryLaterCase,
           unknownCase,
           timeoutCase,
           serverSideErrorCase,
           rateLimitChallengeCase,
+          rateLimitRetryChallengeCase,
         ],
       },
       {
         operationName: 'ResumeSession',
         convertFn: Native.TESTING_RegistrationService_ResumeSessionErrorConvert,
         cases: [
-          ['InvalidSessionId', ErrorCode.Generic],
-          ['SessionNotFound', ErrorCode.Generic],
+          ['InvalidSessionId', ErrorCode.RegistrationSessionIdInvalid],
+          ['SessionNotFound', ErrorCode.RegistrationSessionNotFound],
           unknownCase,
           timeoutCase,
           serverSideErrorCase,
           rateLimitChallengeCase,
+          rateLimitRetryChallengeCase,
         ],
       },
       {
         operationName: 'UpdateSession',
         convertFn: Native.TESTING_RegistrationService_UpdateSessionErrorConvert,
         cases: [
-          ['Rejected', ErrorCode.Generic],
+          ['Rejected', ErrorCode.RegistrationRequestRejected],
           retryLaterCase,
           unknownCase,
           timeoutCase,
@@ -179,11 +207,58 @@ describe('Registration types', () => {
         convertFn:
           Native.TESTING_RegistrationService_RequestVerificationCodeErrorConvert,
         cases: [
-          ['InvalidSessionId', ErrorCode.Generic],
-          ['SessionNotFound', ErrorCode.Generic],
-          ['NotReadyForVerification', ErrorCode.Generic],
-          ['SendFailed', ErrorCode.Generic],
-          ['CodeNotDeliverable', ErrorCode.Generic],
+          ['InvalidSessionId', ErrorCode.RegistrationSessionIdInvalid],
+          ['SessionNotFound', ErrorCode.RegistrationSessionNotFound],
+          [
+            'NotReadyForVerification',
+            {
+              code: ErrorCode.RegistrationSessionNotReadyForVerification,
+              sessionState: {
+                allowedToRequestCode: false,
+                verified: false,
+                nextSmsSecs: 3,
+                nextCallSecs: 14,
+                nextVerificationAttemptSecs: 15,
+                requestedInformation: new Set(['captcha']),
+              },
+            },
+          ],
+          [
+            'NotReadyForVerificationNoSessionState',
+            {
+              code: ErrorCode.RegistrationSessionNotReadyForVerification,
+              sessionState: undefined,
+            },
+          ],
+          [
+            'SendFailed',
+            {
+              code: ErrorCode.RegistrationVerificationSendFailed,
+              sessionState: {
+                allowedToRequestCode: false,
+                verified: false,
+                nextSmsSecs: 3,
+                nextCallSecs: 14,
+                nextVerificationAttemptSecs: 15,
+                requestedInformation: new Set(['captcha']),
+              },
+            },
+          ],
+          [
+            'SendFailedNoSessionState',
+            {
+              code: ErrorCode.RegistrationVerificationSendFailed,
+              sessionState: undefined,
+            },
+          ],
+          [
+            'CodeNotDeliverable',
+            {
+              code: ErrorCode.RegistrationVerificationCodeNotDeliverable,
+              reason: 'no reason',
+              permanentFailure: true,
+            },
+          ],
           retryLaterCase,
           unknownCase,
           timeoutCase,
@@ -195,9 +270,29 @@ describe('Registration types', () => {
         convertFn:
           Native.TESTING_RegistrationService_SubmitVerificationErrorConvert,
         cases: [
-          ['InvalidSessionId', ErrorCode.Generic],
-          ['SessionNotFound', ErrorCode.Generic],
-          ['NotReadyForVerification', ErrorCode.Generic],
+          ['InvalidSessionId', ErrorCode.RegistrationSessionIdInvalid],
+          ['SessionNotFound', ErrorCode.RegistrationSessionNotFound],
+          [
+            'NotReadyForVerification',
+            {
+              code: ErrorCode.RegistrationSessionNotReadyForVerification,
+              sessionState: {
+                allowedToRequestCode: false,
+                verified: false,
+                nextSmsSecs: 3,
+                nextCallSecs: 14,
+                nextVerificationAttemptSecs: 15,
+                requestedInformation: new Set(['captcha']),
+              },
+            },
+          ],
+          [
+            'NotReadyForVerificationNoSessionState',
+            {
+              code: ErrorCode.RegistrationSessionNotReadyForVerification,
+              sessionState: undefined,
+            },
+          ],
           retryLaterCase,
           unknownCase,
           timeoutCase,
@@ -209,7 +304,7 @@ describe('Registration types', () => {
         convertFn:
           Native.TESTING_RegistrationService_CheckSvr2CredentialsErrorConvert,
         cases: [
-          ['CredentialsCouldNotBeParsed', ErrorCode.Generic],
+          ['CredentialsCouldNotBeParsed', ErrorCode.RegistrationRequestInvalid],
           unknownCase,
           timeoutCase,
           serverSideErrorCase,
@@ -220,9 +315,35 @@ describe('Registration types', () => {
         convertFn:
           Native.TESTING_RegistrationService_RegisterAccountErrorConvert,
         cases: [
-          ['DeviceTransferIsPossibleButNotSkipped', ErrorCode.Generic],
-          ['RegistrationRecoveryVerificationFailed', ErrorCode.Generic],
-          ['RegistrationLockFor50Seconds', ErrorCode.Generic],
+          [
+            'DeviceTransferIsPossibleButNotSkipped',
+            ErrorCode.RegistrationDeviceTransferPossibleNotSkipped,
+          ],
+          [
+            'RegistrationRecoveryVerificationFailed',
+            ErrorCode.RegistrationRecoveryVerificationFailed,
+          ],
+          [
+            'RegistrationLockFor50Seconds',
+            {
+              code: ErrorCode.RegistrationLock,
+              timeRemainingSeconds: 50,
+              svr2Username: 'user',
+              svr2Password: 'pass',
+            },
+          ],
+          ['RequestRejected', ErrorCode.RegisterAccountRequestRejected],
+          ['InvalidSession', ErrorCode.RegistrationInvalidSession],
+          ['InvalidReceipt', ErrorCode.RegistrationInvalidReceipt],
+          [
+            'RecoveryPasswordRequired',
+            ErrorCode.RegistrationRecoveryPasswordRequired,
+          ],
+          [
+            'OneTimePasswordRequired',
+            ErrorCode.RegistrationOneTimePasswordRequired,
+          ],
+
           retryLaterCase,
           unknownCase,
           timeoutCase,
@@ -252,44 +373,30 @@ describe('Registration client', () => {
     it('can create a new session', async () => {
       const tokio = new TokioAsyncContext(Native.TokioAsyncContext_new());
 
-      const [createSession, server] = RegistrationService.fakeCreateSession(
+      const [createSession, getRemote] = RegistrationService.fakeCreateSession(
         tokio,
         { e164: '+18005550123' }
       );
+      const fakeRemote = await getRemote;
 
-      const fakeRemote = newNativeHandle(
-        await Native.TESTING_FakeChatServer_GetNextRemote(tokio, server)
-      );
-      const firstRequestHandle =
-        await Native.TESTING_FakeChatRemoteEnd_ReceiveIncomingRequest(
-          tokio,
-          fakeRemote
-        );
-      assert(firstRequestHandle !== null);
-      const firstRequest = new InternalRequest(firstRequestHandle);
+      const firstRequest = await fakeRemote.assertReceiveIncomingRequest();
 
       expect(firstRequest.verb).to.eq('POST');
       expect(firstRequest.path).to.eq('/v1/verification/session');
 
-      Native.TESTING_FakeChatRemoteEnd_SendServerResponse(
-        fakeRemote,
-        newNativeHandle(
-          Native.TESTING_FakeChatResponse_Create(
-            firstRequest.requestId,
-            200,
-            'OK',
-            ['content-type: application/json'],
-            Buffer.from(
-              JSON.stringify({
-                allowedToRequestCode: true,
-                verified: false,
-                requestedInformation: ['pushChallenge', 'captcha'],
-                id: 'fake-session-A',
-              })
-            )
-          )
-        )
-      );
+      fakeRemote.sendReplyTo(firstRequest, {
+        status: 200,
+        message: 'OK',
+        headers: ['content-type: application/json'],
+        body: Buffer.from(
+          JSON.stringify({
+            allowedToRequestCode: true,
+            verified: false,
+            requestedInformation: ['pushChallenge', 'captcha'],
+            id: 'fake-session-A',
+          })
+        ),
+      });
 
       const session = await createSession;
       expect(session.sessionId).to.eq('fake-session-A');
@@ -304,13 +411,7 @@ describe('Registration client', () => {
         languages: ['fr-CA'],
       });
 
-      const secondRequestHandle =
-        await Native.TESTING_FakeChatRemoteEnd_ReceiveIncomingRequest(
-          tokio,
-          fakeRemote
-        );
-      assert(secondRequestHandle !== null);
-      const secondRequest = new InternalRequest(secondRequestHandle);
+      const secondRequest = await fakeRemote.assertReceiveIncomingRequest();
 
       expect(secondRequest.verb).to.eq('POST');
       expect(secondRequest.path).to.eq(
@@ -326,27 +427,143 @@ describe('Registration client', () => {
         ])
       );
 
-      Native.TESTING_FakeChatRemoteEnd_SendServerResponse(
-        fakeRemote,
-        newNativeHandle(
-          Native.TESTING_FakeChatResponse_Create(
-            secondRequest.requestId,
-            200,
-            'OK',
-            ['content-type: application/json'],
-            Buffer.from(
-              JSON.stringify({
-                allowedToRequestCode: true,
-                verified: false,
-                requestedInformation: ['pushChallenge', 'captcha'],
-                id: 'fake-session-A',
-              })
-            )
-          )
-        )
-      );
+      fakeRemote.sendReplyTo(secondRequest, {
+        status: 200,
+        message: 'OK',
+        headers: ['content-type: application/json'],
+        body: Buffer.from(
+          JSON.stringify({
+            allowedToRequestCode: true,
+            verified: false,
+            requestedInformation: ['pushChallenge', 'captcha'],
+            id: 'fake-session-A',
+          })
+        ),
+      });
 
       await requestVerification;
+    });
+
+    it('refreshes cached session state from failed requests', async () => {
+      const tokio = new TokioAsyncContext(Native.TokioAsyncContext_new());
+
+      const [createSession, getRemote] = RegistrationService.fakeCreateSession(
+        tokio,
+        { e164: '+18005550123' }
+      );
+      const fakeRemote = await getRemote;
+
+      const createRequest = await fakeRemote.assertReceiveIncomingRequest();
+      fakeRemote.sendReplyTo(createRequest, {
+        status: 200,
+        message: 'OK',
+        headers: ['content-type: application/json'],
+        body: Buffer.from(
+          JSON.stringify({
+            allowedToRequestCode: true,
+            verified: false,
+            requestedInformation: ['pushChallenge'],
+            id: 'fake-session-A',
+          })
+        ),
+      });
+      const session = await createSession;
+
+      // A failed requestVerification whose body carries updated session state
+      // should refresh the service's cached sessionState across the bridge,
+      // even though the call rejects.
+      const requestVerification = session.requestVerification({
+        transport: 'voice',
+        client: 'libsignal test',
+        languages: ['fr-CA'],
+      });
+      const sendCodeRequest = await fakeRemote.assertReceiveIncomingRequest();
+      fakeRemote.sendReplyTo(sendCodeRequest, {
+        status: 418,
+        message: 'Send failed',
+        headers: ['content-type: application/json'],
+        body: Buffer.from(
+          JSON.stringify({
+            allowedToRequestCode: false,
+            verified: false,
+            nextSms: 42,
+            requestedInformation: ['captcha'],
+            id: 'fake-session-A',
+          })
+        ),
+      });
+      await expect(requestVerification).to.be.rejected;
+      expect(session.sessionState).to.deep.eq({
+        allowedToRequestCode: false,
+        verified: false,
+        nextSmsSecs: 42,
+        nextCallSecs: undefined,
+        nextVerificationAttemptSecs: undefined,
+        requestedInformation: new Set(['captcha']),
+      });
+
+      // Same for a failed verifySession (submit code).
+      const verifySession = session.verifySession('123456');
+      const submitCodeRequest = await fakeRemote.assertReceiveIncomingRequest();
+      fakeRemote.sendReplyTo(submitCodeRequest, {
+        status: 409,
+        message: 'Not ready',
+        headers: ['content-type: application/json'],
+        body: Buffer.from(
+          JSON.stringify({
+            allowedToRequestCode: true,
+            verified: false,
+            nextVerificationAttempt: 37,
+            requestedInformation: [],
+            id: 'fake-session-A',
+          })
+        ),
+      });
+      await expect(verifySession).to.be.rejected;
+      expect(session.sessionState).to.deep.eq({
+        allowedToRequestCode: true,
+        verified: false,
+        nextSmsSecs: undefined,
+        nextCallSecs: undefined,
+        nextVerificationAttemptSecs: 37,
+        requestedInformation: new Set(),
+      });
+
+      // A 429 (rate limited) response also carries session state in its body,
+      // but comes back as a RateLimitedError rather than a typed error. The
+      // cached session state is still refreshed.
+      const rateLimited = session.requestVerification({
+        transport: 'voice',
+        client: 'libsignal test',
+        languages: ['fr-CA'],
+      });
+      const rateLimitedRequest =
+        await fakeRemote.assertReceiveIncomingRequest();
+      fakeRemote.sendReplyTo(rateLimitedRequest, {
+        status: 429,
+        message: 'Too many requests',
+        headers: ['content-type: application/json', 'retry-after: 60'],
+        body: Buffer.from(
+          JSON.stringify({
+            allowedToRequestCode: true,
+            verified: false,
+            nextCall: 99,
+            requestedInformation: [],
+            id: 'fake-session-A',
+          })
+        ),
+      });
+      await expect(rateLimited)
+        .to.eventually.be.rejectedWith(LibSignalErrorBase)
+        .and.have.property('code', ErrorCode.RateLimitedError);
+      expect(session.sessionState).to.deep.eq({
+        allowedToRequestCode: true,
+        verified: false,
+        nextSmsSecs: undefined,
+        nextCallSecs: 99,
+        nextVerificationAttemptSecs: undefined,
+        requestedInformation: new Set(),
+      });
     });
   });
 });

@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use libsignal_account_keys::{BackupKey, BACKUP_FORWARD_SECRECY_TOKEN_LEN};
+use libsignal_account_keys::{BACKUP_FORWARD_SECRECY_TOKEN_LEN, BackupKey};
 use libsignal_bridge_macros::{bridge_fn, bridge_io};
 use libsignal_bridge_types::net::svrb::SvrBConnectImpl;
 use libsignal_bridge_types::net::{ConnectionManager, Environment, TokioAsyncContext};
 use libsignal_net::auth::Auth;
 use libsignal_net::svrb::{
-    create_new_backup_chain, restore_backup, store_backup, BackupFileMetadataRef,
-    BackupPreviousSecretDataRef, BackupRestoreResponse, BackupStoreResponse, Error as SvrbError,
+    BackupFileMetadataRef, BackupPreviousSecretDataRef, BackupRestoreResponse, BackupStoreResponse,
+    Error as SvrbError, create_new_backup_chain, remove_backup, restore_backup, store_backup,
 };
 
 use crate::support::*;
@@ -35,16 +35,30 @@ async fn SecureValueRecoveryForBackups_StoreBackup(
     username: String,
     password: String,
 ) -> Result<BackupStoreResponse, SvrbError> {
-    let svrb = SvrBConnectImpl {
-        connection_manager,
-        auth: Auth { username, password },
-    };
-    store_backup(
-        &svrb,
-        backup_key,
-        BackupPreviousSecretDataRef(&previous_secret_data),
-    )
-    .await
+    let auth = Auth { username, password };
+    let current_svrb = connection_manager
+        .env()
+        .svr_b
+        .current()
+        .map(|e| SvrBConnectImpl {
+            connection_manager,
+            endpoint: e,
+            auth: &auth,
+        })
+        .collect::<Vec<_>>();
+    let previous_svrb = connection_manager
+        .env()
+        .svr_b
+        .previous()
+        .map(|e| SvrBConnectImpl {
+            connection_manager,
+            endpoint: e,
+            auth: &auth,
+        })
+        .collect::<Vec<_>>();
+
+    let previous_data = BackupPreviousSecretDataRef(&previous_secret_data);
+    store_backup(&current_svrb, &previous_svrb, backup_key, previous_data).await
 }
 
 #[bridge_io(TokioAsyncContext)]
@@ -55,11 +69,49 @@ async fn SecureValueRecoveryForBackups_RestoreBackupFromServer(
     username: String,
     password: String,
 ) -> Result<BackupRestoreResponse, SvrbError> {
-    let svrb = SvrBConnectImpl {
-        connection_manager,
-        auth: Auth { username, password },
-    };
-    restore_backup(&svrb, backup_key, BackupFileMetadataRef(&metadata)).await
+    let auth = Auth { username, password };
+    let all_svrbs = connection_manager
+        .env()
+        .svr_b
+        .current_and_previous()
+        .map(|e| SvrBConnectImpl {
+            connection_manager,
+            endpoint: e,
+            auth: &auth,
+        })
+        .collect::<Vec<_>>();
+    restore_backup(&all_svrbs, backup_key, BackupFileMetadataRef(&metadata)).await
+}
+
+#[bridge_io(TokioAsyncContext)]
+async fn SecureValueRecoveryForBackups_RemoveBackup(
+    connection_manager: &ConnectionManager,
+    username: String,
+    password: String,
+) -> Result<(), SvrbError> {
+    let auth = Auth { username, password };
+    let current_svrb = connection_manager
+        .env()
+        .svr_b
+        .current()
+        .map(|e| SvrBConnectImpl {
+            connection_manager,
+            endpoint: e,
+            auth: &auth,
+        })
+        .collect::<Vec<_>>();
+    let previous_svrb = connection_manager
+        .env()
+        .svr_b
+        .previous()
+        .map(|e| SvrBConnectImpl {
+            connection_manager,
+            endpoint: e,
+            auth: &auth,
+        })
+        .collect::<Vec<_>>();
+
+    remove_backup(&current_svrb, &previous_svrb).await
 }
 
 #[bridge_fn]

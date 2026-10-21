@@ -3,17 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import ByteArray from '../internal/ByteArray';
-import * as Native from '../../../Native';
+import type { Bytes } from '@signalapp/types';
+
+import ByteArray from '../internal/ByteArray.js';
+import * as Native from '../../Native.js';
 
 export default class UuidCiphertext extends ByteArray {
   private readonly __type?: never;
 
-  constructor(contents: Uint8Array) {
+  constructor(contents: Bytes) {
     super(contents, Native.UuidCiphertext_CheckValidContents);
   }
 
-  static serializeAndConcatenate(ciphertexts: UuidCiphertext[]): Uint8Array {
+  static serializeAndConcatenate(ciphertexts: UuidCiphertext[]): Bytes {
     if (ciphertexts.length == 0) {
       return Uint8Array.of();
     }

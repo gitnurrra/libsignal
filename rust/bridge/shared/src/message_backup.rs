@@ -11,6 +11,7 @@ use libsignal_message_backup::backup::Purpose;
 use libsignal_message_backup::frame::LimitedReaderFactory;
 use libsignal_message_backup::{BackupReader, FoundUnknownField, ReadError, ReadResult};
 use libsignal_protocol::Aci;
+use rand::TryRngCore as _;
 
 use crate::io::{AsyncInput, InputStream};
 use crate::support::*;
@@ -117,6 +118,7 @@ async fn MessageBackupValidator_Validate(
 }
 
 bridge_handle_fns!(OnlineBackupValidator, clone = false);
+bridge_handle_fns!(BackupJsonExporter, clone = false);
 
 #[bridge_fn]
 fn OnlineBackupValidator_New(
@@ -137,15 +139,11 @@ fn OnlineBackupValidator_AddFrame(
         .parse_and_add_frame(frame, |_| ())
         .map_err(ReadError::with_error_only)?;
 
-    for (path, value) in unknown_fields {
-        log::warn!(
-            "{}",
-            FoundUnknownField {
-                frame_index: 0,
-                path,
-                value,
-            }
-        );
+    for entry in unknown_fields
+        .into_iter()
+        .map(FoundUnknownField::in_frame(0))
+    {
+        log::warn!("{entry}");
     }
 
     Ok(())
@@ -154,4 +152,55 @@ fn OnlineBackupValidator_AddFrame(
 #[bridge_fn]
 fn OnlineBackupValidator_Finalize(backup: &mut OnlineBackupValidator) -> Result<(), ReadError> {
     backup.finalize().map_err(ReadError::with_error_only)
+}
+
+#[bridge_fn]
+fn BackupJsonExporter_New(
+    backup_info: &[u8],
+    should_validate: bool,
+) -> Result<BackupJsonExporter, ReadError> {
+    let (exporter, initial_chunk) =
+        libsignal_message_backup::json::exporter::JsonExporter::new(backup_info, should_validate)
+            .map_err(ReadError::with_error_only)?;
+
+    Ok(BackupJsonExporter::new(exporter, initial_chunk))
+}
+
+#[bridge_fn(nice_swift = true)]
+fn BackupJsonExporter_GetInitialChunk(exporter: &BackupJsonExporter) -> String {
+    exporter.initial_chunk().to_owned()
+}
+
+#[bridge_fn(nice_swift = true)]
+fn BackupJsonExporter_ExportFrames(
+    exporter: &mut BackupJsonExporter,
+    frames: &[u8],
+) -> Result<Vec<JsonFrameExportResult>, ReadError> {
+    exporter
+        .export_frames(frames)
+        .map_err(ReadError::with_error_only)
+}
+
+#[bridge_fn(nice_swift = true)]
+fn BackupJsonExporter_Finish(exporter: &mut BackupJsonExporter) -> Result<(), ReadError> {
+    exporter.finish().map_err(ReadError::with_error_only)
+}
+
+#[bridge_fn]
+fn MessageBackupSizing_FlushInterval(
+    uncompressed_len: u64,
+    estimated_total_uncompressed_len: u64,
+) -> u64 {
+    let estimate =
+        (estimated_total_uncompressed_len != 0).then_some(estimated_total_uncompressed_len);
+    libsignal_message_backup::padding::flush_interval(uncompressed_len, estimate)
+}
+
+#[bridge_fn]
+fn MessageBackupSizing_PaddingSize(max_interval_bytes: u64, compressed_len: u64) -> u64 {
+    libsignal_message_backup::padding::padding_size(
+        max_interval_bytes,
+        compressed_len,
+        &mut rand::rngs::OsRng.unwrap_err(),
+    )
 }

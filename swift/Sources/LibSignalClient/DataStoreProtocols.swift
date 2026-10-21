@@ -52,7 +52,7 @@ public protocol SignedPreKeyStore: AnyObject {
 public protocol KyberPreKeyStore: AnyObject {
     func loadKyberPreKey(id: UInt32, context: StoreContext) throws -> KyberPreKeyRecord
     func storeKyberPreKey(_ record: KyberPreKeyRecord, id: UInt32, context: StoreContext) throws
-    func markKyberPreKeyUsed(id: UInt32, context: StoreContext) throws
+    func markKyberPreKeyUsed(id: UInt32, signedPreKeyId: UInt32, baseKey: PublicKey, context: StoreContext) throws
 }
 
 public protocol SessionStore: AnyObject {

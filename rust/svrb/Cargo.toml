@@ -5,7 +5,7 @@
 [package]
 name = "libsignal-svrb"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors.workspace = true
 license.workspace = true
 
@@ -13,8 +13,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-signal-crypto = { workspace = true }
-
 aes-gcm-siv = { workspace = true }
 curve25519-dalek = { workspace = true }
 displaydoc = { workspace = true }

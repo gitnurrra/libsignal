@@ -3,18 +3,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::borrow::Cow;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::num::NonZeroU64;
 
+use derive_more::{Deref, DerefMut, From};
+use derive_where::derive_where;
+use ref_cast::RefCast;
+
 mod as_type;
+mod async_mutex;
 mod sequences;
 mod serialized;
 pub use as_type::*;
+pub use async_mutex::*;
 pub use sequences::*;
 pub use serialized::*;
 
 mod transform_helper;
 pub use transform_helper::*;
+
+/// A wrapper type which allows for alternative bridgings of BridgeHandles
+///
+/// This is bridged as `&T` on Node and FFI, but via native handle objects on JNI.
+#[derive(Deref, DerefMut, From, RefCast)]
+#[repr(transparent)]
+pub struct BridgeHandleRef<'a, T: 'static + Send + Sync> {
+    value: &'a T,
+}
 
 // See https://github.com/rust-lang/rfcs/issues/1389
 pub fn describe_panic(any: &Box<dyn std::any::Any + Send>) -> String {
@@ -32,7 +49,67 @@ pub fn describe_panic(any: &Box<dyn std::any::Any + Send>) -> String {
 /// Only here so that we're not directly calling [`std::mem::transmute`], which is even more unsafe.
 /// All call sites need to explain why extending the lifetime is safe.
 pub(crate) unsafe fn extend_lifetime<'a, 'b: 'a, T: ?Sized>(some_ref: &'a T) -> &'b T {
-    std::mem::transmute::<&'a T, &'b T>(some_ref)
+    unsafe { std::mem::transmute::<&'a T, &'b T>(some_ref) }
+}
+
+/// A wrapper around `&'inner T` that promises `'outer: 'inner`.
+///
+/// Meant to be used with _higher-ranked type bounds_ `for<'inner>` in the context of some broader
+/// lifetime `'outer`. Can usually be consumed like a normal reference because of the Deref impl.
+#[derive(derive_more::Deref)]
+pub struct LimitedLifetimeRef<'outer, 'inner, T>
+where
+    'outer: 'inner,
+{
+    #[deref]
+    inner: &'inner T,
+    parent: PhantomData<&'outer ()>,
+}
+
+impl<'outer, 'inner, T> From<&'inner T> for LimitedLifetimeRef<'outer, 'inner, T>
+where
+    'outer: 'inner,
+{
+    fn from(inner: &'inner T) -> Self {
+        Self {
+            inner,
+            parent: PhantomData,
+        }
+    }
+}
+
+/// An error indicating the caller passed an invalid argument (and they should have known it was
+/// invalid ahead of time).
+///
+/// Named for Java's `IllegalArgumentException`, which this will be thrown as in the JNI bridge.
+/// Remember that that's an unchecked exception; that should give you an idea of when this is the
+/// right error to use.
+#[derive(Debug)]
+pub struct IllegalArgumentError(pub(crate) Cow<'static, str>);
+
+impl IllegalArgumentError {
+    pub fn new(log_safe: impl Into<Cow<'static, str>>) -> Self {
+        Self(log_safe.into())
+    }
+}
+
+impl std::fmt::Display for IllegalArgumentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Either a request error or an argument-validation failure.
+///
+/// For bridge functions that validate their arguments before making a request, so that a
+/// programmer error surfaces as an invalid-argument error in each app language rather than being
+/// dressed up as something the server said.
+#[derive(Debug, derive_more::From, displaydoc::Display)]
+pub enum RequestOrArgumentError<E> {
+    /// {0}
+    Request(libsignal_net_chat::api::RequestError<E>),
+    /// {0}
+    Argument(IllegalArgumentError),
 }
 
 /// With `bridge_handle_fns`, exposes a Rust type to each of the bridges as a boxed value.
@@ -92,11 +169,11 @@ pub(crate) unsafe fn extend_lifetime<'a, 'b: 'a, T: ?Sized>(some_ref: &'a T) -> 
 /// [`node::AsyncArgTypeInfo`]: crate::node::AsyncArgTypeInfo
 #[macro_export]
 macro_rules! bridge_as_handle {
-    ($typ:ty $(, mut = $_mut:tt)? $(, ffi = $ffi_name:ident)? $(, jni = $jni_name:ident)? $(, node = $node_name:ident)?) => {
+    ($typ:ty $(, mut = $_mut:tt)? $(, ffi = $ffi_name:ident)? $(, swift_type = $swift_type:expr)? $(, jni = $jni_name:ident)? $(, jni_class = $jni_class:expr)? $(, node = $node_name:ident)? $(,)?) => {
         #[cfg(feature = "ffi")]
-        $crate::ffi_bridge_as_handle!($typ $(as $ffi_name)?);
+        $crate::ffi_bridge_as_handle!($typ $(as $ffi_name)? $(, swift_type = $swift_type)?);
         #[cfg(feature = "jni")]
-        $crate::jni_bridge_as_handle!($typ $(as $jni_name)?);
+        $crate::jni_bridge_as_handle!($typ $(as $jni_name)? $(, jni_class = $jni_class)?);
         #[cfg(feature = "node")]
         $crate::node_bridge_as_handle!($typ $(as $node_name)? $(, mut = $_mut)?);
     };
@@ -282,6 +359,7 @@ pub trait AsyncRuntime<F: Future<Output: ResultReporter>>: AsyncRuntimeBase {
         &self,
         make_future: impl FnOnce(Self::Cancellation) -> F,
         completer: <F::Output as ResultReporter>::Receiver,
+        label: &'static str,
     ) -> CancellationId;
 }
 
@@ -300,7 +378,71 @@ impl<F: Future<Output: ResultReporter>> AsyncRuntime<F> for NoOpAsyncRuntime {
         &self,
         _make_future: impl FnOnce(Self::Cancellation) -> F,
         _completer: <F::Output as ResultReporter>::Receiver,
+        _label: &'static str,
     ) -> CancellationId {
         CancellationId::NotSupported
     }
 }
+
+/// A wrapper struct so we can implement e.g. [`PreKeyStore`](libsignal_protocol::PreKeyStore) for
+/// all `BridgePreKeyStore`s (the corresponding
+/// [`bridge_callbacks`](libsignal_bridge_macros::bridge_callbacks) trait).
+///
+/// Trying to do so directly would violate the [orphan rule][], because rustc doesn't know
+/// `BridgePreKeyStore` is only implemented by a closed set of types defined in this crate.
+///
+/// [orphan rule]:
+///     https://doc.rust-lang.org/book/ch20-02-advanced-traits.html#implementing-external-traits-with-the-newtype-pattern
+pub struct BridgedCallbacks<T>(pub T);
+
+/// Attaches context to a value, usually an error.
+///
+/// Intended to be used with `From` implementations, so standard Rust error handling idioms can work
+/// even for error types that want the additional context.
+pub struct WithContext<T> {
+    pub operation: &'static str,
+    pub inner: T,
+}
+
+/// Provides access to [`Result`]'s `Success` and `Error` types using associated type syntax.
+pub trait ResultLike {
+    type Success;
+    type Error;
+}
+impl<T, E> ResultLike for Result<T, E> {
+    type Success = T;
+    type Error = E;
+}
+
+/// A newtype wrapper used to specify that a generic Vec<> mapping should be used.
+#[derive(Clone, derive_more::Into, derive_more::Deref, derive_more::DerefMut)]
+#[derive_where(Default)]
+pub struct BridgeVec<T>(pub Vec<T>);
+
+impl<T, U> From<Vec<U>> for BridgeVec<T>
+where
+    T: From<U>,
+{
+    fn from(value: Vec<U>) -> Self {
+        Self(value.into_iter().map(Into::into).collect())
+    }
+}
+
+impl<T> FromIterator<T> for BridgeVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self(Vec::from_iter(iter))
+    }
+}
+
+impl<T> IntoIterator for BridgeVec<T> {
+    type Item = T;
+    type IntoIter = <Vec<T> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// Marker for returning an error as a value.
+#[derive(Debug, derive_more::From)]
+pub struct BridgedError<T>(pub T);

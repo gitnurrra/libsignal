@@ -4,24 +4,43 @@
 //
 
 import { assert, use } from 'chai';
-import * as chaiAsPromised from 'chai-as-promised';
-import * as SignalClient from '../index';
-import * as util from './util';
+import chaiAsPromised from 'chai-as-promised';
+import { Buffer } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+import * as SignalClient from '../index.js';
+import * as util from './util.js';
 
 use(chaiAsPromised);
 util.initLogger();
 
 describe('Cds2Client', () => {
-  const mrenclave = Buffer.from(
-    '39d78f17f8aa9a8e9cdaf16595947a057bac21f014d1abfd6a99b2dfd4e18d1d',
-    'hex'
+  // 2026Q1 staging mrenclave from rust/attest/src/constants.rs
+  const mrenclave = fs.readFileSync(
+    path.join(
+      import.meta.dirname,
+      '../../../rust/attest/tests/data/cdsi.mrenclave'
+    )
   );
-  const currentDate = new Date(1655857680000);
+
+  // Timestamp matching the handshake data file
+  const attestationTimestampBuf = fs.readFileSync(
+    path.join(
+      import.meta.dirname,
+      '../../../rust/attest/tests/data/cdsi.timestamp'
+    )
+  );
+  // 'cdsi.timestamp' stores a 64-bit BE seconds-since-epoch timestamp.
+  // We can only read 6 bytes of that, since we're reading into a 64-bi
+  // float, but that's okay - we just skip the first two bytes.
+  const currentDate = new Date(attestationTimestampBuf.readUIntBE(2, 6) * 1000);
 
   const attestationMessage = fs.readFileSync(
-    path.join(__dirname, '../../ts/test/cds2handshakestart.data')
+    path.join(
+      import.meta.dirname,
+      '../../../rust/attest/tests/data/cdsi.handshakestart'
+    )
   );
 
   it('create client', () => {

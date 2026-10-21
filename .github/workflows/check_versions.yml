@@ -1,4 +1,4 @@
-name: Check Versions
+name: "[CI] Check Versions"
 # We want to run this job on all changes, so that we do not have to risk breakage slipping
 # through due to the set of files included in the version consistency check getting out of sync
 # with the set of files checked by the test dispatch logic.
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         submodules: recursive
 

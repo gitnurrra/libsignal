@@ -48,6 +48,11 @@ public annotation class CalledFromNative {
           return
         }
 
+        // Special-case kotlin.Pair; we mention its constructor manually in libsignal.pro.
+        if (declaringClass == Pair::class.java) {
+          return
+        }
+
         // If the constructor itself is annotated directly, we're done.
         if (constructor.isAnnotationPresent(CalledFromNative::class.java)) {
           return
@@ -81,6 +86,11 @@ public annotation class CalledFromNative {
         // Special-case everything in the java package; it's not bundled and
         // so can't be stripped.
         if (declaringClass.getPackage()?.name?.startsWith("java.") == true) {
+          return
+        }
+
+        // We special-case the getters for kotlin.Pair
+        if (declaringClass == Pair::class.java) {
           return
         }
 
@@ -142,21 +152,23 @@ public annotation class CalledFromNative {
         methodName: String,
         argumentTypes: Array<Class<*>>,
       ) = sequence {
-        var interfaces = klass.let {
-          var stack = arrayListOf(it)
-          var found = HashSet<Class<*>>()
+        var interfaces =
+          klass.let {
+            var stack = arrayListOf(it)
+            var found = HashSet<Class<*>>()
 
-          while (true) {
-            var first = stack.removeLastOrNull() ?: break
-            found.add(first)
-            first.interfaces.filterNotTo(stack) { found.contains(it) }
+            while (true) {
+              var first = stack.removeLastOrNull() ?: break
+              found.add(first)
+              first.interfaces.filterNotTo(stack) { found.contains(it) }
+            }
+            found
           }
-          found
-        }
         for (inter in interfaces) {
           try {
             yield(inter.getDeclaredMethod(methodName, *argumentTypes))
-          } catch (e: NoSuchMethodException) { }
+          } catch (e: NoSuchMethodException) {
+          }
         }
       }
     }

@@ -17,8 +17,8 @@ use crate::dns::{DnsError, DnsResolver};
 use crate::host::Host;
 use crate::route::{
     ConnectionProxyRoute, DirectOrProxyRoute, HttpProxyRouteFragment, HttpsProxyRoute,
-    HttpsTlsRoute, ProxyTarget, SocksRoute, TcpRoute, TlsRoute, UdpRoute, UnresolvedHost,
-    UsePreconnect, WebSocketRoute,
+    HttpsTlsRoute, ProxyTarget, ReflectorProxyRoute, SocksRoute, TcpRoute, TlsRoute,
+    UnresolvedHost, UsePreconnect, WebSocketRoute,
 };
 
 /// A route with hostnames that can be resolved.
@@ -208,7 +208,7 @@ macro_rules! impl_resolve_hostnames {
     }
 }
 
-impl_resolve_hostnames!(TcpRoute, address, port);
+impl_resolve_hostnames!(TcpRoute, address, port, override_nagle_algorithm);
 impl_resolve_hostnames!(TlsRoute, inner, fragment);
 impl_resolve_hostnames!(HttpsTlsRoute, inner, fragment);
 impl_resolve_hostnames!(WebSocketRoute, inner, fragment);
@@ -246,7 +246,10 @@ impl<A: ResolveHostnames> ResolveHostnames for ConnectionProxyRoute<A> {
             #[cfg(feature = "dev-util")]
             Self::Tcp { proxy } => Either::Left(Either::Right(proxy.hostnames())),
             Self::Socks(socks) => Either::Right(Either::Right(socks.hostnames())),
-            Self::Https(http) => Either::Right(Either::Left(http.hostnames())),
+            Self::Https(http) => Either::Right(Either::Left(Either::Left(http.hostnames()))),
+            Self::Reflector(reflector) => {
+                Either::Right(Either::Left(Either::Right(reflector.outer.hostnames())))
+            }
         }
     }
 
@@ -263,6 +266,18 @@ impl<A: ResolveHostnames> ResolveHostnames for ConnectionProxyRoute<A> {
                 ConnectionProxyRoute::Socks(socks.resolve(lookup))
             }
             ConnectionProxyRoute::Https(http) => ConnectionProxyRoute::Https(http.resolve(lookup)),
+            ConnectionProxyRoute::Reflector(reflector) => {
+                let ReflectorProxyRoute {
+                    outer,
+                    target_host,
+                    target_port,
+                } = *reflector;
+                ConnectionProxyRoute::Reflector(Box::new(ReflectorProxyRoute {
+                    outer: outer.resolve(lookup),
+                    target_host,
+                    target_port,
+                }))
+            }
         }
     }
 }
@@ -388,7 +403,6 @@ impl_resolved_route!(HttpsTlsRoute, inner);
 impl_resolved_route!(HttpsProxyRoute, inner);
 impl_resolved_route!(WebSocketRoute, inner);
 impl_resolved_route!(UsePreconnect, inner);
-impl_resolved_route!(UdpRoute, address);
 
 impl<D: ResolvedRoute, P: ResolvedRoute> ResolvedRoute for DirectOrProxyRoute<D, P> {
     fn immediate_target(&self) -> &IpAddr {
@@ -407,6 +421,7 @@ impl<A: ResolvedRoute> ResolvedRoute for ConnectionProxyRoute<A> {
             ConnectionProxyRoute::Tcp { proxy } => proxy.immediate_target(),
             ConnectionProxyRoute::Socks(proxy) => proxy.immediate_target(),
             ConnectionProxyRoute::Https(proxy) => proxy.immediate_target(),
+            ConnectionProxyRoute::Reflector(proxy) => proxy.outer.immediate_target(),
         }
     }
 }
@@ -500,10 +515,11 @@ mod test {
 
     use assert_matches::assert_matches;
     use const_str::ip_addr;
-    use futures_util::{pin_mut, FutureExt as _, StreamExt as _};
+    use futures_util::{StreamExt as _, pin_mut};
     use nonzero_ext::nonzero;
 
     use super::*;
+    use crate::OverrideNagleAlgorithm;
     use crate::certs::RootCertificates;
     use crate::host::Host;
     use crate::route::resolve::testutils::{FakeResolver, FakeResponder};
@@ -677,6 +693,7 @@ mod test {
         let http_fragment = HttpRouteFragment {
             host_header: "target-domain".into(),
             path_prefix: "".into(),
+            http_version: None,
             front_name: None,
         };
 
@@ -692,6 +709,7 @@ mod test {
                 proxy: TcpRoute {
                     address: proxy,
                     port: PROXY_PORT,
+                    override_nagle_algorithm: OverrideNagleAlgorithm::UseSystemDefault,
                 },
                 target_addr: ProxyTarget::ResolvedLocally(target),
                 target_port: TARGET_PORT,

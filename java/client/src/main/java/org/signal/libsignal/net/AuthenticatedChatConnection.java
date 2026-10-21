@@ -6,12 +6,12 @@
 package org.signal.libsignal.net;
 
 import java.util.Locale;
+import kotlin.Pair;
 import org.signal.libsignal.internal.CompletableFuture;
 import org.signal.libsignal.internal.Native;
 import org.signal.libsignal.internal.NativeTesting;
 import org.signal.libsignal.internal.TokioAsyncContext;
 import org.signal.libsignal.net.internal.BridgeChatListener;
-import org.signal.libsignal.protocol.util.Pair;
 
 /**
  * Represents an authenticated communication channel with the ChatConnection.
@@ -63,7 +63,7 @@ public class AuthenticatedChatConnection extends ChatConnection {
    */
   public static Pair<AuthenticatedChatConnection, FakeChatRemote> fakeConnect(
       final TokioAsyncContext tokioAsyncContext, ChatConnectionListener listener) {
-    return fakeConnect(tokioAsyncContext, listener, new String[0]);
+    return fakeConnect(tokioAsyncContext, listener, new String[0], new String[0]);
   }
 
   /**
@@ -72,14 +72,20 @@ public class AuthenticatedChatConnection extends ChatConnection {
    * <p>The returned {@link FakeChatRemote} can be used to send messages to the connection.
    */
   public static Pair<AuthenticatedChatConnection, FakeChatRemote> fakeConnect(
-      final TokioAsyncContext tokioAsyncContext, ChatConnectionListener listener, String[] alerts) {
+      final TokioAsyncContext tokioAsyncContext,
+      ChatConnectionListener listener,
+      String[] grpcOverrides,
+      String[] alerts) {
 
     return tokioAsyncContext.guardedMap(
         asyncContextHandle -> {
           SetChatLaterListenerBridge bridgeListener = new SetChatLaterListenerBridge();
           long fakeChatConnection =
               NativeTesting.TESTING_FakeChatConnection_Create(
-                  asyncContextHandle, bridgeListener, String.join("\n", alerts));
+                  asyncContextHandle,
+                  bridgeListener,
+                  String.join("\n", grpcOverrides),
+                  String.join("\n", alerts));
           AuthenticatedChatConnection chat =
               new AuthenticatedChatConnection(
                   tokioAsyncContext,
@@ -119,6 +125,11 @@ public class AuthenticatedChatConnection extends ChatConnection {
       int timeoutMillis) {
     return Native.AuthenticatedChatConnection_send(
         nativeAsyncContextHandle, nativeChatConnectionHandle, nativeRequestHandle, timeoutMillis);
+  }
+
+  @Override
+  protected long infoWrapper(long nativeChatConnectionHandle) {
+    return Native.AuthenticatedChatConnection_info(nativeChatConnectionHandle);
   }
 
   @Override

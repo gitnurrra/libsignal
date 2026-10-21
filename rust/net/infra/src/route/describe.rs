@@ -9,20 +9,26 @@ use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use futures_util::TryFutureExt as _;
+use libsignal_core::LogSafeDisplay;
 use nonzero_ext::nonzero;
 
 use crate::dns::dns_utils::log_safe_domain;
-use crate::errors::LogSafeDisplay;
 use crate::host::Host;
 use crate::route::{
-    ConnectionProxyKind, ConnectionProxyRoute, Connector, DirectOrProxyRoute,
-    HttpProxyRouteFragment, HttpsProxyRoute, HttpsTlsRoute, ProxyTarget, ResolveHostnames,
-    ResolvedRoute, SocksRoute, TcpRoute, TlsRoute, TransportRoute, UnresolvedHost,
-    UnresolvedTransportRoute, UnresolvedWebsocketServiceRoute, UsesTransport, DEFAULT_HTTPS_PORT,
+    ConnectionProxyKind, ConnectionProxyRoute, Connector, DEFAULT_HTTPS_PORT, DirectOrProxyRoute,
+    HttpProxyRouteFragment, HttpsProxyRoute, ProxyTarget, ResolveHostnames, ResolvedRoute,
+    SocksRoute, TcpRoute, TlsRoute, TransportRoute, UnresolvedHost, UnresolvedHttpsServiceRoute,
+    UnresolvedTransportRoute, UnresolvedWebsocketServiceRoute, UsesTransport,
 };
 
 /// A type that is not itself loggable but can produce a [`LogSafeDisplay`]
 /// value.
+///
+/// The description type must be [`Display`](std::fmt::Display)-able and tagged
+/// as log-safe. Implementers are encouraged to use a type that holds
+/// structured data instead of a string wrapper to avoid unnecessary
+/// string-ification and to enable consumers who know the concrete type access
+/// to typed values.
 pub trait DescribeForLog {
     /// The loggable description of `Self`.
     type Description: LogSafeDisplay;
@@ -32,11 +38,23 @@ pub trait DescribeForLog {
 }
 
 /// Wrapper for a [resolvable](ResolveHostnames) [`Route`](super) that resolves
-/// to [`WithLoggableDescription<R>`].
+/// to a [`WithLoggableDescription`] route.
+///
+/// To actually resolve a route, `R` must implement the [`DescribeForLog`]
+/// trait. The description of the unresolved route is saved and added to the
+/// result of [`<R as ResolveHostnames>::resolve`](ResolveHostnames::resolve).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ResolveWithSavedDescription<R>(pub R);
 
 /// A [route](super) with a description for logging.
+///
+/// This is a wrapper for an inner route and some "description" metadata. It
+/// is produced by resolving a [`ResolveWithSavedDescription<R>`] which tacks on
+/// a description of the route generated before resolution.
+///
+/// The [`DescribedRouteConnector`], likewise, can connect routes of this type
+/// by delegating to an inner [`Connector`] and pairing the description with the
+/// resulting connection type on success.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WithLoggableDescription<R, D> {
     pub route: R,
@@ -54,16 +72,18 @@ impl<R: UsesTransport, D> UsesTransport for WithLoggableDescription<R, D> {
 
 /// [`Connector`] implementation for [`WithLoggableDescription`].
 ///
-/// Delegates to the wrapped connector, and produces on success its connection
-/// along with the loggable description from the input route.
+/// Implements [`Connector::connect_over`] by delegating to the wrapped
+/// connector, while saving through the description (which was created from the
+/// unresolved route).  If the inner connect attempt succeeds, the description
+/// is paired with the connection as the output.
 pub struct DescribedRouteConnector<C>(pub C);
 
 /// Loggable description for a [`UnresolvedWebsocketServiceRoute`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnresolvedRouteDescription {
-    front: Option<&'static str>,
-    proxy: Option<ConnectionProxyKind>,
-    target: (Host<Arc<str>>, NonZeroU16),
+    pub front: Option<&'static str>,
+    pub proxy: Option<ConnectionProxyKind>,
+    pub target: (Host<Arc<str>>, NonZeroU16),
 }
 
 impl<R: ResolveHostnames + DescribeForLog> ResolveHostnames for ResolveWithSavedDescription<R> {
@@ -147,18 +167,14 @@ impl UnresolvedRouteDescription {
 }
 
 impl<Transport: UsesTransport<UnresolvedTransportRoute>> DescribeForLog
-    for UnresolvedWebsocketServiceRoute<Transport>
+    for UnresolvedHttpsServiceRoute<Transport>
 {
     type Description = UnresolvedRouteDescription;
 
     fn describe_for_log(&self) -> Self::Description {
         let Self {
-            fragment: _ws_fragment,
-            inner:
-                HttpsTlsRoute {
-                    fragment: http_fragment,
-                    inner: transport,
-                },
+            fragment: http_fragment,
+            inner: transport,
         } = self;
         let TlsRoute {
             fragment: tls_fragment,
@@ -166,7 +182,7 @@ impl<Transport: UsesTransport<UnresolvedTransportRoute>> DescribeForLog
         } = transport.transport_part();
 
         let target = match direct_or_proxy {
-            DirectOrProxyRoute::Direct(TcpRoute { address, port }) => {
+            DirectOrProxyRoute::Direct(TcpRoute { address, port, .. }) => {
                 (Host::Domain(address.clone().into()), *port)
             }
             DirectOrProxyRoute::Proxy(proxy) => match proxy {
@@ -193,6 +209,10 @@ impl<Transport: UsesTransport<UnresolvedTransportRoute>> DescribeForLog
                         },
                     inner: _,
                 }) => (target_host.as_informational_host(), *target_port),
+                ConnectionProxyRoute::Reflector(reflector) => (
+                    Host::Domain(reflector.target_host.clone()),
+                    reflector.target_port,
+                ),
             },
         };
 
@@ -200,13 +220,28 @@ impl<Transport: UsesTransport<UnresolvedTransportRoute>> DescribeForLog
             DirectOrProxyRoute::Direct(_) => None,
             DirectOrProxyRoute::Proxy(proxy) => Some(ConnectionProxyKind::from(proxy)),
         };
-        let front = http_fragment.front_name;
+        let front = match direct_or_proxy {
+            DirectOrProxyRoute::Proxy(ConnectionProxyRoute::Reflector(reflector)) => {
+                reflector.outer.inner.fragment.front_name
+            }
+            _ => http_fragment.front_name,
+        };
 
         UnresolvedRouteDescription {
             front,
             proxy,
             target,
         }
+    }
+}
+
+impl<Transport: UsesTransport<UnresolvedTransportRoute>> DescribeForLog
+    for UnresolvedWebsocketServiceRoute<Transport>
+{
+    type Description = UnresolvedRouteDescription;
+
+    fn describe_for_log(&self) -> Self::Description {
+        self.inner.describe_for_log()
     }
 }
 

@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use assert_matches::assert_matches;
-use dir_test::{dir_test, Fixture};
-use futures::io::Cursor;
+use dir_test::{Fixture, dir_test};
 use futures::AsyncRead;
+use futures::io::Cursor;
 use libsignal_account_keys::{BackupForwardSecrecyToken, BackupKey};
 use libsignal_core::Aci;
 use libsignal_message_backup::backup::Purpose;
-use libsignal_message_backup::frame::{FileReaderFactory, VerifyHmac};
+use libsignal_message_backup::frame::{CursorFactory, FileReaderFactory, VerifyHmac};
 use libsignal_message_backup::key::MessageBackupKey;
 use libsignal_message_backup::{BackupReader, ReadResult};
 
@@ -33,7 +33,7 @@ const IV: [u8; 16] = [b'I'; 16];
     )]
 fn is_valid_json_proto(input: Fixture<&str>) {
     let json_contents = input.into_content();
-    let json_contents = json5::from_str(json_contents).expect("invalid JSON");
+    let json_contents = serde_json5::from_str(json_contents).expect("invalid JSON");
     let json_array = assert_matches!(json_contents, serde_json::Value::Array(contents) => contents);
     let binproto =
         libsignal_message_backup::backup::convert_from_json(json_array).expect("failed to convert");
@@ -47,7 +47,7 @@ fn is_valid_json_proto(input: Fixture<&str>) {
     )]
 fn can_serialize_json_proto(input: Fixture<&str>) {
     let json_contents = input.into_content();
-    let json_contents = json5::from_str(json_contents).expect("invalid JSON");
+    let json_contents = serde_json5::from_str(json_contents).expect("invalid JSON");
     let json_array = assert_matches!(json_contents, serde_json::Value::Array(contents) => contents);
     let binproto =
         libsignal_message_backup::backup::convert_from_json(json_array).expect("failed to convert");
@@ -88,12 +88,17 @@ fn serialized_account_settings_is_valid() {
     pretty_assertions::assert_str_eq!(expected_canonical_str, canonical_repr)
 }
 
+fn cargo_bin_dir() -> &'static Path {
+    Path::new(env!("CARGO_BIN_EXE_validator"))
+        .parent()
+        .expect("has parent")
+}
+
 #[test]
 fn scrambler_smoke_test() {
     // Scrambling is deterministic, so we can check against expected output.
     let binproto = include_bytes!("res/canonical-backup.binproto");
-    let scrambled_binproto = Command::cargo_bin("examples/scramble")
-        .expect("bin exists")
+    let scrambled_binproto = Command::new(cargo_bin_dir().join("examples/scramble"))
         .arg("-")
         .write_stdin(binproto)
         .ok()
@@ -136,7 +141,7 @@ fn is_legacy_test(path: &Path) -> bool {
     )]
 fn encrypted_proto_matches_source(input: Fixture<PathBuf>) {
     let path = input.into_content();
-    let expected_source_path = format!("{}{ENCRYPTED_SOURCE_SUFFIX}", path.to_str().unwrap());
+    let expected_source_path = &format!("{}{ENCRYPTED_SOURCE_SUFFIX}", path.to_str().unwrap());
 
     let backup_key = BackupKey::derive_from_account_entropy_pool(
         &RAW_ACCOUNT_ENTROPY_POOL.parse().expect("valid"),
@@ -156,15 +161,7 @@ fn encrypted_proto_matches_source(input: Fixture<PathBuf>) {
     println!("hmac key: {}", hex::encode(key.hmac_key));
     println!("aes key: {}", hex::encode(key.aes_key));
 
-    let source_as_binproto = Command::cargo_bin("examples/json_to_binproto")
-        .expect("bin exists")
-        .arg(expected_source_path)
-        .ok()
-        .expect("valid jsonproto")
-        .stdout;
-
     let aci_string = ACI.service_id_string();
-    let iv_hex = hex::encode(IV);
     let mut args = vec![
         "--aci",
         &aci_string,
@@ -173,35 +170,112 @@ fn encrypted_proto_matches_source(input: Fixture<PathBuf>) {
     ];
 
     let token_hex;
-    if is_legacy_test(&path) {
-        args.extend_from_slice(&["--format", "legacy"]);
-    } else {
+    if !is_legacy_test(&path) {
         token_hex = hex::encode(DEFAULT_BACKUP_FORWARD_SECRECY_TOKEN.0);
         args.extend_from_slice(&["--forward-secrecy-token", &token_hex]);
     }
+    args.push(path.to_str().unwrap());
 
-    args.extend_from_slice(&["--iv", &iv_hex, "-"]);
-
-    let expected_contents = Command::cargo_bin("examples/encrypt_backup")
-        .expect("bin exists")
+    let decrypted_contents = Command::new(cargo_bin_dir().join("examples/decrypt_backup"))
         .args(&args)
-        .write_stdin(source_as_binproto)
         .ok()
-        .expect("can encrypt")
+        .expect("can decrypt")
         .stdout;
 
     if write_expected_output() {
-        eprintln!("writing expected encrypted contents to {path:?}");
-        std::fs::write(path, expected_contents).expect("failed to overwrite expected contents");
+        eprintln!("writing expected decrypted contents to {expected_source_path:?}");
+        std::fs::write(expected_source_path, decrypted_contents)
+            .expect("failed to overwrite expected contents");
         return;
     }
 
-    let actual_contents = std::fs::read(&path).expect("can't load contents");
+    let source_as_json: serde_json::Value =
+        serde_json5::from_str(&std::fs::read_to_string(expected_source_path).unwrap()).unwrap();
 
     assert_eq!(
-        actual_contents, expected_contents,
+        serde_json5::from_str::<serde_json::Value>(
+            std::str::from_utf8(decrypted_contents.as_slice()).unwrap()
+        )
+        .unwrap(),
+        source_as_json,
         "file contents didn't match"
     );
+}
+
+#[dir_test(
+        dir: "$CARGO_MANIFEST_DIR/tests/res/test-cases",
+        glob: "valid/*.jsonproto",
+    )]
+fn encrypt_tool_can_encrypt(input: Fixture<&str>) {
+    #[derive(Debug)]
+    enum Format {
+        Legacy,
+        Modern,
+    }
+
+    let contents = input.into_content();
+    let binproto = Command::new(cargo_bin_dir().join("examples/json_to_binproto"))
+        .arg("-")
+        .write_stdin(contents)
+        .ok()
+        .expect("can encode")
+        .stdout;
+
+    for format in [Format::Legacy, Format::Modern] {
+        let backup_key = BackupKey::derive_from_account_entropy_pool(
+            &RAW_ACCOUNT_ENTROPY_POOL.parse().expect("valid"),
+        );
+
+        let forward_secrecy_token = match format {
+            Format::Legacy => None,
+            Format::Modern => Some(&DEFAULT_BACKUP_FORWARD_SECRECY_TOKEN),
+        };
+
+        let key = MessageBackupKey::derive(
+            &backup_key,
+            &backup_key.derive_backup_id(&ACI),
+            forward_secrecy_token,
+        );
+        println!("format: {format:?}");
+        println!("hmac key: {}", hex::encode(key.hmac_key));
+        println!("aes key: {}", hex::encode(key.aes_key));
+
+        let aci_string = ACI.service_id_string();
+        let iv_string = hex::encode(IV);
+        let mut args = vec![
+            "--aci",
+            &aci_string,
+            "--account-entropy",
+            RAW_ACCOUNT_ENTROPY_POOL,
+            "--iv",
+            &iv_string,
+        ];
+        let token_hex;
+        match format {
+            Format::Modern => {
+                token_hex = hex::encode(DEFAULT_BACKUP_FORWARD_SECRECY_TOKEN.0);
+                args.extend_from_slice(&["--forward-secrecy-token", &token_hex]);
+            }
+            Format::Legacy => args.extend_from_slice(&["--format", "legacy"]),
+        }
+        args.push("-");
+
+        let encrypted = Command::new(cargo_bin_dir().join("examples/encrypt_backup"))
+            .args(&args)
+            .write_stdin(binproto.clone())
+            .ok()
+            .expect("can encrypt")
+            .stdout;
+
+        let factory = CursorFactory::new(encrypted.as_slice());
+        let reader = futures::executor::block_on(BackupReader::new_encrypted_compressed(
+            &key,
+            factory,
+            Purpose::RemoteBackup,
+        ))
+        .unwrap_or_else(|e| panic!("expected valid, got {e}"));
+        validate(reader);
+    }
 }
 
 #[dir_test(
@@ -275,8 +349,9 @@ fn invalid_jsonproto(input: Fixture<PathBuf>) {
     let path = input.into_content();
     let expected_path = path.with_extension(EXPECTED_SUFFIX);
 
-    let json_contents = json5::from_str(&std::fs::read_to_string(path).expect("failed to read"))
-        .expect("invalid JSON");
+    let json_contents =
+        serde_json5::from_str(&std::fs::read_to_string(path).expect("failed to read"))
+            .expect("invalid JSON");
     let json_array = assert_matches!(json_contents, serde_json::Value::Array(contents) => contents);
     let binproto =
         libsignal_message_backup::backup::convert_from_json(json_array).expect("failed to convert");
@@ -336,5 +411,5 @@ fn validate(mut reader: BackupReader<impl AsyncRead + Unpin + VerifyHmac>) {
 }
 
 fn validator_command() -> Command {
-    Command::cargo_bin("validator").expect("bin not found")
+    Command::new(env!("CARGO_BIN_EXE_validator"))
 }

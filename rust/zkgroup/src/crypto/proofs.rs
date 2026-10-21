@@ -5,9 +5,9 @@
 
 #![allow(non_snake_case)]
 
-use curve25519_dalek_signal::constants::RISTRETTO_BASEPOINT_POINT;
-use curve25519_dalek_signal::ristretto::RistrettoPoint;
-use curve25519_dalek_signal::traits::Identity;
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::traits::Identity;
 use partial_default::PartialDefault;
 use serde::{Deserialize, Serialize};
 use zkcredential::attributes::Attribute;
@@ -140,7 +140,7 @@ impl ProfileKeyCredentialRequestProof {
                 &[],
                 &sho.squeeze_as_array::<RANDOMNESS_LEN>(),
             )
-            .unwrap();
+            .expect("valid proof");
         ProfileKeyCredentialRequestProof { poksho_proof }
     }
 
@@ -262,7 +262,7 @@ impl ExpiringProfileKeyCredentialIssuanceProof {
                 &[],
                 &sho.squeeze_as_array::<RANDOMNESS_LEN>(),
             )
-            .unwrap();
+            .expect("valid proof");
         ExpiringProfileKeyCredentialIssuanceProof { poksho_proof }
     }
 
@@ -390,7 +390,7 @@ impl ReceiptCredentialIssuanceProof {
                 &[],
                 &sho.squeeze_as_array::<RANDOMNESS_LEN>(),
             )
-            .unwrap();
+            .expect("valid proof");
         Self { poksho_proof }
     }
 
@@ -467,6 +467,7 @@ impl ExpiringProfileKeyCredentialPresentationProof {
         st.add("E_B1", &[("b1", "C_y3"), ("z2", "G_y3")]);
         st.add("0", &[("z1", "I"), ("a1", "Z")]);
         st.add("0", &[("z2", "I"), ("b1", "Z")]);
+        st.add("C_y5", &[("z", "G_y5")]);
         st
     }
 
@@ -557,6 +558,9 @@ impl ExpiringProfileKeyCredentialPresentationProof {
         point_args.add("G_y3", credentials_system.G_y[3]);
         point_args.add("0", RistrettoPoint::identity());
 
+        point_args.add("C_y5", C_y5);
+        point_args.add("G_y5", credentials_system.G_y[5]);
+
         let poksho_proof = Self::get_poksho_statement()
             .prove(
                 &scalar_args,
@@ -564,7 +568,7 @@ impl ExpiringProfileKeyCredentialPresentationProof {
                 &[],
                 &sho.squeeze_as_array::<RANDOMNESS_LEN>(),
             )
-            .unwrap();
+            .expect("valid proof");
 
         ExpiringProfileKeyCredentialPresentationProof {
             C_y1,
@@ -604,8 +608,8 @@ impl ExpiringProfileKeyCredentialPresentationProof {
             poksho_proof,
         } = self;
 
-        let (C_x0, C_x1, C_y1, C_y2, C_y3, C_y4, C_V) =
-            (*C_x0, *C_x1, *C_y1, *C_y2, *C_y3, *C_y4, *C_V);
+        let (C_x0, C_x1, C_y1, C_y2, C_y3, C_y4, C_y5, C_V) =
+            (*C_x0, *C_x1, *C_y1, *C_y2, *C_y3, *C_y4, *C_y5, *C_V);
 
         let credentials::KeyPair {
             W,
@@ -660,6 +664,9 @@ impl ExpiringProfileKeyCredentialPresentationProof {
         point_args.add("C_y3", C_y3);
         point_args.add("G_y3", credentials_system.G_y[3]);
         point_args.add("0", RistrettoPoint::identity());
+
+        point_args.add("C_y5", C_y5);
+        point_args.add("G_y5", credentials_system.G_y[5]);
 
         match Self::get_poksho_statement().verify_proof(poksho_proof, &point_args, &[]) {
             Err(_) => Err(ZkGroupVerificationFailure),
@@ -723,7 +730,7 @@ impl ReceiptCredentialPresentationProof {
                 &[],
                 &sho.squeeze_as_array::<RANDOMNESS_LEN>(),
             )
-            .unwrap();
+            .expect("valid proof");
 
         Self {
             C_x0,

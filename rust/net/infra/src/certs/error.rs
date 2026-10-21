@@ -4,6 +4,7 @@
 //
 
 use itertools::Itertools as _;
+use libsignal_core::LogSafeDisplay;
 use rustls::pki_types::UnixTime;
 use rustls::{
     AlertDescription, CertRevocationListError, CertificateError, EncryptedClientHelloError, Error,
@@ -11,7 +12,6 @@ use rustls::{
 };
 
 use crate::dns::dns_utils::log_safe_domain;
-use crate::errors::LogSafeDisplay;
 
 pub(super) struct LogSafeTlsError<'a>(pub(super) &'a Error);
 
@@ -118,7 +118,7 @@ impl std::fmt::Display for LogSafeTlsError<'_> {
                 | PeerIncompatible::UncompressedEcPointsRequired
                 | PeerIncompatible::UnsolicitedCertificateTypeExtension => (),
                 PeerIncompatible::ServerRejectedEncryptedClientHello(_ech_config_payloads) => {
-                    return f.write_str("peer incompatible, server rejected ECH")
+                    return f.write_str("peer incompatible, server rejected ECH");
                 }
                 // This enum is non-exhaustive
                 _ => return f.write_str("peer incompatible, unknown reason"),
@@ -275,10 +275,10 @@ impl std::fmt::Display for LogSafeTlsError<'_> {
                         "invalid certificate; expected {} is not in presented {:?}",
                         log_safe_domain(&expected.to_str()),
                         presented.iter().map(|s| log_safe_domain(s)).collect_vec()
-                    )
+                    );
                 }
                 CertificateError::Other(_other_error) => {
-                    return f.write_str("invalid certificate, other error")
+                    return f.write_str("invalid certificate, other error");
                 }
                 // This enum is non-exhaustive
                 _ => return f.write_str("invalid certificate, unknown error"),
@@ -295,7 +295,7 @@ impl std::fmt::Display for LogSafeTlsError<'_> {
                 | CertRevocationListError::UnsupportedIndirectCrl
                 | CertRevocationListError::UnsupportedRevocationReason => (),
                 CertRevocationListError::Other(_other_error) => {
-                    return f.write_str("invalid CRL, other error")
+                    return f.write_str("invalid CRL, other error");
                 }
                 // This enum is non-exhaustive
                 _ => return f.write_str("invalid CRL, unknown error"),

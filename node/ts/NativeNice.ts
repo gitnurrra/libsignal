@@ -1,0 +1,5647 @@
+//
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+// WARNING: this file was automatically generated
+
+import type { Bytes } from '@signalapp/types';
+
+import * as Native from './Native.js';
+import type {
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  GrpcTestCase,
+  StringMapFfiContents,
+  ArgFfiBadgeVisibility,
+  ArgFfiBridgeCopyBackupMediaItem,
+  ArgFfiBridgeDeleteBackupMediaItem,
+  ArgFfiBridgeMfaVerificationCredential,
+  ArgFfiCallQualitySurveyInternal,
+  ArgFfiDeviceCapabilityInternal,
+  ArgFfiLoginReceiptLevel,
+  ArgFfiMyRemoteDeriveEnum,
+  ArgFfiMyRemoteDeriveStruct,
+  ArgFfiMySimpleTestEnum,
+  ArgFfiMyTestEnum,
+  ArgFfiMyTestPoint,
+  ArgFfiMyTestStruct,
+  ArgFfiPaymentProvider,
+  ReturnFfiAccountEntitlements,
+  ReturnFfiAuthCheckResult,
+  ReturnFfiBackupEntitlement,
+  ReturnFfiBadgeEntitlement,
+  ReturnFfiBadgeVisibility,
+  ReturnFfiBridgeConfirmedMfaKey,
+  ReturnFfiBridgeConfirmedMfaKeyMetadata,
+  ReturnFfiBridgeCopyBackupMediaItem,
+  ReturnFfiBridgeCopyBackupMediaOutcome,
+  ReturnFfiBridgeCopyBackupMediaResult,
+  ReturnFfiBridgeDeleteBackupMediaItem,
+  ReturnFfiBridgeMediaBackupInfo,
+  ReturnFfiBridgeMessageBackupInfo,
+  ReturnFfiBridgeMfaKeyKind,
+  ReturnFfiBridgeMfaMetadata,
+  ReturnFfiBridgeMfaVerificationCredential,
+  ReturnFfiBridgePendingTotpKey,
+  ReturnFfiBridgePreKeyCounts,
+  ReturnFfiBridgeTotpParameters,
+  ReturnFfiBridgeWebAuthnAuthenticationParameters,
+  ReturnFfiBridgeWebAuthnCreateParameters,
+  ReturnFfiCallQualitySurveyInternal,
+  ReturnFfiCheckSvrCredentialsArgs,
+  ReturnFfiConfirmTotpKeyArgs,
+  ReturnFfiConfirmTotpKeyOut,
+  ReturnFfiConfirmUsernameArgs,
+  ReturnFfiConfirmUsernameOut,
+  ReturnFfiCopyBackupMediaNextChunk,
+  ReturnFfiCopyBackupMediaOut,
+  ReturnFfiCreateDonationPermitsArgs,
+  ReturnFfiCreateDonationPermitsOut,
+  ReturnFfiCreateLoginReceiptCredentialArgs,
+  ReturnFfiCreateLoginReceiptCredentialOut,
+  ReturnFfiCurrencyConversionsInternal,
+  ReturnFfiCurrencyInternal,
+  ReturnFfiDeleteBackupMediaNextChunk,
+  ReturnFfiDeleteBackupMediaOut,
+  ReturnFfiDeviceCapabilityInternal,
+  ReturnFfiFinishMfaVerificationOut,
+  ReturnFfiFinishWebAuthnRegistrationArgs,
+  ReturnFfiFinishWebAuthnRegistrationOut,
+  ReturnFfiGenerateTotpKeyOut,
+  ReturnFfiGetCapabilitiesOut,
+  ReturnFfiGetCdnCredentialsOut,
+  ReturnFfiGetDevicesOut,
+  ReturnFfiGetEntitlementsOut,
+  ReturnFfiGetMediaBackupInfoOut,
+  ReturnFfiGetMessageBackupInfoOut,
+  ReturnFfiGetProfileKeyCredentialArgs,
+  ReturnFfiGetProfileKeyCredentialOut,
+  ReturnFfiGetStickerUploadFormsOut,
+  ReturnFfiGetStickerUploadFormsResponse,
+  ReturnFfiGetSubscriptionReceiptCredentialArgs,
+  ReturnFfiGetSubscriptionReceiptCredentialOut,
+  ReturnFfiGetSvrBCredentialsOut,
+  ReturnFfiLinkedDeviceInternal,
+  ReturnFfiListMediaArgs,
+  ReturnFfiListMediaItem,
+  ReturnFfiListMediaOut,
+  ReturnFfiListMediaResponse,
+  ReturnFfiListMfaKeysArgs,
+  ReturnFfiListMfaKeysOut,
+  ReturnFfiLoginReceiptLevel,
+  ReturnFfiLookUpUsernameLinkArgs,
+  ReturnFfiLookUpUsernameLinkOut,
+  ReturnFfiMyRemoteDeriveEnum,
+  ReturnFfiMyRemoteDeriveStruct,
+  ReturnFfiMySimpleTestEnum,
+  ReturnFfiMyTestEnum,
+  ReturnFfiMyTestPoint,
+  ReturnFfiMyTestStruct,
+  ReturnFfiPaymentProvider,
+  ReturnFfiProfileKeyCredentialRequestError,
+  ReturnFfiReceiptCredentialError,
+  ReturnFfiRedeemBackupReceiptOut,
+  ReturnFfiRedeemDonationReceiptArgs,
+  ReturnFfiRedeemDonationReceiptOut,
+  ReturnFfiRemoveDeviceArgs,
+  ReturnFfiRemoveDeviceOut,
+  ReturnFfiRemoveMfaKeyArgs,
+  ReturnFfiRemoveMfaKeyOut,
+  ReturnFfiReportMessageArgs,
+  ReturnFfiReserveUsernameHashArgs,
+  ReturnFfiReserveUsernameHashOut,
+  ReturnFfiS3UploadFormInternal,
+  ReturnFfiServerPublicParamsSerialized,
+  ReturnFfiSetCapabilitiesArgs,
+  ReturnFfiSetDeviceNameArgs,
+  ReturnFfiSetDeviceNameOut,
+  ReturnFfiSetLastResortKemPreKeyArgs,
+  ReturnFfiSetMfaKeyMetadataArgs,
+  ReturnFfiSetMfaKeyMetadataOut,
+  ReturnFfiSetOneTimeEcPreKeysArgs,
+  ReturnFfiSetOneTimeKemPreKeysArgs,
+  ReturnFfiSetSignedEcPreKeyArgs,
+  ReturnFfiSetUsernameLinkArgs,
+  ReturnFfiSetUsernameLinkOut,
+  ReturnFfiSimpleBackupTestOut,
+  ReturnFfiStartMfaVerificationOut,
+  ReturnFfiStartMfaVerificationResponse,
+  ReturnFfiStartWebAuthnRegistrationOut,
+  ReturnFfiTestStreamChunk,
+  ReturnFfiTestingAnySignedPreKey,
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+} from './Native.js';
+
+import { Aci, ServiceId, ServiceIdKind } from './Address.js';
+import * as zkgroup from './zkgroup/index.js';
+import * as uuid from './uuid.js';
+import ByteArray from './zkgroup/internal/ByteArray.js';
+import type { TokioAsyncContext } from './net.js';
+import type { CdnCredentials } from './net/chat/CdnCredentials.js';
+import {
+  DeviceId,
+  Timestamp,
+  cdnCredentialReturnConverter,
+  copyBackupMediaStreamConverter,
+  deleteBackupMediaStreamConverter,
+  identity,
+  serviceIdArgConverter,
+  grpcTestCaseConverter,
+  liftNull,
+  stringMapArgConverter,
+  stringMapResultConverter,
+} from './NiceConverters.js';
+import { Rng } from './RngForTesting.js';
+import type { ChargeFailure } from './Errors.js';
+
+export type AccountEntitlements = {
+  badges: Array<BadgeEntitlement>;
+  backup: BackupEntitlement | null;
+};
+
+export type AuthCheckResult = 'match' | 'noMatch' | 'invalid';
+
+export type BackupEntitlement = {
+  level: bigint;
+  expiration: Timestamp;
+};
+
+export type BadgeEntitlement = {
+  badgeId: string;
+  expiration: Timestamp;
+  visible: boolean;
+};
+
+export type BadgeVisibility = 'doNotSet' | 'setVisible' | 'setPrimary';
+
+export type BridgeConfirmedMfaKey = {
+  id: number;
+  metadata: BridgeConfirmedMfaKeyMetadata;
+  kind: BridgeMfaKeyKind;
+};
+
+export type BridgeConfirmedMfaKeyMetadata =
+  | {
+      metadata: BridgeMfaMetadata;
+    }
+  | 'unreadable';
+
+export type BridgeCopyBackupMediaItem = {
+  sourceAttachmentCdn: number;
+  sourceKey: string;
+  objectLength: bigint;
+  mediaId: Bytes;
+  encryptionKey: Bytes;
+};
+
+export type BridgeCopyBackupMediaOutcome = {
+  mediaId: Bytes;
+  result: BridgeCopyBackupMediaResult;
+};
+
+export type BridgeCopyBackupMediaResult =
+  | {
+      success: number;
+    }
+  | 'sourceNotFound'
+  | 'wrongSourceLength'
+  | 'outOfSpace';
+
+export type BridgeDeleteBackupMediaItem = {
+  mediaId: Bytes;
+  cdn: number;
+};
+
+export type BridgeMediaBackupInfo = {
+  backupDir: string;
+  mediaDir: string;
+  usedSpace: bigint;
+};
+
+export type BridgeMessageBackupInfo = {
+  backupDir: string;
+  cdn: number;
+  backupName: string;
+};
+
+export type BridgeMfaKeyKind = 'totp' | 'webAuthn' | 'unknown';
+
+export type BridgeMfaMetadata = {
+  name: string;
+  createdAt: Timestamp;
+};
+
+export type BridgeMfaVerificationCredential =
+  | {
+      totp: number;
+    }
+  | {
+      webAuthn: string;
+    };
+
+export type BridgePendingTotpKey = {
+  key: Bytes;
+  parameters: BridgeTotpParameters;
+};
+
+export type BridgePreKeyCounts = {
+  aciEcPreKeyCount: number;
+  aciKemPreKeyCount: number;
+  pniEcPreKeyCount: number;
+  pniKemPreKeyCount: number;
+};
+
+export type BridgeTotpParameters = {
+  algorithm: string;
+  passwordLength: number;
+  timeStepSeconds: number;
+};
+
+export type BridgeWebAuthnAuthenticationParameters = {
+  challenge: Bytes;
+  timeoutSeconds: number;
+  allowedCredentialIds: Array<Bytes>;
+};
+
+export type BridgeWebAuthnCreateParameters = {
+  userHandle: Bytes;
+  allowedAlgorithms: Array<number>;
+  excludeCredentialIds: Array<Bytes>;
+};
+
+export type CallQualitySurveyInternal = {
+  userSatisfied: boolean;
+  callQualityIssues: Array<string>;
+  additionalIssuesDescription: string | null;
+  debugLogUrl: string | null;
+  startTimestamp: Timestamp;
+  endTimestamp: Timestamp;
+  callType: string;
+  success: boolean;
+  callEndReason: string;
+  connectionRttMedian: number | null;
+  audioRttMedian: number | null;
+  videoRttMedian: number | null;
+  audioRecvJitterMedian: number | null;
+  videoRecvJitterMedian: number | null;
+  audioSendJitterMedian: number | null;
+  videoSendJitterMedian: number | null;
+  audioRecvPacketLossFraction: number | null;
+  videoRecvPacketLossFraction: number | null;
+  audioSendPacketLossFraction: number | null;
+  videoSendPacketLossFraction: number | null;
+  callTelemetry: Bytes | null;
+  callIdHash: Bytes | null;
+};
+
+export type CheckSvrCredentialsArgs = {
+  number: string;
+  passwords: Array<string>;
+};
+
+export type ConfirmTotpKeyArgs = {
+  oneTimePassword: number;
+  name: string;
+  createdAt: Timestamp;
+  svrKey: Bytes;
+};
+
+export type ConfirmTotpKeyOut =
+  | {
+      success: number;
+    }
+  | 'oneTimePasswordNotVerified'
+  | 'tooManyMfaKeys';
+
+export type ConfirmUsernameArgs = {
+  username: string;
+  usernameCiphertext: Bytes;
+};
+
+export type ConfirmUsernameOut =
+  | {
+      success: uuid.Uuid;
+    }
+  | 'reservationNotFound'
+  | 'usernameNotAvailable';
+
+export type CopyBackupMediaNextChunk = {
+  chunk: Array<BridgeCopyBackupMediaOutcome>;
+  termination: ('finished' | Error) | null;
+};
+
+export type CopyBackupMediaOut =
+  | {
+      item: BridgeCopyBackupMediaOutcome;
+    }
+  | 'invalidDataInStream'
+  | 'credentialRejected'
+  | 'credentialRejectedWithoutAppropriateServerInfo';
+
+export type CreateDonationPermitsArgs = {
+  requestContext: zkgroup.DonationPermitRequestContext;
+  serverParams: ServerPublicParamsSerialized;
+};
+
+export type CreateDonationPermitsOut =
+  | {
+      success: Array<zkgroup.DonationPermit>;
+    }
+  | {
+      unexpectedError: string;
+    };
+
+export type CreateLoginReceiptCredentialArgs = {
+  paymentProcessor: PaymentProvider;
+  purchaseIdentifier: string;
+  receiptCredentialRequestContext: zkgroup.ReceiptCredentialRequestContext;
+  serverParams: ServerPublicParamsSerialized;
+  purchaseTime: Timestamp;
+  expectedLevel: LoginReceiptLevel;
+};
+
+export type CreateLoginReceiptCredentialOut =
+  | {
+      success: zkgroup.ReceiptCredential;
+    }
+  | {
+      unexpectedError: string;
+    }
+  | {
+      explicitError: ReceiptCredentialError;
+    };
+
+export type CurrencyConversionsInternal = {
+  timestampMs: Timestamp;
+  currencies: Array<CurrencyInternal>;
+};
+
+export type CurrencyInternal = {
+  base: string;
+  conversions: Array<[string, string]>;
+};
+
+export type DeleteBackupMediaNextChunk = {
+  chunk: Array<BridgeDeleteBackupMediaItem>;
+  termination: ('finished' | Error) | null;
+};
+
+export type DeleteBackupMediaOut =
+  | {
+      item: BridgeDeleteBackupMediaItem;
+    }
+  | 'invalidDataInStream'
+  | 'credentialRejected'
+  | 'credentialRejectedWithoutAppropriateServerInfo';
+
+export type DeviceCapabilityInternal =
+  | 'storage'
+  | 'transfer'
+  | 'attachmentBackfill'
+  | 'sparsePostQuantumRatchet'
+  | 'profilesV2'
+  | 'usernameChangeSyncMessage'
+  | 'optionalPhoneNumber';
+
+export type FinishMfaVerificationOut = 'success' | 'failedToVerify';
+
+export type FinishWebAuthnRegistrationArgs = {
+  attestationObject: Bytes;
+  collectedClientDataJson: string;
+  name: string;
+  createdAt: Timestamp;
+  svrKey: Bytes;
+};
+
+export type FinishWebAuthnRegistrationOut =
+  | {
+      success: number;
+    }
+  | 'webAuthnRegistrationUnsuccessful'
+  | 'tooManyMfaKeys';
+
+export type GenerateTotpKeyOut =
+  | {
+      success: BridgePendingTotpKey;
+    }
+  | 'tooManyTotpKeys'
+  | 'tooManyMfaKeys';
+
+export type GetCapabilitiesOut =
+  | {
+      success: Array<DeviceCapabilityInternal>;
+    }
+  | 'malformed';
+
+export type GetCdnCredentialsOut =
+  | {
+      success: CdnCredentials;
+    }
+  | 'credentialRejected'
+  | 'missingResponse';
+
+export type GetDevicesOut = {
+  devices: Array<LinkedDeviceInternal>;
+};
+
+export type GetEntitlementsOut =
+  | {
+      success: AccountEntitlements;
+    }
+  | 'malformed';
+
+export type GetMediaBackupInfoOut =
+  | {
+      success: BridgeMediaBackupInfo;
+    }
+  | 'credentialRejected'
+  | 'missingResponse';
+
+export type GetMessageBackupInfoOut =
+  | {
+      success: BridgeMessageBackupInfo;
+    }
+  | 'credentialRejected'
+  | 'missingResponse';
+
+export type GetProfileKeyCredentialArgs = {
+  profileKeyRequestContext: zkgroup.ProfileKeyCredentialRequestContext;
+  serverParams: ServerPublicParamsSerialized;
+};
+
+export type GetProfileKeyCredentialOut =
+  | {
+      success: zkgroup.ExpiringProfileKeyCredential;
+    }
+  | {
+      unexpectedError: string;
+    }
+  | {
+      explicitError: ProfileKeyCredentialRequestError;
+    };
+
+export type GetStickerUploadFormsOut =
+  | {
+      success: GetStickerUploadFormsResponse;
+    }
+  | 'invalid';
+
+export type GetStickerUploadFormsResponse = {
+  packId: string;
+  manifestUploadForm: S3UploadFormInternal;
+  stickerUploadForms: Array<S3UploadFormInternal>;
+};
+
+export type GetSubscriptionReceiptCredentialArgs = {
+  subscriberId: Bytes;
+  receiptCredentialRequestContext: zkgroup.ReceiptCredentialRequestContext;
+  serverParams: ServerPublicParamsSerialized;
+};
+
+export type GetSubscriptionReceiptCredentialOut =
+  | {
+      success: zkgroup.ReceiptCredential;
+    }
+  | {
+      unexpectedError: string;
+    }
+  | {
+      explicitError: ReceiptCredentialError;
+    };
+
+export type GetSvrBCredentialsOut =
+  | {
+      success: {
+        username: string;
+        password: string;
+      };
+    }
+  | 'credentialRejected'
+  | 'missingResponse';
+
+export type LinkedDeviceInternal = {
+  id: DeviceId;
+  encryptedName: Bytes;
+  lastSeen: Timestamp;
+  registrationId: number;
+  createdAtCiphertext: Bytes;
+};
+
+export type ListMediaArgs = {
+  cursor: string | null;
+  limit: number;
+};
+
+export type ListMediaItem = {
+  cdn: number;
+  mediaId: Bytes;
+  objectLength: bigint;
+};
+
+export type ListMediaOut =
+  | {
+      page: ListMediaResponse;
+    }
+  | 'malformedMediaId'
+  | 'credentialRejected'
+  | 'missingResponse';
+
+export type ListMediaResponse = {
+  items: Array<ListMediaItem>;
+  backupDir: string;
+  mediaDir: string;
+  cursor: string | null;
+};
+
+export type ListMfaKeysArgs = {
+  svrKey: Bytes;
+};
+
+export type ListMfaKeysOut = {
+  success: Array<BridgeConfirmedMfaKey>;
+};
+
+export type LoginReceiptLevel = 'normal' | 'sandbox';
+
+export type LookUpUsernameLinkArgs = {
+  uuid: uuid.Uuid;
+  entropy: Bytes;
+};
+
+export type LookUpUsernameLinkOut =
+  | {
+      success: string;
+    }
+  | 'notFound'
+  | 'linkDataTooShort'
+  | 'missingResponse';
+
+export type MyRemoteDeriveEnum =
+  | 'unit'
+  | {
+      tuple: [number, number];
+    }
+  | {
+      record: {
+        x: string;
+        y: number;
+      };
+    };
+
+export type MyRemoteDeriveStruct = {
+  x: number;
+  y: number;
+};
+
+export type MySimpleTestEnum = 'a' | 'b';
+
+export type MyTestEnum =
+  | 'unit'
+  | {
+      single: number;
+    }
+  | {
+      singleNamed: number;
+    }
+  | {
+      double: [number, number];
+    }
+  | {
+      record: {
+        personName: string;
+        personAge: number;
+        position: MyTestPoint;
+        funStruct: MyTestStruct;
+      };
+    };
+
+export type MyTestPoint = [number, number];
+
+export type MyTestStruct = {
+  myNumericField: number;
+  myStringField: string;
+};
+
+export type PaymentProvider =
+  | 'googlePlayBilling'
+  | 'appleAppStore'
+  | 'stripe'
+  | 'braintree';
+
+export type ProfileKeyCredentialRequestError = 'authFailed' | 'profileNotFound';
+
+export type ReceiptCredentialError =
+  | 'paymentStillProcessing'
+  | {
+      paymentRequired: Array<ChargeFailure>;
+    }
+  | 'paymentNotFound'
+  | 'receiptAlreadyIssued';
+
+export type RedeemBackupReceiptOut =
+  | 'success'
+  | 'invalidReceipt'
+  | 'missingBackupId'
+  | 'missingResponse';
+
+export type RedeemDonationReceiptArgs = {
+  presentation: zkgroup.ReceiptCredentialPresentation;
+  visibility: BadgeVisibility;
+};
+
+export type RedeemDonationReceiptOut =
+  | 'success'
+  | 'invalidReceipt'
+  | 'alreadyRedeemed'
+  | {
+      unexpectedError: string;
+    };
+
+export type RemoveDeviceArgs = {
+  id: number;
+};
+
+export type RemoveDeviceOut = 'success';
+
+export type RemoveMfaKeyArgs = {
+  keyId: number;
+};
+
+export type RemoveMfaKeyOut = 'success';
+
+export type ReportMessageArgs = {
+  source: Aci;
+  messageGuid: uuid.Uuid;
+  reportSpamToken: Bytes;
+};
+
+export type ReserveUsernameHashArgs = {
+  usernames: Array<Bytes>;
+};
+
+export type ReserveUsernameHashOut =
+  | {
+      success: Bytes;
+    }
+  | 'usernameNotAvailable';
+
+export type S3UploadFormInternal = {
+  key: string;
+  credential: string;
+  acl: string;
+  algorithm: string;
+  date: string;
+  policy: string;
+  signature: string;
+};
+
+export type ServerPublicParamsSerialized = {
+  bytes: Bytes;
+};
+
+export type SetCapabilitiesArgs = {
+  capabilities: Array<DeviceCapabilityInternal>;
+};
+
+export type SetDeviceNameArgs = {
+  id: number;
+  encryptedName: Bytes;
+};
+
+export type SetDeviceNameOut = 'success' | 'deviceNotFound';
+
+export type SetLastResortKemPreKeyArgs = {
+  identity: number;
+  preKey: TestingAnySignedPreKey;
+};
+
+export type SetMfaKeyMetadataArgs = {
+  keyId: number;
+  name: string;
+  createdAt: Timestamp;
+  svrKey: Bytes;
+};
+
+export type SetMfaKeyMetadataOut = 'success' | 'keyNotFound';
+
+export type SetOneTimeEcPreKeysArgs = {
+  identity: number;
+  preKeys: Array<[number, Bytes]>;
+};
+
+export type SetOneTimeKemPreKeysArgs = {
+  identity: number;
+  preKeys: Array<TestingAnySignedPreKey>;
+};
+
+export type SetSignedEcPreKeyArgs = {
+  identity: number;
+  preKey: TestingAnySignedPreKey;
+};
+
+export type SetUsernameLinkArgs = {
+  usernameCiphertext: Bytes;
+  keepLinkHandle: boolean;
+};
+
+export type SetUsernameLinkOut =
+  | {
+      success: uuid.Uuid;
+    }
+  | 'usernameNotSet';
+
+export type SimpleBackupTestOut =
+  | 'success'
+  | 'credentialRejected'
+  | 'missingResponse';
+
+export type StartMfaVerificationOut =
+  | {
+      success: StartMfaVerificationResponse;
+    }
+  | 'malformed';
+
+export type StartMfaVerificationResponse = {
+  hasTotp: boolean;
+  webauthnParams: BridgeWebAuthnAuthenticationParameters | null;
+};
+
+export type StartWebAuthnRegistrationOut =
+  | {
+      success: BridgeWebAuthnCreateParameters;
+    }
+  | 'tooManyMfaKeys';
+
+export type TestStreamChunk = {
+  chunk: Array<string>;
+  termination: ('finished' | Error) | null;
+};
+
+export type TestingAnySignedPreKey = {
+  id: number;
+  key: Bytes;
+  sig: Bytes;
+};
+
+export function returnConverterAccountEntitlements(
+  ffiInput: Native.ReturnFfiAccountEntitlements
+): AccountEntitlements {
+  return {
+    badges: ((arr: Array<ReturnFfiBadgeEntitlement>) =>
+      arr.map(returnConverterBadgeEntitlement))(ffiInput.badges),
+    backup: liftNull(returnConverterBackupEntitlement)(ffiInput.backup),
+  };
+}
+
+export function returnConverterAuthCheckResult(
+  ffiInput: Native.ReturnFfiAuthCheckResult
+): AuthCheckResult {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'match';
+    case 1:
+      return 'noMatch';
+    case 2:
+      return 'invalid';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for AuthCheckResult');
+  }
+}
+
+export function returnConverterBackupEntitlement(
+  ffiInput: Native.ReturnFfiBackupEntitlement
+): BackupEntitlement {
+  return {
+    level: identity(ffiInput.level),
+    expiration: identity(ffiInput.expiration),
+  };
+}
+
+export function returnConverterBadgeEntitlement(
+  ffiInput: Native.ReturnFfiBadgeEntitlement
+): BadgeEntitlement {
+  return {
+    badgeId: identity(ffiInput.badge_id),
+    expiration: identity(ffiInput.expiration),
+    visible: identity(ffiInput.visible),
+  };
+}
+
+export function returnConverterBadgeVisibility(
+  ffiInput: Native.ReturnFfiBadgeVisibility
+): BadgeVisibility {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'doNotSet';
+    case 1:
+      return 'setVisible';
+    case 2:
+      return 'setPrimary';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for BadgeVisibility');
+  }
+}
+
+export function returnConverterBridgeConfirmedMfaKey(
+  ffiInput: Native.ReturnFfiBridgeConfirmedMfaKey
+): BridgeConfirmedMfaKey {
+  return {
+    id: identity(ffiInput.id),
+    metadata: returnConverterBridgeConfirmedMfaKeyMetadata(ffiInput.metadata),
+    kind: returnConverterBridgeMfaKeyKind(ffiInput.kind),
+  };
+}
+
+export function returnConverterBridgeConfirmedMfaKeyMetadata(
+  ffiInput: Native.ReturnFfiBridgeConfirmedMfaKeyMetadata
+): BridgeConfirmedMfaKeyMetadata {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        metadata: returnConverterBridgeMfaMetadata(ffiInput._0),
+      };
+    case 1:
+      return 'unreadable';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for BridgeConfirmedMfaKeyMetadata'
+      );
+  }
+}
+
+export function returnConverterBridgeCopyBackupMediaItem(
+  ffiInput: Native.ReturnFfiBridgeCopyBackupMediaItem
+): BridgeCopyBackupMediaItem {
+  return {
+    sourceAttachmentCdn: identity(ffiInput.source_attachment_cdn),
+    sourceKey: identity(ffiInput.source_key),
+    objectLength: identity(ffiInput.object_length),
+    mediaId: identity(ffiInput.media_id),
+    encryptionKey: identity(ffiInput.encryption_key),
+  };
+}
+
+export function returnConverterBridgeCopyBackupMediaOutcome(
+  ffiInput: Native.ReturnFfiBridgeCopyBackupMediaOutcome
+): BridgeCopyBackupMediaOutcome {
+  return {
+    mediaId: identity(ffiInput.media_id),
+    result: returnConverterBridgeCopyBackupMediaResult(ffiInput.result),
+  };
+}
+
+export function returnConverterBridgeCopyBackupMediaResult(
+  ffiInput: Native.ReturnFfiBridgeCopyBackupMediaResult
+): BridgeCopyBackupMediaResult {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: identity(ffiInput.cdn),
+      };
+    case 1:
+      return 'sourceNotFound';
+    case 2:
+      return 'wrongSourceLength';
+    case 3:
+      return 'outOfSpace';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for BridgeCopyBackupMediaResult'
+      );
+  }
+}
+
+export function returnConverterBridgeDeleteBackupMediaItem(
+  ffiInput: Native.ReturnFfiBridgeDeleteBackupMediaItem
+): BridgeDeleteBackupMediaItem {
+  return {
+    mediaId: identity(ffiInput.media_id),
+    cdn: identity(ffiInput.cdn),
+  };
+}
+
+export function returnConverterBridgeMediaBackupInfo(
+  ffiInput: Native.ReturnFfiBridgeMediaBackupInfo
+): BridgeMediaBackupInfo {
+  return {
+    backupDir: identity(ffiInput.backup_dir),
+    mediaDir: identity(ffiInput.media_dir),
+    usedSpace: identity(ffiInput.used_space),
+  };
+}
+
+export function returnConverterBridgeMessageBackupInfo(
+  ffiInput: Native.ReturnFfiBridgeMessageBackupInfo
+): BridgeMessageBackupInfo {
+  return {
+    backupDir: identity(ffiInput.backup_dir),
+    cdn: identity(ffiInput.cdn),
+    backupName: identity(ffiInput.backup_name),
+  };
+}
+
+export function returnConverterBridgeMfaKeyKind(
+  ffiInput: Native.ReturnFfiBridgeMfaKeyKind
+): BridgeMfaKeyKind {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'totp';
+    case 1:
+      return 'webAuthn';
+    case 2:
+      return 'unknown';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for BridgeMfaKeyKind');
+  }
+}
+
+export function returnConverterBridgeMfaMetadata(
+  ffiInput: Native.ReturnFfiBridgeMfaMetadata
+): BridgeMfaMetadata {
+  return {
+    name: identity(ffiInput.name),
+    createdAt: identity(ffiInput.created_at),
+  };
+}
+
+export function returnConverterBridgeMfaVerificationCredential(
+  ffiInput: Native.ReturnFfiBridgeMfaVerificationCredential
+): BridgeMfaVerificationCredential {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        totp: identity(ffiInput.password),
+      };
+    case 1:
+      return {
+        webAuthn: identity(ffiInput.json),
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for BridgeMfaVerificationCredential'
+      );
+  }
+}
+
+export function returnConverterBridgePendingTotpKey(
+  ffiInput: Native.ReturnFfiBridgePendingTotpKey
+): BridgePendingTotpKey {
+  return {
+    key: identity(ffiInput.key),
+    parameters: returnConverterBridgeTotpParameters(ffiInput.parameters),
+  };
+}
+
+export function returnConverterBridgePreKeyCounts(
+  ffiInput: Native.ReturnFfiBridgePreKeyCounts
+): BridgePreKeyCounts {
+  return {
+    aciEcPreKeyCount: identity(ffiInput.aci_ec_pre_key_count),
+    aciKemPreKeyCount: identity(ffiInput.aci_kem_pre_key_count),
+    pniEcPreKeyCount: identity(ffiInput.pni_ec_pre_key_count),
+    pniKemPreKeyCount: identity(ffiInput.pni_kem_pre_key_count),
+  };
+}
+
+export function returnConverterBridgeTotpParameters(
+  ffiInput: Native.ReturnFfiBridgeTotpParameters
+): BridgeTotpParameters {
+  return {
+    algorithm: identity(ffiInput.algorithm),
+    passwordLength: identity(ffiInput.password_length),
+    timeStepSeconds: identity(ffiInput.time_step_seconds),
+  };
+}
+
+export function returnConverterBridgeWebAuthnAuthenticationParameters(
+  ffiInput: Native.ReturnFfiBridgeWebAuthnAuthenticationParameters
+): BridgeWebAuthnAuthenticationParameters {
+  return {
+    challenge: identity(ffiInput.challenge),
+    timeoutSeconds: identity(ffiInput.timeout_seconds),
+    allowedCredentialIds: ((arr: Array<Bytes>) => arr.map(identity))(
+      ffiInput.allowed_credential_ids
+    ),
+  };
+}
+
+export function returnConverterBridgeWebAuthnCreateParameters(
+  ffiInput: Native.ReturnFfiBridgeWebAuthnCreateParameters
+): BridgeWebAuthnCreateParameters {
+  return {
+    userHandle: identity(ffiInput.user_handle),
+    allowedAlgorithms: ((arr: Array<number>) => arr.map(identity))(
+      ffiInput.allowed_algorithms
+    ),
+    excludeCredentialIds: ((arr: Array<Bytes>) => arr.map(identity))(
+      ffiInput.exclude_credential_ids
+    ),
+  };
+}
+
+export function returnConverterCallQualitySurveyInternal(
+  ffiInput: Native.ReturnFfiCallQualitySurveyInternal
+): CallQualitySurveyInternal {
+  return {
+    userSatisfied: identity(ffiInput.user_satisfied),
+    callQualityIssues: ((arr: Array<string>) => arr.map(identity))(
+      ffiInput.call_quality_issues
+    ),
+    additionalIssuesDescription: liftNull(identity)(
+      ffiInput.additional_issues_description
+    ),
+    debugLogUrl: liftNull(identity)(ffiInput.debug_log_url),
+    startTimestamp: identity(ffiInput.start_timestamp),
+    endTimestamp: identity(ffiInput.end_timestamp),
+    callType: identity(ffiInput.call_type),
+    success: identity(ffiInput.success),
+    callEndReason: identity(ffiInput.call_end_reason),
+    connectionRttMedian: liftNull(identity)(ffiInput.connection_rtt_median),
+    audioRttMedian: liftNull(identity)(ffiInput.audio_rtt_median),
+    videoRttMedian: liftNull(identity)(ffiInput.video_rtt_median),
+    audioRecvJitterMedian: liftNull(identity)(
+      ffiInput.audio_recv_jitter_median
+    ),
+    videoRecvJitterMedian: liftNull(identity)(
+      ffiInput.video_recv_jitter_median
+    ),
+    audioSendJitterMedian: liftNull(identity)(
+      ffiInput.audio_send_jitter_median
+    ),
+    videoSendJitterMedian: liftNull(identity)(
+      ffiInput.video_send_jitter_median
+    ),
+    audioRecvPacketLossFraction: liftNull(identity)(
+      ffiInput.audio_recv_packet_loss_fraction
+    ),
+    videoRecvPacketLossFraction: liftNull(identity)(
+      ffiInput.video_recv_packet_loss_fraction
+    ),
+    audioSendPacketLossFraction: liftNull(identity)(
+      ffiInput.audio_send_packet_loss_fraction
+    ),
+    videoSendPacketLossFraction: liftNull(identity)(
+      ffiInput.video_send_packet_loss_fraction
+    ),
+    callTelemetry: liftNull(identity)(ffiInput.call_telemetry),
+    callIdHash: liftNull(identity)(ffiInput.call_id_hash),
+  };
+}
+
+export function returnConverterCheckSvrCredentialsArgs(
+  ffiInput: Native.ReturnFfiCheckSvrCredentialsArgs
+): CheckSvrCredentialsArgs {
+  return {
+    number: identity(ffiInput.number),
+    passwords: ((arr: Array<string>) => arr.map(identity))(ffiInput.passwords),
+  };
+}
+
+export function returnConverterConfirmTotpKeyArgs(
+  ffiInput: Native.ReturnFfiConfirmTotpKeyArgs
+): ConfirmTotpKeyArgs {
+  return {
+    oneTimePassword: identity(ffiInput.one_time_password),
+    name: identity(ffiInput.name),
+    createdAt: identity(ffiInput.created_at),
+    svrKey: identity(ffiInput.svr_key),
+  };
+}
+
+export function returnConverterConfirmTotpKeyOut(
+  ffiInput: Native.ReturnFfiConfirmTotpKeyOut
+): ConfirmTotpKeyOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: identity(ffiInput._0),
+      };
+    case 1:
+      return 'oneTimePasswordNotVerified';
+    case 2:
+      return 'tooManyMfaKeys';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for ConfirmTotpKeyOut');
+  }
+}
+
+export function returnConverterConfirmUsernameArgs(
+  ffiInput: Native.ReturnFfiConfirmUsernameArgs
+): ConfirmUsernameArgs {
+  return {
+    username: identity(ffiInput.username),
+    usernameCiphertext: identity(ffiInput.username_ciphertext),
+  };
+}
+
+export function returnConverterConfirmUsernameOut(
+  ffiInput: Native.ReturnFfiConfirmUsernameOut
+): ConfirmUsernameOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: uuid.stringify(ffiInput._0),
+      };
+    case 1:
+      return 'reservationNotFound';
+    case 2:
+      return 'usernameNotAvailable';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for ConfirmUsernameOut');
+  }
+}
+
+export function returnConverterCopyBackupMediaNextChunk(
+  ffiInput: Native.ReturnFfiCopyBackupMediaNextChunk
+): CopyBackupMediaNextChunk {
+  return {
+    chunk: ((arr: Array<ReturnFfiBridgeCopyBackupMediaOutcome>) =>
+      arr.map(returnConverterBridgeCopyBackupMediaOutcome))(ffiInput.chunk),
+    termination: liftNull(identity)(ffiInput.termination),
+  };
+}
+
+export function returnConverterCopyBackupMediaOut(
+  ffiInput: Native.ReturnFfiCopyBackupMediaOut
+): CopyBackupMediaOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        item: returnConverterBridgeCopyBackupMediaOutcome(ffiInput._0),
+      };
+    case 1:
+      return 'invalidDataInStream';
+    case 2:
+      return 'credentialRejected';
+    case 3:
+      return 'credentialRejectedWithoutAppropriateServerInfo';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for CopyBackupMediaOut');
+  }
+}
+
+export function returnConverterCreateDonationPermitsArgs(
+  ffiInput: Native.ReturnFfiCreateDonationPermitsArgs
+): CreateDonationPermitsArgs {
+  return {
+    requestContext: ((x) => new zkgroup.DonationPermitRequestContext(x))(
+      ffiInput.request_context
+    ),
+    serverParams: returnConverterServerPublicParamsSerialized(
+      ffiInput.server_params
+    ),
+  };
+}
+
+export function returnConverterCreateDonationPermitsOut(
+  ffiInput: Native.ReturnFfiCreateDonationPermitsOut
+): CreateDonationPermitsOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: ((arr: Array<Bytes>) =>
+          arr.map((x) => new zkgroup.DonationPermit(x)))(ffiInput._0),
+      };
+    case 1:
+      return {
+        unexpectedError: identity(ffiInput.contains),
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for CreateDonationPermitsOut'
+      );
+  }
+}
+
+export function returnConverterCreateLoginReceiptCredentialArgs(
+  ffiInput: Native.ReturnFfiCreateLoginReceiptCredentialArgs
+): CreateLoginReceiptCredentialArgs {
+  return {
+    paymentProcessor: returnConverterPaymentProvider(
+      ffiInput.payment_processor
+    ),
+    purchaseIdentifier: identity(ffiInput.purchase_identifier),
+    receiptCredentialRequestContext: ((x) =>
+      new zkgroup.ReceiptCredentialRequestContext(x))(
+      ffiInput.receipt_credential_request_context
+    ),
+    serverParams: returnConverterServerPublicParamsSerialized(
+      ffiInput.server_params
+    ),
+    purchaseTime: identity(ffiInput.purchase_time),
+    expectedLevel: returnConverterLoginReceiptLevel(ffiInput.expected_level),
+  };
+}
+
+export function returnConverterCreateLoginReceiptCredentialOut(
+  ffiInput: Native.ReturnFfiCreateLoginReceiptCredentialOut
+): CreateLoginReceiptCredentialOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: ((x) => new zkgroup.ReceiptCredential(x))(ffiInput._0),
+      };
+    case 1:
+      return {
+        unexpectedError: identity(ffiInput.contains),
+      };
+    case 2:
+      return {
+        explicitError: returnConverterReceiptCredentialError(ffiInput._0),
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for CreateLoginReceiptCredentialOut'
+      );
+  }
+}
+
+export function returnConverterCurrencyConversionsInternal(
+  ffiInput: Native.ReturnFfiCurrencyConversionsInternal
+): CurrencyConversionsInternal {
+  return {
+    timestampMs: identity(ffiInput.timestamp_ms),
+    currencies: ((arr: Array<ReturnFfiCurrencyInternal>) =>
+      arr.map(returnConverterCurrencyInternal))(ffiInput.currencies),
+  };
+}
+
+export function returnConverterCurrencyInternal(
+  ffiInput: Native.ReturnFfiCurrencyInternal
+): CurrencyInternal {
+  return {
+    base: identity(ffiInput.base),
+    conversions: ((arr: Array<[string, string]>) =>
+      arr.map(([a, b]: [string, string]): [string, string] => [
+        identity(a),
+        identity(b),
+      ]))(ffiInput.conversions),
+  };
+}
+
+export function returnConverterDeleteBackupMediaNextChunk(
+  ffiInput: Native.ReturnFfiDeleteBackupMediaNextChunk
+): DeleteBackupMediaNextChunk {
+  return {
+    chunk: ((arr: Array<ReturnFfiBridgeDeleteBackupMediaItem>) =>
+      arr.map(returnConverterBridgeDeleteBackupMediaItem))(ffiInput.chunk),
+    termination: liftNull(identity)(ffiInput.termination),
+  };
+}
+
+export function returnConverterDeleteBackupMediaOut(
+  ffiInput: Native.ReturnFfiDeleteBackupMediaOut
+): DeleteBackupMediaOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        item: returnConverterBridgeDeleteBackupMediaItem(ffiInput._0),
+      };
+    case 1:
+      return 'invalidDataInStream';
+    case 2:
+      return 'credentialRejected';
+    case 3:
+      return 'credentialRejectedWithoutAppropriateServerInfo';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for DeleteBackupMediaOut');
+  }
+}
+
+export function returnConverterDeviceCapabilityInternal(
+  ffiInput: Native.ReturnFfiDeviceCapabilityInternal
+): DeviceCapabilityInternal {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'storage';
+    case 1:
+      return 'transfer';
+    case 2:
+      return 'attachmentBackfill';
+    case 3:
+      return 'sparsePostQuantumRatchet';
+    case 4:
+      return 'profilesV2';
+    case 5:
+      return 'usernameChangeSyncMessage';
+    case 6:
+      return 'optionalPhoneNumber';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for DeviceCapabilityInternal'
+      );
+  }
+}
+
+export function returnConverterFinishMfaVerificationOut(
+  ffiInput: Native.ReturnFfiFinishMfaVerificationOut
+): FinishMfaVerificationOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+    case 1:
+      return 'failedToVerify';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for FinishMfaVerificationOut'
+      );
+  }
+}
+
+export function returnConverterFinishWebAuthnRegistrationArgs(
+  ffiInput: Native.ReturnFfiFinishWebAuthnRegistrationArgs
+): FinishWebAuthnRegistrationArgs {
+  return {
+    attestationObject: identity(ffiInput.attestation_object),
+    collectedClientDataJson: identity(ffiInput.collected_client_data_json),
+    name: identity(ffiInput.name),
+    createdAt: identity(ffiInput.created_at),
+    svrKey: identity(ffiInput.svr_key),
+  };
+}
+
+export function returnConverterFinishWebAuthnRegistrationOut(
+  ffiInput: Native.ReturnFfiFinishWebAuthnRegistrationOut
+): FinishWebAuthnRegistrationOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: identity(ffiInput._0),
+      };
+    case 1:
+      return 'webAuthnRegistrationUnsuccessful';
+    case 2:
+      return 'tooManyMfaKeys';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for FinishWebAuthnRegistrationOut'
+      );
+  }
+}
+
+export function returnConverterGenerateTotpKeyOut(
+  ffiInput: Native.ReturnFfiGenerateTotpKeyOut
+): GenerateTotpKeyOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterBridgePendingTotpKey(ffiInput._0),
+      };
+    case 1:
+      return 'tooManyTotpKeys';
+    case 2:
+      return 'tooManyMfaKeys';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for GenerateTotpKeyOut');
+  }
+}
+
+export function returnConverterGetCapabilitiesOut(
+  ffiInput: Native.ReturnFfiGetCapabilitiesOut
+): GetCapabilitiesOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: ((arr: Array<ReturnFfiDeviceCapabilityInternal>) =>
+          arr.map(returnConverterDeviceCapabilityInternal))(ffiInput._0),
+      };
+    case 1:
+      return 'malformed';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for GetCapabilitiesOut');
+  }
+}
+
+export function returnConverterGetCdnCredentialsOut(
+  ffiInput: Native.ReturnFfiGetCdnCredentialsOut
+): GetCdnCredentialsOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: cdnCredentialReturnConverter(ffiInput._0),
+      };
+    case 1:
+      return 'credentialRejected';
+    case 2:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for GetCdnCredentialsOut');
+  }
+}
+
+export function returnConverterGetDevicesOut(
+  ffiInput: Native.ReturnFfiGetDevicesOut
+): GetDevicesOut {
+  return {
+    devices: ((arr: Array<ReturnFfiLinkedDeviceInternal>) =>
+      arr.map(returnConverterLinkedDeviceInternal))(ffiInput.devices),
+  };
+}
+
+export function returnConverterGetEntitlementsOut(
+  ffiInput: Native.ReturnFfiGetEntitlementsOut
+): GetEntitlementsOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterAccountEntitlements(ffiInput._0),
+      };
+    case 1:
+      return 'malformed';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for GetEntitlementsOut');
+  }
+}
+
+export function returnConverterGetMediaBackupInfoOut(
+  ffiInput: Native.ReturnFfiGetMediaBackupInfoOut
+): GetMediaBackupInfoOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterBridgeMediaBackupInfo(ffiInput._0),
+      };
+    case 1:
+      return 'credentialRejected';
+    case 2:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for GetMediaBackupInfoOut');
+  }
+}
+
+export function returnConverterGetMessageBackupInfoOut(
+  ffiInput: Native.ReturnFfiGetMessageBackupInfoOut
+): GetMessageBackupInfoOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterBridgeMessageBackupInfo(ffiInput._0),
+      };
+    case 1:
+      return 'credentialRejected';
+    case 2:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for GetMessageBackupInfoOut'
+      );
+  }
+}
+
+export function returnConverterGetProfileKeyCredentialArgs(
+  ffiInput: Native.ReturnFfiGetProfileKeyCredentialArgs
+): GetProfileKeyCredentialArgs {
+  return {
+    profileKeyRequestContext: ((x) =>
+      new zkgroup.ProfileKeyCredentialRequestContext(x))(
+      ffiInput.profile_key_request_context
+    ),
+    serverParams: returnConverterServerPublicParamsSerialized(
+      ffiInput.server_params
+    ),
+  };
+}
+
+export function returnConverterGetProfileKeyCredentialOut(
+  ffiInput: Native.ReturnFfiGetProfileKeyCredentialOut
+): GetProfileKeyCredentialOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: ((x) => new zkgroup.ExpiringProfileKeyCredential(x))(
+          ffiInput._0
+        ),
+      };
+    case 1:
+      return {
+        unexpectedError: identity(ffiInput.contains),
+      };
+    case 2:
+      return {
+        explicitError: returnConverterProfileKeyCredentialRequestError(
+          ffiInput._0
+        ),
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for GetProfileKeyCredentialOut'
+      );
+  }
+}
+
+export function returnConverterGetStickerUploadFormsOut(
+  ffiInput: Native.ReturnFfiGetStickerUploadFormsOut
+): GetStickerUploadFormsOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterGetStickerUploadFormsResponse(ffiInput._0),
+      };
+    case 1:
+      return 'invalid';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for GetStickerUploadFormsOut'
+      );
+  }
+}
+
+export function returnConverterGetStickerUploadFormsResponse(
+  ffiInput: Native.ReturnFfiGetStickerUploadFormsResponse
+): GetStickerUploadFormsResponse {
+  return {
+    packId: identity(ffiInput.pack_id),
+    manifestUploadForm: returnConverterS3UploadFormInternal(
+      ffiInput.manifest_upload_form
+    ),
+    stickerUploadForms: ((arr: Array<ReturnFfiS3UploadFormInternal>) =>
+      arr.map(returnConverterS3UploadFormInternal))(
+      ffiInput.sticker_upload_forms
+    ),
+  };
+}
+
+export function returnConverterGetSubscriptionReceiptCredentialArgs(
+  ffiInput: Native.ReturnFfiGetSubscriptionReceiptCredentialArgs
+): GetSubscriptionReceiptCredentialArgs {
+  return {
+    subscriberId: identity(ffiInput.subscriber_id),
+    receiptCredentialRequestContext: ((x) =>
+      new zkgroup.ReceiptCredentialRequestContext(x))(
+      ffiInput.receipt_credential_request_context
+    ),
+    serverParams: returnConverterServerPublicParamsSerialized(
+      ffiInput.server_params
+    ),
+  };
+}
+
+export function returnConverterGetSubscriptionReceiptCredentialOut(
+  ffiInput: Native.ReturnFfiGetSubscriptionReceiptCredentialOut
+): GetSubscriptionReceiptCredentialOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: ((x) => new zkgroup.ReceiptCredential(x))(ffiInput._0),
+      };
+    case 1:
+      return {
+        unexpectedError: identity(ffiInput.contains),
+      };
+    case 2:
+      return {
+        explicitError: returnConverterReceiptCredentialError(ffiInput._0),
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for GetSubscriptionReceiptCredentialOut'
+      );
+  }
+}
+
+export function returnConverterGetSvrBCredentialsOut(
+  ffiInput: Native.ReturnFfiGetSvrBCredentialsOut
+): GetSvrBCredentialsOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: {
+          username: identity(ffiInput.username),
+          password: identity(ffiInput.password),
+        },
+      };
+    case 1:
+      return 'credentialRejected';
+    case 2:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for GetSvrBCredentialsOut');
+  }
+}
+
+export function returnConverterLinkedDeviceInternal(
+  ffiInput: Native.ReturnFfiLinkedDeviceInternal
+): LinkedDeviceInternal {
+  return {
+    id: identity(ffiInput.id),
+    encryptedName: identity(ffiInput.encrypted_name),
+    lastSeen: identity(ffiInput.last_seen),
+    registrationId: identity(ffiInput.registration_id),
+    createdAtCiphertext: identity(ffiInput.created_at_ciphertext),
+  };
+}
+
+export function returnConverterListMediaArgs(
+  ffiInput: Native.ReturnFfiListMediaArgs
+): ListMediaArgs {
+  return {
+    cursor: liftNull(identity)(ffiInput.cursor),
+    limit: identity(ffiInput.limit),
+  };
+}
+
+export function returnConverterListMediaItem(
+  ffiInput: Native.ReturnFfiListMediaItem
+): ListMediaItem {
+  return {
+    cdn: identity(ffiInput.cdn),
+    mediaId: identity(ffiInput.media_id),
+    objectLength: identity(ffiInput.object_length),
+  };
+}
+
+export function returnConverterListMediaOut(
+  ffiInput: Native.ReturnFfiListMediaOut
+): ListMediaOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        page: returnConverterListMediaResponse(ffiInput._0),
+      };
+    case 1:
+      return 'malformedMediaId';
+    case 2:
+      return 'credentialRejected';
+    case 3:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for ListMediaOut');
+  }
+}
+
+export function returnConverterListMediaResponse(
+  ffiInput: Native.ReturnFfiListMediaResponse
+): ListMediaResponse {
+  return {
+    items: ((arr: Array<ReturnFfiListMediaItem>) =>
+      arr.map(returnConverterListMediaItem))(ffiInput.items),
+    backupDir: identity(ffiInput.backup_dir),
+    mediaDir: identity(ffiInput.media_dir),
+    cursor: liftNull(identity)(ffiInput.cursor),
+  };
+}
+
+export function returnConverterListMfaKeysArgs(
+  ffiInput: Native.ReturnFfiListMfaKeysArgs
+): ListMfaKeysArgs {
+  return {
+    svrKey: identity(ffiInput.svr_key),
+  };
+}
+
+export function returnConverterListMfaKeysOut(
+  ffiInput: Native.ReturnFfiListMfaKeysOut
+): ListMfaKeysOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: ((arr: Array<ReturnFfiBridgeConfirmedMfaKey>) =>
+          arr.map(returnConverterBridgeConfirmedMfaKey))(ffiInput._0),
+      };
+    default:
+      ffiInput.__type satisfies never;
+      throw new Error('Unknown FFI return enum type for ListMfaKeysOut');
+  }
+}
+
+export function returnConverterLoginReceiptLevel(
+  ffiInput: Native.ReturnFfiLoginReceiptLevel
+): LoginReceiptLevel {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'normal';
+    case 1:
+      return 'sandbox';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for LoginReceiptLevel');
+  }
+}
+
+export function returnConverterLookUpUsernameLinkArgs(
+  ffiInput: Native.ReturnFfiLookUpUsernameLinkArgs
+): LookUpUsernameLinkArgs {
+  return {
+    uuid: uuid.stringify(ffiInput.uuid),
+    entropy: identity(ffiInput.entropy),
+  };
+}
+
+export function returnConverterLookUpUsernameLinkOut(
+  ffiInput: Native.ReturnFfiLookUpUsernameLinkOut
+): LookUpUsernameLinkOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: identity(ffiInput._0),
+      };
+    case 1:
+      return 'notFound';
+    case 2:
+      return 'linkDataTooShort';
+    case 3:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for LookUpUsernameLinkOut');
+  }
+}
+
+export function returnConverterMyRemoteDeriveEnum(
+  ffiInput: Native.ReturnFfiMyRemoteDeriveEnum
+): MyRemoteDeriveEnum {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'unit';
+    case 1:
+      return {
+        tuple: [identity(ffiInput._0), identity(ffiInput._1)],
+      };
+    case 2:
+      return {
+        record: {
+          x: identity(ffiInput.x),
+          y: identity(ffiInput.y),
+        },
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for MyRemoteDeriveEnum');
+  }
+}
+
+export function returnConverterMyRemoteDeriveStruct(
+  ffiInput: Native.ReturnFfiMyRemoteDeriveStruct
+): MyRemoteDeriveStruct {
+  return {
+    x: identity(ffiInput.x),
+    y: identity(ffiInput.y),
+  };
+}
+
+export function returnConverterMySimpleTestEnum(
+  ffiInput: Native.ReturnFfiMySimpleTestEnum
+): MySimpleTestEnum {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'a';
+    case 1:
+      return 'b';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for MySimpleTestEnum');
+  }
+}
+
+export function returnConverterMyTestEnum(
+  ffiInput: Native.ReturnFfiMyTestEnum
+): MyTestEnum {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'unit';
+    case 1:
+      return {
+        single: identity(ffiInput._0),
+      };
+    case 2:
+      return {
+        singleNamed: identity(ffiInput.x),
+      };
+    case 3:
+      return {
+        double: [identity(ffiInput._0), identity(ffiInput._1)],
+      };
+    case 4:
+      return {
+        record: {
+          personName: identity(ffiInput.person_name),
+          personAge: identity(ffiInput.person_age),
+          position: returnConverterMyTestPoint(ffiInput.position),
+          funStruct: returnConverterMyTestStruct(ffiInput.fun_struct),
+        },
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for MyTestEnum');
+  }
+}
+
+export function returnConverterMyTestPoint(
+  ffiInput: Native.ReturnFfiMyTestPoint
+): MyTestPoint {
+  return [identity(ffiInput._0), identity(ffiInput._1)];
+}
+
+export function returnConverterMyTestStruct(
+  ffiInput: Native.ReturnFfiMyTestStruct
+): MyTestStruct {
+  return {
+    myNumericField: identity(ffiInput.my_numeric_field),
+    myStringField: identity(ffiInput.my_string_field),
+  };
+}
+
+export function returnConverterPaymentProvider(
+  ffiInput: Native.ReturnFfiPaymentProvider
+): PaymentProvider {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'googlePlayBilling';
+    case 1:
+      return 'appleAppStore';
+    case 2:
+      return 'stripe';
+    case 3:
+      return 'braintree';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for PaymentProvider');
+  }
+}
+
+export function returnConverterProfileKeyCredentialRequestError(
+  ffiInput: Native.ReturnFfiProfileKeyCredentialRequestError
+): ProfileKeyCredentialRequestError {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'authFailed';
+    case 1:
+      return 'profileNotFound';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for ProfileKeyCredentialRequestError'
+      );
+  }
+}
+
+export function returnConverterReceiptCredentialError(
+  ffiInput: Native.ReturnFfiReceiptCredentialError
+): ReceiptCredentialError {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'paymentStillProcessing';
+    case 1:
+      return {
+        paymentRequired: ((arr: Array<ChargeFailure>) => arr.map(identity))(
+          ffiInput.charge_failure
+        ),
+      };
+    case 2:
+      return 'paymentNotFound';
+    case 3:
+      return 'receiptAlreadyIssued';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for ReceiptCredentialError'
+      );
+  }
+}
+
+export function returnConverterRedeemBackupReceiptOut(
+  ffiInput: Native.ReturnFfiRedeemBackupReceiptOut
+): RedeemBackupReceiptOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+    case 1:
+      return 'invalidReceipt';
+    case 2:
+      return 'missingBackupId';
+    case 3:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for RedeemBackupReceiptOut'
+      );
+  }
+}
+
+export function returnConverterRedeemDonationReceiptArgs(
+  ffiInput: Native.ReturnFfiRedeemDonationReceiptArgs
+): RedeemDonationReceiptArgs {
+  return {
+    presentation: ((x) => new zkgroup.ReceiptCredentialPresentation(x))(
+      ffiInput.presentation
+    ),
+    visibility: returnConverterBadgeVisibility(ffiInput.visibility),
+  };
+}
+
+export function returnConverterRedeemDonationReceiptOut(
+  ffiInput: Native.ReturnFfiRedeemDonationReceiptOut
+): RedeemDonationReceiptOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+    case 1:
+      return 'invalidReceipt';
+    case 2:
+      return 'alreadyRedeemed';
+    case 3:
+      return {
+        unexpectedError: identity(ffiInput.contains),
+      };
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for RedeemDonationReceiptOut'
+      );
+  }
+}
+
+export function returnConverterRemoveDeviceArgs(
+  ffiInput: Native.ReturnFfiRemoveDeviceArgs
+): RemoveDeviceArgs {
+  return {
+    id: identity(ffiInput.id),
+  };
+}
+
+export function returnConverterRemoveDeviceOut(
+  ffiInput: Native.ReturnFfiRemoveDeviceOut
+): RemoveDeviceOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+
+    default:
+      ffiInput.__type satisfies never;
+      throw new Error('Unknown FFI return enum type for RemoveDeviceOut');
+  }
+}
+
+export function returnConverterRemoveMfaKeyArgs(
+  ffiInput: Native.ReturnFfiRemoveMfaKeyArgs
+): RemoveMfaKeyArgs {
+  return {
+    keyId: identity(ffiInput.key_id),
+  };
+}
+
+export function returnConverterRemoveMfaKeyOut(
+  ffiInput: Native.ReturnFfiRemoveMfaKeyOut
+): RemoveMfaKeyOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+
+    default:
+      ffiInput.__type satisfies never;
+      throw new Error('Unknown FFI return enum type for RemoveMfaKeyOut');
+  }
+}
+
+export function returnConverterReportMessageArgs(
+  ffiInput: Native.ReturnFfiReportMessageArgs
+): ReportMessageArgs {
+  return {
+    source: Aci.parseFromServiceIdFixedWidthBinary(ffiInput.source),
+    messageGuid: uuid.stringify(ffiInput.message_guid),
+    reportSpamToken: identity(ffiInput.report_spam_token),
+  };
+}
+
+export function returnConverterReserveUsernameHashArgs(
+  ffiInput: Native.ReturnFfiReserveUsernameHashArgs
+): ReserveUsernameHashArgs {
+  return {
+    usernames: ((arr: Array<Bytes>) => arr.map(identity))(ffiInput.usernames),
+  };
+}
+
+export function returnConverterReserveUsernameHashOut(
+  ffiInput: Native.ReturnFfiReserveUsernameHashOut
+): ReserveUsernameHashOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: identity(ffiInput._0),
+      };
+    case 1:
+      return 'usernameNotAvailable';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for ReserveUsernameHashOut'
+      );
+  }
+}
+
+export function returnConverterS3UploadFormInternal(
+  ffiInput: Native.ReturnFfiS3UploadFormInternal
+): S3UploadFormInternal {
+  return {
+    key: identity(ffiInput.key),
+    credential: identity(ffiInput.credential),
+    acl: identity(ffiInput.acl),
+    algorithm: identity(ffiInput.algorithm),
+    date: identity(ffiInput.date),
+    policy: identity(ffiInput.policy),
+    signature: identity(ffiInput.signature),
+  };
+}
+
+export function returnConverterServerPublicParamsSerialized(
+  ffiInput: Native.ReturnFfiServerPublicParamsSerialized
+): ServerPublicParamsSerialized {
+  return {
+    bytes: identity(ffiInput.bytes),
+  };
+}
+
+export function returnConverterSetCapabilitiesArgs(
+  ffiInput: Native.ReturnFfiSetCapabilitiesArgs
+): SetCapabilitiesArgs {
+  return {
+    capabilities: ((arr: Array<ReturnFfiDeviceCapabilityInternal>) =>
+      arr.map(returnConverterDeviceCapabilityInternal))(ffiInput.capabilities),
+  };
+}
+
+export function returnConverterSetDeviceNameArgs(
+  ffiInput: Native.ReturnFfiSetDeviceNameArgs
+): SetDeviceNameArgs {
+  return {
+    id: identity(ffiInput.id),
+    encryptedName: identity(ffiInput.encrypted_name),
+  };
+}
+
+export function returnConverterSetDeviceNameOut(
+  ffiInput: Native.ReturnFfiSetDeviceNameOut
+): SetDeviceNameOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+    case 1:
+      return 'deviceNotFound';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for SetDeviceNameOut');
+  }
+}
+
+export function returnConverterSetLastResortKemPreKeyArgs(
+  ffiInput: Native.ReturnFfiSetLastResortKemPreKeyArgs
+): SetLastResortKemPreKeyArgs {
+  return {
+    identity: identity(ffiInput.identity),
+    preKey: returnConverterTestingAnySignedPreKey(ffiInput.pre_key),
+  };
+}
+
+export function returnConverterSetMfaKeyMetadataArgs(
+  ffiInput: Native.ReturnFfiSetMfaKeyMetadataArgs
+): SetMfaKeyMetadataArgs {
+  return {
+    keyId: identity(ffiInput.key_id),
+    name: identity(ffiInput.name),
+    createdAt: identity(ffiInput.created_at),
+    svrKey: identity(ffiInput.svr_key),
+  };
+}
+
+export function returnConverterSetMfaKeyMetadataOut(
+  ffiInput: Native.ReturnFfiSetMfaKeyMetadataOut
+): SetMfaKeyMetadataOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+    case 1:
+      return 'keyNotFound';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for SetMfaKeyMetadataOut');
+  }
+}
+
+export function returnConverterSetOneTimeEcPreKeysArgs(
+  ffiInput: Native.ReturnFfiSetOneTimeEcPreKeysArgs
+): SetOneTimeEcPreKeysArgs {
+  return {
+    identity: identity(ffiInput.identity),
+    preKeys: ((arr: Array<[number, Bytes]>) =>
+      arr.map(([a, b]: [number, Bytes]): [number, Bytes] => [
+        identity(a),
+        identity(b),
+      ]))(ffiInput.pre_keys),
+  };
+}
+
+export function returnConverterSetOneTimeKemPreKeysArgs(
+  ffiInput: Native.ReturnFfiSetOneTimeKemPreKeysArgs
+): SetOneTimeKemPreKeysArgs {
+  return {
+    identity: identity(ffiInput.identity),
+    preKeys: ((arr: Array<ReturnFfiTestingAnySignedPreKey>) =>
+      arr.map(returnConverterTestingAnySignedPreKey))(ffiInput.pre_keys),
+  };
+}
+
+export function returnConverterSetSignedEcPreKeyArgs(
+  ffiInput: Native.ReturnFfiSetSignedEcPreKeyArgs
+): SetSignedEcPreKeyArgs {
+  return {
+    identity: identity(ffiInput.identity),
+    preKey: returnConverterTestingAnySignedPreKey(ffiInput.pre_key),
+  };
+}
+
+export function returnConverterSetUsernameLinkArgs(
+  ffiInput: Native.ReturnFfiSetUsernameLinkArgs
+): SetUsernameLinkArgs {
+  return {
+    usernameCiphertext: identity(ffiInput.username_ciphertext),
+    keepLinkHandle: identity(ffiInput.keep_link_handle),
+  };
+}
+
+export function returnConverterSetUsernameLinkOut(
+  ffiInput: Native.ReturnFfiSetUsernameLinkOut
+): SetUsernameLinkOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: uuid.stringify(ffiInput._0),
+      };
+    case 1:
+      return 'usernameNotSet';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for SetUsernameLinkOut');
+  }
+}
+
+export function returnConverterSimpleBackupTestOut(
+  ffiInput: Native.ReturnFfiSimpleBackupTestOut
+): SimpleBackupTestOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return 'success';
+    case 1:
+      return 'credentialRejected';
+    case 2:
+      return 'missingResponse';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error('Unknown FFI return enum type for SimpleBackupTestOut');
+  }
+}
+
+export function returnConverterStartMfaVerificationOut(
+  ffiInput: Native.ReturnFfiStartMfaVerificationOut
+): StartMfaVerificationOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterStartMfaVerificationResponse(ffiInput._0),
+      };
+    case 1:
+      return 'malformed';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for StartMfaVerificationOut'
+      );
+  }
+}
+
+export function returnConverterStartMfaVerificationResponse(
+  ffiInput: Native.ReturnFfiStartMfaVerificationResponse
+): StartMfaVerificationResponse {
+  return {
+    hasTotp: identity(ffiInput.has_totp),
+    webauthnParams: liftNull(
+      returnConverterBridgeWebAuthnAuthenticationParameters
+    )(ffiInput.webauthn_params),
+  };
+}
+
+export function returnConverterStartWebAuthnRegistrationOut(
+  ffiInput: Native.ReturnFfiStartWebAuthnRegistrationOut
+): StartWebAuthnRegistrationOut {
+  switch (ffiInput.__type) {
+    case 0:
+      return {
+        success: returnConverterBridgeWebAuthnCreateParameters(ffiInput._0),
+      };
+    case 1:
+      return 'tooManyMfaKeys';
+
+    default:
+      ffiInput satisfies never;
+      throw new Error(
+        'Unknown FFI return enum type for StartWebAuthnRegistrationOut'
+      );
+  }
+}
+
+export function returnConverterTestStreamChunk(
+  ffiInput: Native.ReturnFfiTestStreamChunk
+): TestStreamChunk {
+  return {
+    chunk: ((arr: Array<string>) => arr.map(identity))(ffiInput.chunk),
+    termination: liftNull(identity)(ffiInput.termination),
+  };
+}
+
+export function returnConverterTestingAnySignedPreKey(
+  ffiInput: Native.ReturnFfiTestingAnySignedPreKey
+): TestingAnySignedPreKey {
+  return {
+    id: identity(ffiInput.id),
+    key: identity(ffiInput.key),
+    sig: identity(ffiInput.sig),
+  };
+}
+
+export function argConverterBadgeVisibility(
+  niceInput: BadgeVisibility
+): Native.ArgFfiBadgeVisibility {
+  if (niceInput === 'doNotSet') {
+    return { __type: 0 };
+  }
+
+  if (niceInput === 'setVisible') {
+    return { __type: 1 };
+  }
+
+  if (niceInput === 'setPrimary') {
+    return { __type: 2 };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on BadgeVisibility argument');
+}
+
+export function argConverterBridgeCopyBackupMediaItem(
+  niceInput: BridgeCopyBackupMediaItem
+): Native.ArgFfiBridgeCopyBackupMediaItem {
+  const {
+    sourceAttachmentCdn: source_attachment_cdn,
+    sourceKey: source_key,
+    objectLength: object_length,
+    mediaId: media_id,
+    encryptionKey: encryption_key,
+  } = niceInput;
+  return {
+    source_attachment_cdn: identity(source_attachment_cdn),
+    source_key: identity(source_key),
+    object_length: identity(object_length),
+    media_id: identity(media_id),
+    encryption_key: identity(encryption_key),
+  };
+}
+
+export function argConverterBridgeDeleteBackupMediaItem(
+  niceInput: BridgeDeleteBackupMediaItem
+): Native.ArgFfiBridgeDeleteBackupMediaItem {
+  const { mediaId: media_id, cdn: cdn } = niceInput;
+  return { media_id: identity(media_id), cdn: identity(cdn) };
+}
+
+export function argConverterBridgeMfaVerificationCredential(
+  niceInput: BridgeMfaVerificationCredential
+): Native.ArgFfiBridgeMfaVerificationCredential {
+  if ('totp' in niceInput) {
+    return {
+      __type: 0,
+      password: identity(niceInput.totp),
+    };
+  }
+
+  if ('webAuthn' in niceInput) {
+    return {
+      __type: 1,
+      json: identity(niceInput.webAuthn),
+    };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on BridgeMfaVerificationCredential argument');
+}
+
+export function argConverterCallQualitySurveyInternal(
+  niceInput: CallQualitySurveyInternal
+): Native.ArgFfiCallQualitySurveyInternal {
+  const {
+    userSatisfied: user_satisfied,
+    callQualityIssues: call_quality_issues,
+    additionalIssuesDescription: additional_issues_description,
+    debugLogUrl: debug_log_url,
+    startTimestamp: start_timestamp,
+    endTimestamp: end_timestamp,
+    callType: call_type,
+    success: success,
+    callEndReason: call_end_reason,
+    connectionRttMedian: connection_rtt_median,
+    audioRttMedian: audio_rtt_median,
+    videoRttMedian: video_rtt_median,
+    audioRecvJitterMedian: audio_recv_jitter_median,
+    videoRecvJitterMedian: video_recv_jitter_median,
+    audioSendJitterMedian: audio_send_jitter_median,
+    videoSendJitterMedian: video_send_jitter_median,
+    audioRecvPacketLossFraction: audio_recv_packet_loss_fraction,
+    videoRecvPacketLossFraction: video_recv_packet_loss_fraction,
+    audioSendPacketLossFraction: audio_send_packet_loss_fraction,
+    videoSendPacketLossFraction: video_send_packet_loss_fraction,
+    callTelemetry: call_telemetry,
+    callIdHash: call_id_hash,
+  } = niceInput;
+  return {
+    user_satisfied: identity(user_satisfied),
+    call_quality_issues: ((arr: Array<string>) => arr.map(identity))(
+      call_quality_issues
+    ),
+    additional_issues_description: liftNull(identity)(
+      additional_issues_description
+    ),
+    debug_log_url: liftNull(identity)(debug_log_url),
+    start_timestamp: identity(start_timestamp),
+    end_timestamp: identity(end_timestamp),
+    call_type: identity(call_type),
+    success: identity(success),
+    call_end_reason: identity(call_end_reason),
+    connection_rtt_median: liftNull(identity)(connection_rtt_median),
+    audio_rtt_median: liftNull(identity)(audio_rtt_median),
+    video_rtt_median: liftNull(identity)(video_rtt_median),
+    audio_recv_jitter_median: liftNull(identity)(audio_recv_jitter_median),
+    video_recv_jitter_median: liftNull(identity)(video_recv_jitter_median),
+    audio_send_jitter_median: liftNull(identity)(audio_send_jitter_median),
+    video_send_jitter_median: liftNull(identity)(video_send_jitter_median),
+    audio_recv_packet_loss_fraction: liftNull(identity)(
+      audio_recv_packet_loss_fraction
+    ),
+    video_recv_packet_loss_fraction: liftNull(identity)(
+      video_recv_packet_loss_fraction
+    ),
+    audio_send_packet_loss_fraction: liftNull(identity)(
+      audio_send_packet_loss_fraction
+    ),
+    video_send_packet_loss_fraction: liftNull(identity)(
+      video_send_packet_loss_fraction
+    ),
+    call_telemetry: liftNull(identity)(call_telemetry),
+    call_id_hash: liftNull(identity)(call_id_hash),
+  };
+}
+
+export function argConverterDeviceCapabilityInternal(
+  niceInput: DeviceCapabilityInternal
+): Native.ArgFfiDeviceCapabilityInternal {
+  if (niceInput === 'storage') {
+    return { __type: 0 };
+  }
+
+  if (niceInput === 'transfer') {
+    return { __type: 1 };
+  }
+
+  if (niceInput === 'attachmentBackfill') {
+    return { __type: 2 };
+  }
+
+  if (niceInput === 'sparsePostQuantumRatchet') {
+    return { __type: 3 };
+  }
+
+  if (niceInput === 'profilesV2') {
+    return { __type: 4 };
+  }
+
+  if (niceInput === 'usernameChangeSyncMessage') {
+    return { __type: 5 };
+  }
+
+  if (niceInput === 'optionalPhoneNumber') {
+    return { __type: 6 };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on DeviceCapabilityInternal argument');
+}
+
+export function argConverterLoginReceiptLevel(
+  niceInput: LoginReceiptLevel
+): Native.ArgFfiLoginReceiptLevel {
+  if (niceInput === 'normal') {
+    return { __type: 0 };
+  }
+
+  if (niceInput === 'sandbox') {
+    return { __type: 1 };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on LoginReceiptLevel argument');
+}
+
+export function argConverterMyRemoteDeriveEnum(
+  niceInput: MyRemoteDeriveEnum
+): Native.ArgFfiMyRemoteDeriveEnum {
+  if (niceInput === 'unit') {
+    return { __type: 0 };
+  }
+
+  if ('tuple' in niceInput) {
+    const [_0, _1] = niceInput.tuple;
+    return {
+      __type: 1,
+      _0: identity(_0),
+      _1: identity(_1),
+    };
+  }
+
+  if ('record' in niceInput) {
+    const { x: x, y: y } = niceInput.record;
+    return {
+      __type: 2,
+      x: identity(x),
+      y: identity(y),
+    };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on MyRemoteDeriveEnum argument');
+}
+
+export function argConverterMyRemoteDeriveStruct(
+  niceInput: MyRemoteDeriveStruct
+): Native.ArgFfiMyRemoteDeriveStruct {
+  const { x: x, y: y } = niceInput;
+  return { x: identity(x), y: identity(y) };
+}
+
+export function argConverterMySimpleTestEnum(
+  niceInput: MySimpleTestEnum
+): Native.ArgFfiMySimpleTestEnum {
+  if (niceInput === 'a') {
+    return { __type: 0 };
+  }
+
+  if (niceInput === 'b') {
+    return { __type: 1 };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on MySimpleTestEnum argument');
+}
+
+export function argConverterMyTestEnum(
+  niceInput: MyTestEnum
+): Native.ArgFfiMyTestEnum {
+  if (niceInput === 'unit') {
+    return { __type: 0 };
+  }
+
+  if ('single' in niceInput) {
+    return {
+      __type: 1,
+      _0: identity(niceInput.single),
+    };
+  }
+
+  if ('singleNamed' in niceInput) {
+    return {
+      __type: 2,
+      x: identity(niceInput.singleNamed),
+    };
+  }
+
+  if ('double' in niceInput) {
+    const [_0, _1] = niceInput.double;
+    return {
+      __type: 3,
+      _0: identity(_0),
+      _1: identity(_1),
+    };
+  }
+
+  if ('record' in niceInput) {
+    const {
+      personName: person_name,
+      personAge: person_age,
+      position: position,
+      funStruct: fun_struct,
+    } = niceInput.record;
+    return {
+      __type: 4,
+      person_name: identity(person_name),
+      person_age: identity(person_age),
+      position: argConverterMyTestPoint(position),
+      fun_struct: argConverterMyTestStruct(fun_struct),
+    };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on MyTestEnum argument');
+}
+
+export function argConverterMyTestPoint(
+  niceInput: MyTestPoint
+): Native.ArgFfiMyTestPoint {
+  const [_0, _1] = niceInput;
+  return { _0: identity(_0), _1: identity(_1) };
+}
+
+export function argConverterMyTestStruct(
+  niceInput: MyTestStruct
+): Native.ArgFfiMyTestStruct {
+  const { myNumericField: my_numeric_field, myStringField: my_string_field } =
+    niceInput;
+  return {
+    my_numeric_field: identity(my_numeric_field),
+    my_string_field: identity(my_string_field),
+  };
+}
+
+export function argConverterPaymentProvider(
+  niceInput: PaymentProvider
+): Native.ArgFfiPaymentProvider {
+  if (niceInput === 'googlePlayBilling') {
+    return { __type: 0 };
+  }
+
+  if (niceInput === 'appleAppStore') {
+    return { __type: 1 };
+  }
+
+  if (niceInput === 'stripe') {
+    return { __type: 2 };
+  }
+
+  if (niceInput === 'braintree') {
+    return { __type: 3 };
+  }
+
+  niceInput satisfies never;
+  throw new Error('Cannot match on PaymentProvider argument');
+}
+
+export async function AuthenticatedChatConnection_clear_push_token({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_clear_push_token(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_clear_registration_lock({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_clear_registration_lock(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_confirm_totp_key({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  oneTimePassword: one_time_password,
+  name: name,
+  createdAt: created_at,
+  svrKey: svr_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  oneTimePassword: number;
+  name: string;
+  createdAt: Timestamp;
+  svrKey: Bytes;
+  rng: Rng | undefined;
+}): Promise<number> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_confirm_totp_key(
+        asyncContext,
+        identity(chat),
+        identity(one_time_password),
+        identity(name),
+        identity(created_at),
+        identity(svr_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_confirm_username({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  username: username,
+  usernameCiphertext: username_ciphertext,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  username: string;
+  usernameCiphertext: Bytes;
+  rng: Rng | undefined;
+}): Promise<uuid.Uuid> {
+  return uuid.stringify(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_confirm_username(
+        asyncContext,
+        identity(chat),
+        identity(username),
+        identity(username_ciphertext),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_create_donation_permits({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  requestContext: request_context,
+  serverParams: server_params,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  requestContext: zkgroup.DonationPermitRequestContext;
+  serverParams: Native.Wrapper<Native.ServerPublicParams>;
+}): Promise<Array<zkgroup.DonationPermit>> {
+  return ((arr: Array<Bytes>) => arr.map((x) => new zkgroup.DonationPermit(x)))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_create_donation_permits(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(request_context),
+        identity(server_params)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_delete_account({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_delete_account(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_delete_username_hash({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_delete_username_hash(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_delete_username_link({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_delete_username_link(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_finish_mfa_verification({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  credential: BridgeMfaVerificationCredential;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_finish_mfa_verification(
+        asyncContext,
+        identity(chat),
+        argConverterBridgeMfaVerificationCredential(credential)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_finish_web_authn_registration({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  attestationObject: attestation_object,
+  collectedClientDataJson: collected_client_data_json,
+  name: name,
+  createdAt: created_at,
+  svrKey: svr_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  attestationObject: Bytes;
+  collectedClientDataJson: string;
+  name: string;
+  createdAt: Timestamp;
+  svrKey: Bytes;
+  rng: Rng | undefined;
+}): Promise<number> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_finish_web_authn_registration(
+        asyncContext,
+        identity(chat),
+        identity(attestation_object),
+        identity(collected_client_data_json),
+        identity(name),
+        identity(created_at),
+        identity(svr_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_generate_totp_key({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<BridgePendingTotpKey> {
+  return returnConverterBridgePendingTotpKey(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_generate_totp_key(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_get_capabilities({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<Array<DeviceCapabilityInternal>> {
+  return ((arr: Array<ReturnFfiDeviceCapabilityInternal>) =>
+    arr.map(returnConverterDeviceCapabilityInternal))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_get_capabilities(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_get_currency_conversions({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<CurrencyConversionsInternal> {
+  return returnConverterCurrencyConversionsInternal(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_get_currency_conversions(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_get_devices({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<Array<LinkedDeviceInternal>> {
+  return ((arr: Array<ReturnFfiLinkedDeviceInternal>) =>
+    arr.map(returnConverterLinkedDeviceInternal))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_get_devices(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_get_entitlements({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<AccountEntitlements> {
+  return returnConverterAccountEntitlements(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_get_entitlements(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_get_pre_key_count({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<BridgePreKeyCounts> {
+  return returnConverterBridgePreKeyCounts(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_get_pre_key_count(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_get_sticker_upload_forms({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  numberOfStickers: number_of_stickers,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  numberOfStickers: number;
+}): Promise<GetStickerUploadFormsResponse> {
+  return returnConverterGetStickerUploadFormsResponse(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_get_sticker_upload_forms(
+        asyncContext,
+        identity(chat),
+        identity(number_of_stickers)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_list_mfa_keys({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  svrKey: svr_key,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  svrKey: Bytes;
+}): Promise<Array<BridgeConfirmedMfaKey>> {
+  return ((arr: Array<ReturnFfiBridgeConfirmedMfaKey>) =>
+    arr.map(returnConverterBridgeConfirmedMfaKey))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_list_mfa_keys(
+        asyncContext,
+        identity(chat),
+        identity(svr_key)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_redeem_backup_receipt({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  presentation: presentation,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  presentation: zkgroup.ReceiptCredentialPresentation;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_redeem_backup_receipt(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(presentation)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_redeem_donation_receipt({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  presentation: presentation,
+  visibility: visibility,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  presentation: zkgroup.ReceiptCredentialPresentation;
+  visibility: BadgeVisibility;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_redeem_donation_receipt(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(presentation),
+        argConverterBadgeVisibility(visibility)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_remove_device({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  deviceId: device_id,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  deviceId: DeviceId;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_remove_device(
+        asyncContext,
+        identity(chat),
+        identity(device_id)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_remove_mfa_key({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  keyId: key_id,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  keyId: number;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_remove_mfa_key(
+        asyncContext,
+        identity(chat),
+        identity(key_id)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_report_message({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  source: source,
+  messageGuid: message_guid,
+  reportSpamToken: report_spam_token,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  source: Aci;
+  messageGuid: uuid.Uuid;
+  reportSpamToken: Bytes;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_report_message(
+        asyncContext,
+        identity(chat),
+        serviceIdArgConverter(source),
+        uuid.parse(message_guid),
+        identity(report_spam_token)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_reserve_username_hash({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  usernameHashes: username_hashes,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  usernameHashes: Array<Bytes>;
+}): Promise<Bytes> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_reserve_username_hash(
+        asyncContext,
+        identity(chat),
+        ((arr: Array<Bytes>) => arr.map(identity))(username_hashes)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_capabilities({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  capabilities: capabilities,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  capabilities: Array<DeviceCapabilityInternal>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_capabilities(
+        asyncContext,
+        identity(chat),
+        ((arr: Array<DeviceCapabilityInternal>) =>
+          arr.map(argConverterDeviceCapabilityInternal))(capabilities)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_device_name({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  deviceId: device_id,
+  encryptedName: encrypted_name,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  deviceId: DeviceId;
+  encryptedName: Bytes;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_device_name(
+        asyncContext,
+        identity(chat),
+        identity(device_id),
+        identity(encrypted_name)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_discoverable_by_phone_number({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  discoverable: discoverable,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  discoverable: boolean;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_discoverable_by_phone_number(
+        asyncContext,
+        identity(chat),
+        identity(discoverable)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_last_resort_kem_pre_key({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  identityType: identity_type,
+  id: id,
+  key: key,
+  signature: signature,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  identityType: ServiceIdKind;
+  id: number;
+  key: Native.Wrapper<Native.KyberPublicKey>;
+  signature: Bytes;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_last_resort_kem_pre_key(
+        asyncContext,
+        identity(chat),
+        Number(identity_type),
+        identity(id),
+        identity(key),
+        identity(signature)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_mfa_key_metadata({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  keyId: key_id,
+  name: name,
+  createdAt: created_at,
+  svrKey: svr_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  keyId: number;
+  name: string;
+  createdAt: Timestamp;
+  svrKey: Bytes;
+  rng: Rng | undefined;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_mfa_key_metadata(
+        asyncContext,
+        identity(chat),
+        identity(key_id),
+        identity(name),
+        identity(created_at),
+        identity(svr_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_one_time_ec_pre_keys({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  identityType: identity_type,
+  preKeyIds: pre_key_ids,
+  preKeyData: pre_key_data,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  identityType: ServiceIdKind;
+  preKeyIds: Uint32Array<ArrayBuffer>;
+  preKeyData: Array<Native.Wrapper<Native.PublicKey>>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_one_time_ec_pre_keys(
+        asyncContext,
+        identity(chat),
+        Number(identity_type),
+        identity(pre_key_ids),
+        ((arr: Array<Native.Wrapper<Native.PublicKey>>) => arr.map(identity))(
+          pre_key_data
+        )
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_one_time_kem_pre_keys({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  identityType: identity_type,
+  preKeyIds: pre_key_ids,
+  preKeyData: pre_key_data,
+  preKeySignatures: pre_key_signatures,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  identityType: ServiceIdKind;
+  preKeyIds: Uint32Array<ArrayBuffer>;
+  preKeyData: Array<Native.Wrapper<Native.KyberPublicKey>>;
+  preKeySignatures: Array<Bytes>;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_one_time_kem_pre_keys(
+        asyncContext,
+        identity(chat),
+        Number(identity_type),
+        identity(pre_key_ids),
+        ((arr: Array<Native.Wrapper<Native.KyberPublicKey>>) =>
+          arr.map(identity))(pre_key_data),
+        ((arr: Array<Bytes>) => arr.map(identity))(pre_key_signatures)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_registration_lock({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  svrKey: svr_key,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  svrKey: Bytes;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_registration_lock(
+        asyncContext,
+        identity(chat),
+        identity(svr_key)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_registration_recovery_password({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  svrKey: svr_key,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  svrKey: Bytes;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_registration_recovery_password(
+        asyncContext,
+        identity(chat),
+        identity(svr_key)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_signed_ec_pre_key({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  identityType: identity_type,
+  id: id,
+  key: key,
+  signature: signature,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  identityType: ServiceIdKind;
+  id: number;
+  key: Native.Wrapper<Native.PublicKey>;
+  signature: Bytes;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_signed_ec_pre_key(
+        asyncContext,
+        identity(chat),
+        Number(identity_type),
+        identity(id),
+        identity(key),
+        identity(signature)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_set_username_link({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  usernameCiphertext: username_ciphertext,
+  keepLinkHandle: keep_link_handle,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+  usernameCiphertext: Bytes;
+  keepLinkHandle: boolean;
+}): Promise<uuid.Uuid> {
+  return uuid.stringify(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_set_username_link(
+        asyncContext,
+        identity(chat),
+        identity(username_ciphertext),
+        identity(keep_link_handle)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_start_mfa_verification({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<StartMfaVerificationResponse> {
+  return returnConverterStartMfaVerificationResponse(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_start_mfa_verification(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function AuthenticatedChatConnection_start_web_authn_registration({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.AuthenticatedChatConnection>;
+}): Promise<BridgeWebAuthnCreateParameters> {
+  return returnConverterBridgeWebAuthnCreateParameters(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.AuthenticatedChatConnection_start_web_authn_registration(
+        asyncContext,
+        identity(chat)
+      )
+    )
+  );
+}
+export async function CopyBackupMediaStream_next({
+  asyncContext,
+  abortSignal,
+  stream: stream,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  stream: Native.Wrapper<Native.CopyBackupMediaStream>;
+}): Promise<CopyBackupMediaNextChunk> {
+  return returnConverterCopyBackupMediaNextChunk(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.CopyBackupMediaStream_next(asyncContext, identity(stream))
+    )
+  );
+}
+export async function DeleteBackupMediaStream_next({
+  asyncContext,
+  abortSignal,
+  stream: stream,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  stream: Native.Wrapper<Native.DeleteBackupMediaStream>;
+}): Promise<DeleteBackupMediaNextChunk> {
+  return returnConverterDeleteBackupMediaNextChunk(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.DeleteBackupMediaStream_next(asyncContext, identity(stream))
+    )
+  );
+}
+
+export function SvrKey_DeriveLoggingKey({
+  svrKey: svr_key,
+}: {
+  svrKey: Bytes;
+}): Bytes {
+  return identity(Native.SvrKey_DeriveLoggingKey(identity(svr_key)));
+}
+
+export function SvrKey_DeriveRegistrationLock({
+  svrKey: svr_key,
+}: {
+  svrKey: Bytes;
+}): Bytes {
+  return identity(Native.SvrKey_DeriveRegistrationLock(identity(svr_key)));
+}
+
+export function SvrKey_DeriveRegistrationRecoveryPassword({
+  svrKey: svr_key,
+}: {
+  svrKey: Bytes;
+}): Bytes {
+  return identity(
+    Native.SvrKey_DeriveRegistrationRecoveryPassword(identity(svr_key))
+  );
+}
+
+export function SvrKey_DeriveStorageServiceKey({
+  svrKey: svr_key,
+}: {
+  svrKey: Bytes;
+}): Bytes {
+  return identity(Native.SvrKey_DeriveStorageServiceKey(identity(svr_key)));
+}
+
+export function TESTING_BackupDeleteAllTests(): Array<
+  GrpcTestCase<void, SimpleBackupTestOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterSimpleBackupTestOut
+  )(Native.TESTING_BackupDeleteAllTests());
+}
+
+export function TESTING_BackupListMediaTests(): Array<
+  GrpcTestCase<ListMediaArgs, ListMediaOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterListMediaArgs,
+    returnConverterListMediaOut
+  )(Native.TESTING_BackupListMediaTests());
+}
+
+export function TESTING_BackupRefreshTests(): Array<
+  GrpcTestCase<void, SimpleBackupTestOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterSimpleBackupTestOut
+  )(Native.TESTING_BackupRefreshTests());
+}
+
+export function TESTING_BackupSetPublicKeyTests(): Array<
+  GrpcTestCase<void, SimpleBackupTestOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterSimpleBackupTestOut
+  )(Native.TESTING_BackupSetPublicKeyTests());
+}
+
+export function TESTING_CheckSvrCredentialsTests(): Array<
+  GrpcTestCase<CheckSvrCredentialsArgs, Array<[string, AuthCheckResult]>>
+> {
+  return grpcTestCaseConverter(
+    returnConverterCheckSvrCredentialsArgs,
+    (arr: Array<[string, ReturnFfiAuthCheckResult]>) =>
+      arr.map(
+        ([a, b]: [string, ReturnFfiAuthCheckResult]): [
+          string,
+          AuthCheckResult
+        ] => [identity(a), returnConverterAuthCheckResult(b)]
+      )
+  )(Native.TESTING_CheckSvrCredentialsTests());
+}
+
+export function TESTING_ClearPushTokenTests(): Array<GrpcTestCase<void, void>> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_ClearPushTokenTests());
+}
+
+export function TESTING_ClearRegistrationLockTests(): Array<
+  GrpcTestCase<void, void>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_ClearRegistrationLockTests());
+}
+
+export function TESTING_ConfirmTotpKeyTests(): Array<
+  GrpcTestCase<ConfirmTotpKeyArgs, ConfirmTotpKeyOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterConfirmTotpKeyArgs,
+    returnConverterConfirmTotpKeyOut
+  )(Native.TESTING_ConfirmTotpKeyTests());
+}
+
+export function TESTING_ConfirmUsernameTests(): Array<
+  GrpcTestCase<ConfirmUsernameArgs, ConfirmUsernameOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterConfirmUsernameArgs,
+    returnConverterConfirmUsernameOut
+  )(Native.TESTING_ConfirmUsernameTests());
+}
+
+export function TESTING_CopyBackupMediaTests(): Array<
+  GrpcTestCase<Array<BridgeCopyBackupMediaItem>, Array<CopyBackupMediaOut>>
+> {
+  return grpcTestCaseConverter(
+    (arr: Array<ReturnFfiBridgeCopyBackupMediaItem>) =>
+      arr.map(returnConverterBridgeCopyBackupMediaItem),
+    (arr: Array<ReturnFfiCopyBackupMediaOut>) =>
+      arr.map(returnConverterCopyBackupMediaOut)
+  )(Native.TESTING_CopyBackupMediaTests());
+}
+
+export function TESTING_CreateDonationPermitsTests(): Array<
+  GrpcTestCase<CreateDonationPermitsArgs, CreateDonationPermitsOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterCreateDonationPermitsArgs,
+    returnConverterCreateDonationPermitsOut
+  )(Native.TESTING_CreateDonationPermitsTests());
+}
+
+export function TESTING_CreateLoginReceiptCredentialTests(): Array<
+  GrpcTestCase<
+    CreateLoginReceiptCredentialArgs,
+    CreateLoginReceiptCredentialOut
+  >
+> {
+  return grpcTestCaseConverter(
+    returnConverterCreateLoginReceiptCredentialArgs,
+    returnConverterCreateLoginReceiptCredentialOut
+  )(Native.TESTING_CreateLoginReceiptCredentialTests());
+}
+
+export function TESTING_DeleteAccountTests(): Array<GrpcTestCase<void, void>> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_DeleteAccountTests());
+}
+
+export function TESTING_DeleteBackupMediaTests(): Array<
+  GrpcTestCase<Array<BridgeDeleteBackupMediaItem>, Array<DeleteBackupMediaOut>>
+> {
+  return grpcTestCaseConverter(
+    (arr: Array<ReturnFfiBridgeDeleteBackupMediaItem>) =>
+      arr.map(returnConverterBridgeDeleteBackupMediaItem),
+    (arr: Array<ReturnFfiDeleteBackupMediaOut>) =>
+      arr.map(returnConverterDeleteBackupMediaOut)
+  )(Native.TESTING_DeleteBackupMediaTests());
+}
+
+export function TESTING_DeleteUsernameHashTests(): Array<
+  GrpcTestCase<void, void>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_DeleteUsernameHashTests());
+}
+
+export function TESTING_DeleteUsernameLinkTests(): Array<
+  GrpcTestCase<void, void>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_DeleteUsernameLinkTests());
+}
+
+export function TESTING_FinishMfaVerificationTests(): Array<
+  GrpcTestCase<BridgeMfaVerificationCredential, FinishMfaVerificationOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterBridgeMfaVerificationCredential,
+    returnConverterFinishMfaVerificationOut
+  )(Native.TESTING_FinishMfaVerificationTests());
+}
+
+export function TESTING_FinishWebAuthnRegistrationTests(): Array<
+  GrpcTestCase<FinishWebAuthnRegistrationArgs, FinishWebAuthnRegistrationOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterFinishWebAuthnRegistrationArgs,
+    returnConverterFinishWebAuthnRegistrationOut
+  )(Native.TESTING_FinishWebAuthnRegistrationTests());
+}
+
+export function TESTING_GenerateTotpKeyTests(): Array<
+  GrpcTestCase<void, GenerateTotpKeyOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGenerateTotpKeyOut
+  )(Native.TESTING_GenerateTotpKeyTests());
+}
+
+export function TESTING_GetBackupCdnCredentialsTests(): Array<
+  GrpcTestCase<number, GetCdnCredentialsOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetCdnCredentialsOut
+  )(Native.TESTING_GetBackupCdnCredentialsTests());
+}
+
+export function TESTING_GetBackupSvrBCredentialsTests(): Array<
+  GrpcTestCase<void, GetSvrBCredentialsOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetSvrBCredentialsOut
+  )(Native.TESTING_GetBackupSvrBCredentialsTests());
+}
+
+export function TESTING_GetCapabilitiesTests(): Array<
+  GrpcTestCase<void, GetCapabilitiesOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetCapabilitiesOut
+  )(Native.TESTING_GetCapabilitiesTests());
+}
+
+export function TESTING_GetCurrencyConversionsTests(): Array<
+  GrpcTestCase<void, CurrencyConversionsInternal>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterCurrencyConversionsInternal
+  )(Native.TESTING_GetCurrencyConversionsTests());
+}
+
+export function TESTING_GetDevicesTests(): Array<
+  GrpcTestCase<void, GetDevicesOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetDevicesOut
+  )(Native.TESTING_GetDevicesTests());
+}
+
+export function TESTING_GetEntitlementsTests(): Array<
+  GrpcTestCase<void, GetEntitlementsOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetEntitlementsOut
+  )(Native.TESTING_GetEntitlementsTests());
+}
+
+export function TESTING_GetMediaBackupInfoTests(): Array<
+  GrpcTestCase<void, GetMediaBackupInfoOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetMediaBackupInfoOut
+  )(Native.TESTING_GetMediaBackupInfoTests());
+}
+
+export function TESTING_GetMessageBackupInfoTests(): Array<
+  GrpcTestCase<void, GetMessageBackupInfoOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetMessageBackupInfoOut
+  )(Native.TESTING_GetMessageBackupInfoTests());
+}
+
+export function TESTING_GetPreKeyCountTests(): Array<
+  GrpcTestCase<void, BridgePreKeyCounts>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterBridgePreKeyCounts
+  )(Native.TESTING_GetPreKeyCountTests());
+}
+
+export function TESTING_GetProfileKeyCredentialTests(): Array<
+  GrpcTestCase<GetProfileKeyCredentialArgs, GetProfileKeyCredentialOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterGetProfileKeyCredentialArgs,
+    returnConverterGetProfileKeyCredentialOut
+  )(Native.TESTING_GetProfileKeyCredentialTests());
+}
+
+export function TESTING_GetStickerUploadFormTests(): Array<
+  GrpcTestCase<number, GetStickerUploadFormsOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterGetStickerUploadFormsOut
+  )(Native.TESTING_GetStickerUploadFormTests());
+}
+
+export function TESTING_GetSubscriptionReceiptCredentialTests(): Array<
+  GrpcTestCase<
+    GetSubscriptionReceiptCredentialArgs,
+    GetSubscriptionReceiptCredentialOut
+  >
+> {
+  return grpcTestCaseConverter(
+    returnConverterGetSubscriptionReceiptCredentialArgs,
+    returnConverterGetSubscriptionReceiptCredentialOut
+  )(Native.TESTING_GetSubscriptionReceiptCredentialTests());
+}
+
+export function TESTING_ListMfaKeysTests(): Array<
+  GrpcTestCase<ListMfaKeysArgs, ListMfaKeysOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterListMfaKeysArgs,
+    returnConverterListMfaKeysOut
+  )(Native.TESTING_ListMfaKeysTests());
+}
+
+export function TESTING_LookUpUsernameLinkTests(): Array<
+  GrpcTestCase<LookUpUsernameLinkArgs, LookUpUsernameLinkOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterLookUpUsernameLinkArgs,
+    returnConverterLookUpUsernameLinkOut
+  )(Native.TESTING_LookUpUsernameLinkTests());
+}
+
+export function TESTING_MyRemoteDeriveEnum_identity({
+  x: x,
+}: {
+  x: MyRemoteDeriveEnum;
+}): MyRemoteDeriveEnum {
+  return returnConverterMyRemoteDeriveEnum(
+    Native.TESTING_MyRemoteDeriveEnum_identity(
+      argConverterMyRemoteDeriveEnum(x)
+    )
+  );
+}
+
+export function TESTING_MyRemoteDeriveStruct_identity({
+  x: x,
+}: {
+  x: MyRemoteDeriveStruct;
+}): MyRemoteDeriveStruct {
+  return returnConverterMyRemoteDeriveStruct(
+    Native.TESTING_MyRemoteDeriveStruct_identity(
+      argConverterMyRemoteDeriveStruct(x)
+    )
+  );
+}
+
+export function TESTING_MySimpleTestEnum_BridgeVec_identity({
+  x: x,
+}: {
+  x: Array<MySimpleTestEnum>;
+}): Array<MySimpleTestEnum> {
+  return ((arr: Array<ReturnFfiMySimpleTestEnum>) =>
+    arr.map(returnConverterMySimpleTestEnum))(
+    Native.TESTING_MySimpleTestEnum_BridgeVec_identity(
+      ((arr: Array<MySimpleTestEnum>) => arr.map(argConverterMySimpleTestEnum))(
+        x
+      )
+    )
+  );
+}
+export async function TESTING_MySimpleTestEnum_BridgeVec_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Array<MySimpleTestEnum>;
+}): Promise<Array<MySimpleTestEnum>> {
+  return ((arr: Array<ReturnFfiMySimpleTestEnum>) =>
+    arr.map(returnConverterMySimpleTestEnum))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_MySimpleTestEnum_BridgeVec_identity_async(
+        asyncContext,
+        ((arr: Array<MySimpleTestEnum>) =>
+          arr.map(argConverterMySimpleTestEnum))(x)
+      )
+    )
+  );
+}
+
+export function TESTING_MySimpleTestEnum_BridgeVec_to_string({
+  x: x,
+}: {
+  x: Array<MySimpleTestEnum>;
+}): string {
+  return identity(
+    Native.TESTING_MySimpleTestEnum_BridgeVec_to_string(
+      ((arr: Array<MySimpleTestEnum>) => arr.map(argConverterMySimpleTestEnum))(
+        x
+      )
+    )
+  );
+}
+
+export function TESTING_MySimpleTestEnum_identity({
+  x: x,
+}: {
+  x: MySimpleTestEnum;
+}): MySimpleTestEnum {
+  return returnConverterMySimpleTestEnum(
+    Native.TESTING_MySimpleTestEnum_identity(argConverterMySimpleTestEnum(x))
+  );
+}
+export async function TESTING_MySimpleTestEnum_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: MySimpleTestEnum;
+}): Promise<MySimpleTestEnum> {
+  return returnConverterMySimpleTestEnum(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_MySimpleTestEnum_identity_async(
+        asyncContext,
+        argConverterMySimpleTestEnum(x)
+      )
+    )
+  );
+}
+
+export function TESTING_MySimpleTestEnum_to_string({
+  x: x,
+}: {
+  x: MySimpleTestEnum;
+}): string {
+  return identity(
+    Native.TESTING_MySimpleTestEnum_to_string(argConverterMySimpleTestEnum(x))
+  );
+}
+
+export function TESTING_MyTestEnum_identity({
+  x: x,
+}: {
+  x: MyTestEnum;
+}): MyTestEnum {
+  return returnConverterMyTestEnum(
+    Native.TESTING_MyTestEnum_identity(argConverterMyTestEnum(x))
+  );
+}
+export async function TESTING_MyTestEnum_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: MyTestEnum;
+}): Promise<MyTestEnum> {
+  return returnConverterMyTestEnum(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_MyTestEnum_identity_async(
+        asyncContext,
+        argConverterMyTestEnum(x)
+      )
+    )
+  );
+}
+
+export function TESTING_MyTestEnum_to_string({
+  x: x,
+}: {
+  x: MyTestEnum;
+}): string {
+  return identity(
+    Native.TESTING_MyTestEnum_to_string(argConverterMyTestEnum(x))
+  );
+}
+
+export function TESTING_MyTestPoint_identity({
+  x: x,
+}: {
+  x: MyTestPoint;
+}): MyTestPoint {
+  return returnConverterMyTestPoint(
+    Native.TESTING_MyTestPoint_identity(argConverterMyTestPoint(x))
+  );
+}
+export async function TESTING_MyTestPoint_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: MyTestPoint;
+}): Promise<MyTestPoint> {
+  return returnConverterMyTestPoint(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_MyTestPoint_identity_async(
+        asyncContext,
+        argConverterMyTestPoint(x)
+      )
+    )
+  );
+}
+
+export function TESTING_MyTestPoint_to_string({
+  x: x,
+}: {
+  x: MyTestPoint;
+}): string {
+  return identity(
+    Native.TESTING_MyTestPoint_to_string(argConverterMyTestPoint(x))
+  );
+}
+
+export function TESTING_MyTestStruct_identity({
+  x: x,
+}: {
+  x: MyTestStruct;
+}): MyTestStruct {
+  return returnConverterMyTestStruct(
+    Native.TESTING_MyTestStruct_identity(argConverterMyTestStruct(x))
+  );
+}
+export async function TESTING_MyTestStruct_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: MyTestStruct;
+}): Promise<MyTestStruct> {
+  return returnConverterMyTestStruct(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_MyTestStruct_identity_async(
+        asyncContext,
+        argConverterMyTestStruct(x)
+      )
+    )
+  );
+}
+
+export function TESTING_MyTestStruct_to_string({
+  x: x,
+}: {
+  x: MyTestStruct;
+}): string {
+  return identity(
+    Native.TESTING_MyTestStruct_to_string(argConverterMyTestStruct(x))
+  );
+}
+
+export function TESTING_RedeemBackupReceiptTests(): Array<
+  GrpcTestCase<Bytes, RedeemBackupReceiptOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterRedeemBackupReceiptOut
+  )(Native.TESTING_RedeemBackupReceiptTests());
+}
+
+export function TESTING_RedeemDonationReceiptTests(): Array<
+  GrpcTestCase<RedeemDonationReceiptArgs, RedeemDonationReceiptOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterRedeemDonationReceiptArgs,
+    returnConverterRedeemDonationReceiptOut
+  )(Native.TESTING_RedeemDonationReceiptTests());
+}
+
+export function TESTING_RemoveDeviceTests(): Array<
+  GrpcTestCase<RemoveDeviceArgs, RemoveDeviceOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterRemoveDeviceArgs,
+    returnConverterRemoveDeviceOut
+  )(Native.TESTING_RemoveDeviceTests());
+}
+
+export function TESTING_RemoveMfaKeyTests(): Array<
+  GrpcTestCase<RemoveMfaKeyArgs, RemoveMfaKeyOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterRemoveMfaKeyArgs,
+    returnConverterRemoveMfaKeyOut
+  )(Native.TESTING_RemoveMfaKeyTests());
+}
+
+export function TESTING_ReportMessageTests(): Array<
+  GrpcTestCase<ReportMessageArgs, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterReportMessageArgs,
+    identity
+  )(Native.TESTING_ReportMessageTests());
+}
+
+export function TESTING_ReserveUsernameHashTests(): Array<
+  GrpcTestCase<ReserveUsernameHashArgs, ReserveUsernameHashOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterReserveUsernameHashArgs,
+    returnConverterReserveUsernameHashOut
+  )(Native.TESTING_ReserveUsernameHashTests());
+}
+
+export function TESTING_ReturnIoError(): Error {
+  return identity(Native.TESTING_ReturnIoError());
+}
+
+export function TESTING_ReturnSomeIoError({
+  present: present,
+}: {
+  present: boolean;
+}): Error | null {
+  return liftNull(identity)(
+    Native.TESTING_ReturnSomeIoError(identity(present))
+  );
+}
+
+export function TESTING_SetCapabilitiesTests(): Array<
+  GrpcTestCase<SetCapabilitiesArgs, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetCapabilitiesArgs,
+    identity
+  )(Native.TESTING_SetCapabilitiesTests());
+}
+
+export function TESTING_SetDeviceNameTests(): Array<
+  GrpcTestCase<SetDeviceNameArgs, SetDeviceNameOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetDeviceNameArgs,
+    returnConverterSetDeviceNameOut
+  )(Native.TESTING_SetDeviceNameTests());
+}
+
+export function TESTING_SetDiscoverableByPhoneNumberTests(): Array<
+  GrpcTestCase<boolean, void>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_SetDiscoverableByPhoneNumberTests());
+}
+
+export function TESTING_SetLastResortKemPreKeyTests(): Array<
+  GrpcTestCase<SetLastResortKemPreKeyArgs, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetLastResortKemPreKeyArgs,
+    identity
+  )(Native.TESTING_SetLastResortKemPreKeyTests());
+}
+
+export function TESTING_SetMfaKeyMetadataTests(): Array<
+  GrpcTestCase<SetMfaKeyMetadataArgs, SetMfaKeyMetadataOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetMfaKeyMetadataArgs,
+    returnConverterSetMfaKeyMetadataOut
+  )(Native.TESTING_SetMfaKeyMetadataTests());
+}
+
+export function TESTING_SetOneTimeEcPreKeysTests(): Array<
+  GrpcTestCase<SetOneTimeEcPreKeysArgs, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetOneTimeEcPreKeysArgs,
+    identity
+  )(Native.TESTING_SetOneTimeEcPreKeysTests());
+}
+
+export function TESTING_SetOneTimeKemPreKeysTests(): Array<
+  GrpcTestCase<SetOneTimeKemPreKeysArgs, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetOneTimeKemPreKeysArgs,
+    identity
+  )(Native.TESTING_SetOneTimeKemPreKeysTests());
+}
+
+export function TESTING_SetRegistrationLockTests(): Array<
+  GrpcTestCase<Bytes, void>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_SetRegistrationLockTests());
+}
+
+export function TESTING_SetRegistrationRecoveryPasswordTests(): Array<
+  GrpcTestCase<Bytes, void>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    identity
+  )(Native.TESTING_SetRegistrationRecoveryPasswordTests());
+}
+
+export function TESTING_SetSignedEcPreKeyTests(): Array<
+  GrpcTestCase<SetSignedEcPreKeyArgs, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetSignedEcPreKeyArgs,
+    identity
+  )(Native.TESTING_SetSignedEcPreKeyTests());
+}
+
+export function TESTING_SetUsernameLinkTests(): Array<
+  GrpcTestCase<SetUsernameLinkArgs, SetUsernameLinkOut>
+> {
+  return grpcTestCaseConverter(
+    returnConverterSetUsernameLinkArgs,
+    returnConverterSetUsernameLinkOut
+  )(Native.TESTING_SetUsernameLinkTests());
+}
+
+export function TESTING_StartMfaVerificationTests(): Array<
+  GrpcTestCase<void, StartMfaVerificationOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterStartMfaVerificationOut
+  )(Native.TESTING_StartMfaVerificationTests());
+}
+
+export function TESTING_StartWebAuthnRegistrationTests(): Array<
+  GrpcTestCase<void, StartWebAuthnRegistrationOut>
+> {
+  return grpcTestCaseConverter(
+    identity,
+    returnConverterStartWebAuthnRegistrationOut
+  )(Native.TESTING_StartWebAuthnRegistrationTests());
+}
+
+export function TESTING_SubmitCallQualitySurveyTests(): Array<
+  GrpcTestCase<CallQualitySurveyInternal, void>
+> {
+  return grpcTestCaseConverter(
+    returnConverterCallQualitySurveyInternal,
+    identity
+  )(Native.TESTING_SubmitCallQualitySurveyTests());
+}
+
+export function TESTING_TestStreamChunk_return(): TestStreamChunk {
+  return returnConverterTestStreamChunk(
+    Native.TESTING_TestStreamChunk_return()
+  );
+}
+
+export function TESTING_TestingIntBox_Get({
+  myIntBox: my_int_box,
+}: {
+  myIntBox: Native.Wrapper<Native.TestingIntBox>;
+}): number {
+  return identity(Native.TESTING_TestingIntBox_Get(identity(my_int_box)));
+}
+export async function TESTING_TokioAsyncContext_FutureSuccessBytes({
+  asyncContext,
+  abortSignal,
+  count: count,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  count: number;
+}): Promise<Bytes> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_TokioAsyncContext_FutureSuccessBytes(
+        asyncContext,
+        identity(count)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_BridgeVecData32_identity({
+  x: x,
+}: {
+  x: Array<Bytes>;
+}): Array<Bytes> {
+  return ((arr: Array<Bytes>) => arr.map(identity))(
+    Native.TESTING_conversion_BridgeVecData32_identity(
+      ((arr: Array<Bytes>) => arr.map(identity))(x)
+    )
+  );
+}
+export async function TESTING_conversion_BridgeVecData32_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Array<Bytes>;
+}): Promise<Array<Bytes>> {
+  return ((arr: Array<Bytes>) => arr.map(identity))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_BridgeVecData32_identity_async(
+        asyncContext,
+        ((arr: Array<Bytes>) => arr.map(identity))(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_BridgeVecData32_to_string({
+  x: x,
+}: {
+  x: Array<Bytes>;
+}): string {
+  return identity(
+    Native.TESTING_conversion_BridgeVecData32_to_string(
+      ((arr: Array<Bytes>) => arr.map(identity))(x)
+    )
+  );
+}
+
+export function TESTING_conversion_BridgeVecString_identity({
+  x: x,
+}: {
+  x: Array<string>;
+}): Array<string> {
+  return ((arr: Array<string>) => arr.map(identity))(
+    Native.TESTING_conversion_BridgeVecString_identity(
+      ((arr: Array<string>) => arr.map(identity))(x)
+    )
+  );
+}
+export async function TESTING_conversion_BridgeVecString_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Array<string>;
+}): Promise<Array<string>> {
+  return ((arr: Array<string>) => arr.map(identity))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_BridgeVecString_identity_async(
+        asyncContext,
+        ((arr: Array<string>) => arr.map(identity))(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_BridgeVecString_to_string({
+  x: x,
+}: {
+  x: Array<string>;
+}): string {
+  return identity(
+    Native.TESTING_conversion_BridgeVecString_to_string(
+      ((arr: Array<string>) => arr.map(identity))(x)
+    )
+  );
+}
+
+export function TESTING_conversion_Data32_identity({
+  x: x,
+}: {
+  x: Bytes;
+}): Bytes {
+  return identity(Native.TESTING_conversion_Data32_identity(identity(x)));
+}
+export async function TESTING_conversion_Data32_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Bytes;
+}): Promise<Bytes> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_Data32_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_Data32_to_string({
+  x: x,
+}: {
+  x: Bytes;
+}): string {
+  return identity(Native.TESTING_conversion_Data32_to_string(identity(x)));
+}
+
+export function TESTING_conversion_Data_VecU8_identity({
+  x: x,
+}: {
+  x: Bytes;
+}): Bytes {
+  return identity(Native.TESTING_conversion_Data_VecU8_identity(identity(x)));
+}
+export async function TESTING_conversion_Data_VecU8_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Bytes;
+}): Promise<Bytes> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_Data_VecU8_identity_async(
+        asyncContext,
+        identity(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_Data_VecU8_to_string({
+  x: x,
+}: {
+  x: Bytes;
+}): string {
+  return identity(Native.TESTING_conversion_Data_VecU8_to_string(identity(x)));
+}
+
+export function TESTING_conversion_Data_identity({
+  x: x,
+}: {
+  x: Bytes;
+}): Bytes {
+  return identity(Native.TESTING_conversion_Data_identity(identity(x)));
+}
+export async function TESTING_conversion_Data_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Bytes;
+}): Promise<Bytes> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_Data_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_Data_to_string({
+  x: x,
+}: {
+  x: Bytes;
+}): string {
+  return identity(Native.TESTING_conversion_Data_to_string(identity(x)));
+}
+
+export function TESTING_conversion_DeviceId_identity({
+  x: x,
+}: {
+  x: DeviceId;
+}): DeviceId {
+  return identity(Native.TESTING_conversion_DeviceId_identity(identity(x)));
+}
+export async function TESTING_conversion_DeviceId_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: DeviceId;
+}): Promise<DeviceId> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_DeviceId_identity_async(
+        asyncContext,
+        identity(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_DeviceId_to_string({
+  x: x,
+}: {
+  x: DeviceId;
+}): string {
+  return identity(Native.TESTING_conversion_DeviceId_to_string(identity(x)));
+}
+
+export function TESTING_conversion_Float_identity({
+  x: x,
+}: {
+  x: number;
+}): number {
+  return identity(Native.TESTING_conversion_Float_identity(identity(x)));
+}
+export async function TESTING_conversion_Float_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: number;
+}): Promise<number> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_Float_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_Float_to_string({
+  x: x,
+}: {
+  x: number;
+}): string {
+  return identity(Native.TESTING_conversion_Float_to_string(identity(x)));
+}
+
+export function TESTING_conversion_MapStringMySimpleTestEnum_identity({
+  x: x,
+}: {
+  x: Map<string, MySimpleTestEnum>;
+}): Map<string, MySimpleTestEnum> {
+  return stringMapResultConverter<ReturnFfiMySimpleTestEnum, MySimpleTestEnum>(
+    returnConverterMySimpleTestEnum
+  )(
+    Native.TESTING_conversion_MapStringMySimpleTestEnum_identity(
+      stringMapArgConverter<ArgFfiMySimpleTestEnum, MySimpleTestEnum>(
+        argConverterMySimpleTestEnum
+      )(x)
+    )
+  );
+}
+export async function TESTING_conversion_MapStringMySimpleTestEnum_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Map<string, MySimpleTestEnum>;
+}): Promise<Map<string, MySimpleTestEnum>> {
+  return stringMapResultConverter<ReturnFfiMySimpleTestEnum, MySimpleTestEnum>(
+    returnConverterMySimpleTestEnum
+  )(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_MapStringMySimpleTestEnum_identity_async(
+        asyncContext,
+        stringMapArgConverter<ArgFfiMySimpleTestEnum, MySimpleTestEnum>(
+          argConverterMySimpleTestEnum
+        )(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_MapStringMySimpleTestEnum_to_string({
+  x: x,
+}: {
+  x: Map<string, MySimpleTestEnum>;
+}): string {
+  return identity(
+    Native.TESTING_conversion_MapStringMySimpleTestEnum_to_string(
+      stringMapArgConverter<ArgFfiMySimpleTestEnum, MySimpleTestEnum>(
+        argConverterMySimpleTestEnum
+      )(x)
+    )
+  );
+}
+
+export function TESTING_conversion_MapStringString_identity({
+  x: x,
+}: {
+  x: Map<string, string>;
+}): Map<string, string> {
+  return stringMapResultConverter<string, string>(identity)(
+    Native.TESTING_conversion_MapStringString_identity(
+      stringMapArgConverter<string, string>(identity)(x)
+    )
+  );
+}
+export async function TESTING_conversion_MapStringString_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Map<string, string>;
+}): Promise<Map<string, string>> {
+  return stringMapResultConverter<string, string>(identity)(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_MapStringString_identity_async(
+        asyncContext,
+        stringMapArgConverter<string, string>(identity)(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_MapStringString_to_string({
+  x: x,
+}: {
+  x: Map<string, string>;
+}): string {
+  return identity(
+    Native.TESTING_conversion_MapStringString_to_string(
+      stringMapArgConverter<string, string>(identity)(x)
+    )
+  );
+}
+
+export function TESTING_conversion_OptionalBytes_identity({
+  x: x,
+}: {
+  x: Bytes | null;
+}): Bytes | null {
+  return liftNull(identity)(
+    Native.TESTING_conversion_OptionalBytes_identity(liftNull(identity)(x))
+  );
+}
+export async function TESTING_conversion_OptionalBytes_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: Bytes | null;
+}): Promise<Bytes | null> {
+  return liftNull(identity)(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_OptionalBytes_identity_async(
+        asyncContext,
+        liftNull(identity)(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_OptionalBytes_to_string({
+  x: x,
+}: {
+  x: Bytes | null;
+}): string {
+  return identity(
+    Native.TESTING_conversion_OptionalBytes_to_string(liftNull(identity)(x))
+  );
+}
+
+export function TESTING_conversion_OptionalFloat_identity({
+  x: x,
+}: {
+  x: number | null;
+}): number | null {
+  return liftNull(identity)(
+    Native.TESTING_conversion_OptionalFloat_identity(liftNull(identity)(x))
+  );
+}
+export async function TESTING_conversion_OptionalFloat_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: number | null;
+}): Promise<number | null> {
+  return liftNull(identity)(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_OptionalFloat_identity_async(
+        asyncContext,
+        liftNull(identity)(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_OptionalFloat_to_string({
+  x: x,
+}: {
+  x: number | null;
+}): string {
+  return identity(
+    Native.TESTING_conversion_OptionalFloat_to_string(liftNull(identity)(x))
+  );
+}
+
+export function TESTING_conversion_OptionalString_identity({
+  x: x,
+}: {
+  x: string | null;
+}): string | null {
+  return liftNull(identity)(
+    Native.TESTING_conversion_OptionalString_identity(liftNull(identity)(x))
+  );
+}
+export async function TESTING_conversion_OptionalString_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: string | null;
+}): Promise<string | null> {
+  return liftNull(identity)(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_OptionalString_identity_async(
+        asyncContext,
+        liftNull(identity)(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_OptionalString_to_string({
+  x: x,
+}: {
+  x: string | null;
+}): string {
+  return identity(
+    Native.TESTING_conversion_OptionalString_to_string(liftNull(identity)(x))
+  );
+}
+
+export function TESTING_conversion_PairStringMySimpleTestEnum_identity({
+  x: x,
+}: {
+  x: [string, MySimpleTestEnum];
+}): [string, MySimpleTestEnum] {
+  return (([a, b]: [string, ReturnFfiMySimpleTestEnum]): [
+    string,
+    MySimpleTestEnum
+  ] => [identity(a), returnConverterMySimpleTestEnum(b)])(
+    Native.TESTING_conversion_PairStringMySimpleTestEnum_identity(
+      (([a, b]: [string, MySimpleTestEnum]): [
+        string,
+        ArgFfiMySimpleTestEnum
+      ] => [identity(a), argConverterMySimpleTestEnum(b)])(x)
+    )
+  );
+}
+export async function TESTING_conversion_PairStringMySimpleTestEnum_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: [string, MySimpleTestEnum];
+}): Promise<[string, MySimpleTestEnum]> {
+  return (([a, b]: [string, ReturnFfiMySimpleTestEnum]): [
+    string,
+    MySimpleTestEnum
+  ] => [identity(a), returnConverterMySimpleTestEnum(b)])(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_PairStringMySimpleTestEnum_identity_async(
+        asyncContext,
+        (([a, b]: [string, MySimpleTestEnum]): [
+          string,
+          ArgFfiMySimpleTestEnum
+        ] => [identity(a), argConverterMySimpleTestEnum(b)])(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_PairStringMySimpleTestEnum_to_string({
+  x: x,
+}: {
+  x: [string, MySimpleTestEnum];
+}): string {
+  return identity(
+    Native.TESTING_conversion_PairStringMySimpleTestEnum_to_string(
+      (([a, b]: [string, MySimpleTestEnum]): [
+        string,
+        ArgFfiMySimpleTestEnum
+      ] => [identity(a), argConverterMySimpleTestEnum(b)])(x)
+    )
+  );
+}
+
+export function TESTING_conversion_PairStringString_identity({
+  x: x,
+}: {
+  x: [string, string];
+}): [string, string] {
+  return (([a, b]: [string, string]): [string, string] => [
+    identity(a),
+    identity(b),
+  ])(
+    Native.TESTING_conversion_PairStringString_identity(
+      (([a, b]: [string, string]): [string, string] => [
+        identity(a),
+        identity(b),
+      ])(x)
+    )
+  );
+}
+export async function TESTING_conversion_PairStringString_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: [string, string];
+}): Promise<[string, string]> {
+  return (([a, b]: [string, string]): [string, string] => [
+    identity(a),
+    identity(b),
+  ])(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_PairStringString_identity_async(
+        asyncContext,
+        (([a, b]: [string, string]): [string, string] => [
+          identity(a),
+          identity(b),
+        ])(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_PairStringString_to_string({
+  x: x,
+}: {
+  x: [string, string];
+}): string {
+  return identity(
+    Native.TESTING_conversion_PairStringString_to_string(
+      (([a, b]: [string, string]): [string, string] => [
+        identity(a),
+        identity(b),
+      ])(x)
+    )
+  );
+}
+
+export function TESTING_conversion_ServiceId_identity({
+  x: x,
+}: {
+  x: ServiceId;
+}): ServiceId {
+  return ServiceId.parseFromServiceIdFixedWidthBinary(
+    Native.TESTING_conversion_ServiceId_identity(serviceIdArgConverter(x))
+  );
+}
+export async function TESTING_conversion_ServiceId_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: ServiceId;
+}): Promise<ServiceId> {
+  return ServiceId.parseFromServiceIdFixedWidthBinary(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_ServiceId_identity_async(
+        asyncContext,
+        serviceIdArgConverter(x)
+      )
+    )
+  );
+}
+
+export function TESTING_conversion_ServiceId_to_string({
+  x: x,
+}: {
+  x: ServiceId;
+}): string {
+  return identity(
+    Native.TESTING_conversion_ServiceId_to_string(serviceIdArgConverter(x))
+  );
+}
+
+export function TESTING_conversion_Uuid_identity({
+  x: x,
+}: {
+  x: uuid.Uuid;
+}): uuid.Uuid {
+  return uuid.stringify(Native.TESTING_conversion_Uuid_identity(uuid.parse(x)));
+}
+export async function TESTING_conversion_Uuid_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: uuid.Uuid;
+}): Promise<uuid.Uuid> {
+  return uuid.stringify(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_Uuid_identity_async(asyncContext, uuid.parse(x))
+    )
+  );
+}
+
+export function TESTING_conversion_Uuid_to_string({
+  x: x,
+}: {
+  x: uuid.Uuid;
+}): string {
+  return identity(Native.TESTING_conversion_Uuid_to_string(uuid.parse(x)));
+}
+
+export function TESTING_conversion_bool_identity({
+  x: x,
+}: {
+  x: boolean;
+}): boolean {
+  return identity(Native.TESTING_conversion_bool_identity(identity(x)));
+}
+export async function TESTING_conversion_bool_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: boolean;
+}): Promise<boolean> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_bool_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_bool_to_string({
+  x: x,
+}: {
+  x: boolean;
+}): string {
+  return identity(Native.TESTING_conversion_bool_to_string(identity(x)));
+}
+
+export function TESTING_conversion_i32_identity({
+  x: x,
+}: {
+  x: number;
+}): number {
+  return identity(Native.TESTING_conversion_i32_identity(identity(x)));
+}
+export async function TESTING_conversion_i32_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: number;
+}): Promise<number> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_i32_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_i32_to_string({
+  x: x,
+}: {
+  x: number;
+}): string {
+  return identity(Native.TESTING_conversion_i32_to_string(identity(x)));
+}
+
+export function TESTING_conversion_string_identity({
+  x: x,
+}: {
+  x: string;
+}): string {
+  return identity(Native.TESTING_conversion_string_identity(identity(x)));
+}
+export async function TESTING_conversion_string_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: string;
+}): Promise<string> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_string_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_u16_identity({
+  x: x,
+}: {
+  x: number;
+}): number {
+  return identity(Native.TESTING_conversion_u16_identity(identity(x)));
+}
+export async function TESTING_conversion_u16_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: number;
+}): Promise<number> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_u16_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_u16_to_string({
+  x: x,
+}: {
+  x: number;
+}): string {
+  return identity(Native.TESTING_conversion_u16_to_string(identity(x)));
+}
+
+export function TESTING_conversion_u8_identity({
+  x: x,
+}: {
+  x: number;
+}): number {
+  return identity(Native.TESTING_conversion_u8_identity(identity(x)));
+}
+export async function TESTING_conversion_u8_identity_async({
+  asyncContext,
+  abortSignal,
+  x: x,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  x: number;
+}): Promise<number> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.TESTING_conversion_u8_identity_async(asyncContext, identity(x))
+    )
+  );
+}
+
+export function TESTING_conversion_u8_to_string({
+  x: x,
+}: {
+  x: number;
+}): string {
+  return identity(Native.TESTING_conversion_u8_to_string(identity(x)));
+}
+export async function UnauthenticatedChatConnection_account_exists({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  account: account,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  account: ServiceId;
+}): Promise<boolean> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_account_exists(
+        asyncContext,
+        identity(chat),
+        serviceIdArgConverter(account)
+      )
+    )
+  );
+}
+
+export function UnauthenticatedChatConnection_backup_copy_media({
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  items: items,
+  rng: rng,
+}: {
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  items: Array<BridgeCopyBackupMediaItem>;
+  rng: Rng | undefined;
+}): (
+  asyncContext: TokioAsyncContext
+) => ReadableStream<Native.ReturnFfiBridgeCopyBackupMediaOutcome> {
+  return copyBackupMediaStreamConverter(
+    Native.UnauthenticatedChatConnection_backup_copy_media(
+      identity(chat),
+      ByteArray.prototype.getContents.call(credential),
+      ByteArray.prototype.getContents.call(server_keys),
+      identity(signing_key),
+      ((arr: Array<BridgeCopyBackupMediaItem>) =>
+        arr.map(argConverterBridgeCopyBackupMediaItem))(items),
+      ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_delete_all({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  rng: Rng | undefined;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_delete_all(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+
+export function UnauthenticatedChatConnection_backup_delete_media({
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  items: items,
+  rng: rng,
+}: {
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  items: Array<BridgeDeleteBackupMediaItem>;
+  rng: Rng | undefined;
+}): (
+  asyncContext: TokioAsyncContext
+) => ReadableStream<Native.ReturnFfiBridgeDeleteBackupMediaItem> {
+  return deleteBackupMediaStreamConverter(
+    Native.UnauthenticatedChatConnection_backup_delete_media(
+      identity(chat),
+      ByteArray.prototype.getContents.call(credential),
+      ByteArray.prototype.getContents.call(server_keys),
+      identity(signing_key),
+      ((arr: Array<BridgeDeleteBackupMediaItem>) =>
+        arr.map(argConverterBridgeDeleteBackupMediaItem))(items),
+      ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_get_cdn_credentials({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  cdn: cdn,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  cdn: number;
+  rng: Rng | undefined;
+}): Promise<CdnCredentials> {
+  return cdnCredentialReturnConverter(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_get_cdn_credentials(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        identity(cdn),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_get_media_backup_info({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  rng: Rng | undefined;
+}): Promise<BridgeMediaBackupInfo> {
+  return returnConverterBridgeMediaBackupInfo(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_get_media_backup_info(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_get_message_backup_info({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  rng: Rng | undefined;
+}): Promise<BridgeMessageBackupInfo> {
+  return returnConverterBridgeMessageBackupInfo(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_get_message_backup_info(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_get_svrb_credentials({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  rng: Rng | undefined;
+}): Promise<[string, string]> {
+  return (([a, b]: [string, string]): [string, string] => [
+    identity(a),
+    identity(b),
+  ])(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_get_svrb_credentials(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_list_media({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  cursor: cursor,
+  limit: limit,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  cursor: string;
+  limit: number;
+  rng: Rng | undefined;
+}): Promise<ListMediaResponse> {
+  return returnConverterListMediaResponse(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_list_media(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        identity(cursor),
+        identity(limit),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_refresh({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  rng: Rng | undefined;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_refresh(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_backup_set_public_key({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  credential: credential,
+  serverKeys: server_keys,
+  signingKey: signing_key,
+  rng: rng,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  credential: zkgroup.BackupAuthCredential;
+  serverKeys: zkgroup.GenericServerPublicParams;
+  signingKey: Native.Wrapper<Native.PrivateKey>;
+  rng: Rng | undefined;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_backup_set_public_key(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(credential),
+        ByteArray.prototype.getContents.call(server_keys),
+        identity(signing_key),
+        ((__rng) => __rng?.__deterministicRngSeedForTesting ?? -1)(rng)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_check_svr_credentials({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  number: number,
+  credentials: credentials,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  number: string;
+  credentials: Array<string>;
+}): Promise<Array<[string, AuthCheckResult]>> {
+  return ((arr: Array<[string, ReturnFfiAuthCheckResult]>) =>
+    arr.map(
+      ([a, b]: [string, ReturnFfiAuthCheckResult]): [
+        string,
+        AuthCheckResult
+      ] => [identity(a), returnConverterAuthCheckResult(b)]
+    ))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_check_svr_credentials(
+        asyncContext,
+        identity(chat),
+        identity(number),
+        ((arr: Array<string>) => arr.map(identity))(credentials)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_create_login_receipt_credential({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  paymentProcessor: payment_processor,
+  purchaseIdentifier: purchase_identifier,
+  receiptCredentialRequestContext: receipt_credential_request_context,
+  serverParams: server_params,
+  purchaseTime: purchase_time,
+  expectedLevel: expected_level,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  paymentProcessor: PaymentProvider;
+  purchaseIdentifier: string;
+  receiptCredentialRequestContext: zkgroup.ReceiptCredentialRequestContext;
+  serverParams: Native.Wrapper<Native.ServerPublicParams>;
+  purchaseTime: Timestamp;
+  expectedLevel: LoginReceiptLevel;
+}): Promise<zkgroup.ReceiptCredential> {
+  return ((x) => new zkgroup.ReceiptCredential(x))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_create_login_receipt_credential(
+        asyncContext,
+        identity(chat),
+        argConverterPaymentProvider(payment_processor),
+        identity(purchase_identifier),
+        ByteArray.prototype.getContents.call(
+          receipt_credential_request_context
+        ),
+        identity(server_params),
+        identity(purchase_time),
+        argConverterLoginReceiptLevel(expected_level)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_get_profile_key_credential({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  profileKeyRequestContext: profile_key_request_context,
+  serverParams: server_params,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  profileKeyRequestContext: zkgroup.ProfileKeyCredentialRequestContext;
+  serverParams: Native.Wrapper<Native.ServerPublicParams>;
+}): Promise<zkgroup.ExpiringProfileKeyCredential> {
+  return ((x) => new zkgroup.ExpiringProfileKeyCredential(x))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_get_profile_key_credential(
+        asyncContext,
+        identity(chat),
+        ByteArray.prototype.getContents.call(profile_key_request_context),
+        identity(server_params)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_get_subscription_receipt_credential({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  subscriberId: subscriber_id,
+  receiptCredentialRequestContext: receipt_credential_request_context,
+  serverParams: server_params,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  subscriberId: Bytes;
+  receiptCredentialRequestContext: zkgroup.ReceiptCredentialRequestContext;
+  serverParams: Native.Wrapper<Native.ServerPublicParams>;
+}): Promise<zkgroup.ReceiptCredential> {
+  return ((x) => new zkgroup.ReceiptCredential(x))(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_get_subscription_receipt_credential(
+        asyncContext,
+        identity(chat),
+        identity(subscriber_id),
+        ByteArray.prototype.getContents.call(
+          receipt_credential_request_context
+        ),
+        identity(server_params)
+      )
+    )
+  );
+}
+export async function UnauthenticatedChatConnection_submit_call_quality_survey({
+  asyncContext,
+  abortSignal,
+  chat: chat,
+  survey: survey,
+}: {
+  asyncContext: TokioAsyncContext;
+  abortSignal?: AbortSignal;
+  chat: Native.Wrapper<Native.UnauthenticatedChatConnection>;
+  survey: CallQualitySurveyInternal;
+}): Promise<void> {
+  return identity(
+    await asyncContext.makeCancellable(
+      abortSignal,
+      Native.UnauthenticatedChatConnection_submit_call_quality_survey(
+        asyncContext,
+        identity(chat),
+        argConverterCallQualitySurveyInternal(survey)
+      )
+    )
+  );
+}

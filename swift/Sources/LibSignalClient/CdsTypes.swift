@@ -21,8 +21,11 @@ public class CdsiLookupRequest: NativeHandleOwner<SignalMutPointerLookupRequest>
     public private(set) var hasToken: Bool = false
 
     private convenience init() {
-        var handle = SignalMutPointerLookupRequest(untyped: nil)
-        try! checkError(signal_lookup_request_new(&handle))
+        let handle = failOnError {
+            try invokeFnReturningValueByPointer(.init()) {
+                signal_lookup_request_new($0)
+            }
+        }
         self.init(owned: NonNull(handle)!)
     }
 
@@ -184,6 +187,8 @@ extension SignalConstPointerCdsiLookup: SignalConstPointer {
 ///
 /// Returned by ``CdsiLookup/complete()`` on success.
 public struct CdsiLookupResponse {
+    // swiftlint:disable:previous explicit_init_for_public_struct
+
     /// The entries received from the server.
     public let entries: LookupResponseEntryList
     /// How many "permits" were used in making the request.
@@ -198,13 +203,13 @@ public struct CdsiLookupResponse {
 public class LookupResponseEntryList: Collection {
     private var owned: UnsafeMutableBufferPointer<CdsiLookupResponseEntry>
 
-    init(owned: SignalOwnedBufferOfFfiCdsiLookupResponseEntry) {
+    init(owned: SignalOwnedLookupResponseEntryList) {
         self.owned = UnsafeMutableBufferPointer(start: owned.base, count: Int(owned.length))
     }
 
     deinit {
         signal_free_lookup_response_entry_list(
-            SignalOwnedBufferOfFfiCdsiLookupResponseEntry(base: self.owned.baseAddress, length: self.owned.count)
+            SignalOwnedLookupResponseEntryList(base: self.owned.baseAddress, length: self.owned.count)
         )
     }
 

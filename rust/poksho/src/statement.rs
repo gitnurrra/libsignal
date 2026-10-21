@@ -5,10 +5,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
-use curve25519_dalek::ristretto::RistrettoPoint;
-use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::MultiscalarMul;
 // POKSHO implements the "Sigma protocol for arbitrary linear relations" described in section
 // 19.5.3 of https://crypto.stanford.edu/~dabo/cryptobook/BonehShoup_0_4.pdf
 //
@@ -90,6 +86,10 @@ use curve25519_dalek::traits::MultiscalarMul;
 //  for index=0..total number of scalars:
 //   RistrettoScalar
 use PokshoError::*;
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::MultiscalarMul;
 
 use crate::args::*;
 use crate::errors::*;
@@ -204,14 +204,11 @@ impl Statement {
         sho2.absorb_and_ratchet(message); // M
         let blinding_scalar_bytes = sho2.squeeze_and_ratchet(g1.len() * 64);
 
-        // TODO use array_chunks once that's stabilized.
-        // See https://github.com/rust-lang/rust/issues/74985.
         let nonce: G1 = blinding_scalar_bytes
-            .chunks_exact(64)
-            .map(|chunk| {
-                let chunk = chunk.try_into().expect("correct width");
-                Scalar::from_bytes_mod_order_wide(chunk)
-            })
+            .as_chunks::<64>()
+            .0
+            .iter()
+            .map(Scalar::from_bytes_mod_order_wide)
             .collect();
 
         // Commitment from nonce by applying homomorphism F: commitment = F(nonce)
